@@ -2912,7 +2912,7 @@ fn compose_to_compose_rejects_unresolved_typed_expressions_for_every_loss_policy
                 .iter()
                 .filter(|diagnostic| diagnostic["code"] == "BFC0004")
                 .count(),
-            1
+            0
         );
         assert_eq!(report["output_artifacts"], serde_json::json!([]));
         assert!(!output.path().exists());
@@ -2930,7 +2930,7 @@ fn compose_to_compose_requires_partial_policy_to_omit_native_only_fields() -> Re
         &input,
         concat!(
             "name: native-only\n",
-            "x-boxferry-test: extension-value\n",
+            "unknown_native_field: extension-value\n",
             "services:\n",
             "  web:\n",
             "    image: example.invalid/web:1\n",
@@ -2996,7 +2996,7 @@ fn compose_to_compose_requires_partial_policy_to_omit_native_only_fields() -> Re
     );
     let document = fs::read_to_string(partial_output.path().join("compose.yaml"))?;
     assert!(document.contains("example.invalid/web:1"));
-    assert!(!document.contains("x-boxferry-test"));
+    assert!(!document.contains("unknown_native_field"));
     assert!(!document.contains("extension-value"));
     Ok(())
 }
@@ -3495,7 +3495,16 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
     ] {
         assert!(required.iter().any(|value| value == field), "missing {field}");
     }
+    for field in ["operation", "bundle_members", "input_bundle_members"] {
+        assert!(schema["properties"][field].is_object());
+        assert!(
+            !required.iter().any(|value| value == field),
+            "additive field must preserve old v1 report validity"
+        );
+    }
     for definition in [
+        "bundle_member",
+        "input_bundle_member",
         "version_bounds",
         "input",
         "discovery",

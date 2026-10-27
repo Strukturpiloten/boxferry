@@ -5,8 +5,10 @@
 //! provenance remain available to conversion adapters.
 
 mod application;
+mod deferred;
 mod image;
 mod image_artifact;
+mod metadata;
 mod provenance;
 mod value;
 
@@ -29,3 +31,13 @@ pub use image_artifact::{
 };
 pub use provenance::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};
 pub use value::ProtectedString;
+
+pub use metadata::{
+    METADATA_MAX_BYTES, METADATA_MAX_DEPTH, MetadataEntry, MetadataError, MetadataNode, MetadataScope, MetadataValue,
+    VendorMetadata,
+};
+
+pub use deferred::{
+    DEFERRED_MAX_BYTES, DEFERRED_MAX_SEGMENTS, DeferredExpression, DeferredSegment, ServiceEnvironmentAssignment,
+    ServiceEnvironmentFile, ServiceEnvironmentName, ServiceExecutionEnvironment,
+};

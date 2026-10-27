@@ -1,5 +1,7 @@
 //! Neutral-model-to-Quadlet planning.
 
+mod deferred;
+mod metadata;
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -60,9 +62,18 @@ pub struct QuadletExporter {
     bind_source_mappings: BTreeMap<String, String>,
     grouping_policy: QuadletGroupingPolicy,
     pod_name: Option<String>,
+    deferred_environment_values: bool,
 }
 
 impl QuadletExporter {
+    /// Authorizes literal-bearing deferred container environment and protected inline providers.
+    /// The safe default withholds both; pure reference expressions remain eligible.
+    #[must_use]
+    pub const fn with_deferred_environment_values(mut self, include: bool) -> Self {
+        self.deferred_environment_values = include;
+        self
+    }
+
     /// Creates an exporter backed by `QuadletLens`'s finite built-in capability catalogue.
     ///
     /// # Errors
@@ -94,6 +105,7 @@ impl QuadletExporter {
             bind_source_mappings: BTreeMap::new(),
             grouping_policy: QuadletGroupingPolicy::SeparateContainers,
             pod_name: None,
+            deferred_environment_values: false,
         })
     }
 
@@ -341,6 +353,7 @@ struct Mapping<'a> {
     target: &'a TargetProfile,
     podman_target: Option<PodmanTarget>,
     generated: Vec<(String, quadlet_lens::render::GeneratedQuadletDocument)>,
+    staged: Vec<(String, QuadletDocumentBuilder, String, Vec<Provenance>)>,
     outcomes: Vec<ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
     next_source_id: u32,
@@ -381,6 +394,7 @@ impl<'a> Mapping<'a> {
             target,
             podman_target: None,
             generated: Vec::new(),
+            staged: Vec::new(),
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
             next_source_id: 1,
@@ -2147,6 +2161,7 @@ impl<'a> Mapping<'a> {
         pod_name: Option<&str>,
         builder: &mut QuadletDocumentBuilder,
     ) {
+        self.map_execution_environment(subject, service.value(), builder);
         self.map_container_name(subject, service.value(), builder);
         if let Some(command) = service.value().command() {
             self.map_command(subject, command, builder);
@@ -3901,6 +3916,21 @@ impl<'a> Mapping<'a> {
     ) {
         let name = environment.value().name().as_str();
         let subject = format!("{service_subject}.environment.{name}");
+        if let EnvironmentValue::Deferred(expression) = environment.value().value() {
+            self.map_deferred_environment(&subject, name, expression, environment.origins(), builder);
+            return;
+        }
+        if matches!(environment.value().value(), EnvironmentValue::UnresolvedSource { .. }) {
+            self.loss(
+                self.exporter.codes.unresolved_variable.clone(),
+                &subject,
+                ConversionKind::Unsupported,
+                "source environment expression remains unresolved",
+                "resolve authored source syntax using conversion-time --env or --env-file before Quadlet output",
+                environment.origins(),
+            );
+            return;
+        }
         let EnvironmentValue::Literal(value) = environment.value().value() else {
             let reason = match environment.value().value() {
                 EnvironmentValue::Required => {
@@ -3913,33 +3943,7 @@ impl<'a> Mapping<'a> {
             self.unsupported(&subject, reason, environment.origins());
             return;
         };
-        if contains_unresolved_source_variable(value.expose(), environment.origins()) {
-            self.unsupported(
-                &subject,
-                "environment value contains unresolved authored variable syntax",
-                environment.origins(),
-            );
-            return;
-        }
-        let Some(encoded) = encode_quadlet_environment_assignment(name, value.expose()) else {
-            self.unsupported(
-                &subject,
-                "environment assignment contains an empty name, equals sign, name control character, or NUL value",
-                environment.origins(),
-            );
-            return;
-        };
-        if self.capability("quadlet.container.environment", &subject, environment.origins())
-            && self.push_container(
-                builder,
-                ContainerKey::Environment,
-                encoded,
-                &subject,
-                environment.origins(),
-            )
-        {
-            self.exact(subject, environment.origins());
-        }
+        self.map_literal_environment(&subject, name, value.expose(), environment.origins(), builder);
     }
 
     fn map_environment_file(
@@ -4135,7 +4139,12 @@ impl<'a> Mapping<'a> {
         builder: &mut QuadletDocumentBuilder,
     ) {
         let subject = format!("{service_subject}.mounts[{index}]");
-        if !is_safe_mount_part(mount.value().target()) || !mount.value().target().starts_with('/') {
+        let safe_target = if mount.value().paths_are_literal() {
+            !mount.value().target().chars().any(|ch| ch.is_control() || ch == ':')
+        } else {
+            is_safe_mount_part(mount.value().target())
+        };
+        if !safe_target || !mount.value().target().starts_with('/') {
             self.unsupported(
                 &subject,
                 "container mount target is not a safely encoded absolute path",
@@ -4143,9 +4152,37 @@ impl<'a> Mapping<'a> {
             );
             return;
         }
+        if let MountSource::DeferredHostPath(expression) = mount.value().source() {
+            self.map_deferred_bind(&subject, expression, mount, builder);
+            return;
+        }
+        if mount.value().paths_are_literal()
+            && (mount.value().target().contains('$') || mount.value().target().contains('%'))
+            && !matches!(mount.value().source(), MountSource::HostPath(_))
+        {
+            self.unsupported(
+                &subject,
+                "literal percent in a non-bind mount target needs a native expansion-safe renderer",
+                mount.origins(),
+            );
+            return;
+        }
         let Some(source) = self.mount_source(&subject, mount) else {
             return;
         };
+        let inspected_literal = mount.value().paths_are_literal();
+        let target_expansion = mount.value().paths_are_literal()
+            && (mount.value().target().contains('$') || mount.value().target().contains('%'));
+        if matches!(mount.value().source(), MountSource::HostPath(_))
+            && (source.value.contains('$') || (source.value.contains('%') && inspected_literal) || target_expansion)
+        {
+            if source.value.contains('%') && !inspected_literal {
+                self.unsupported(&subject, "native source specifier intent cannot be combined safely with a literal expansion-bearing target; use an explicit literal target path", mount.origins());
+                return;
+            }
+            self.map_literal_bind(&subject, &source.value, mount, builder);
+            return;
+        }
         let mut encoded = if source.value.is_empty() {
             mount.value().target().to_owned()
         } else {
@@ -4179,6 +4216,15 @@ impl<'a> Mapping<'a> {
         match mount.value().source() {
             MountSource::Volume(name) => self.volume_source(subject, name.as_str(), mount.origins()),
             MountSource::HostPath(path) => {
+                if path.starts_with('/')
+                    && !path.chars().any(|ch| ch.is_control() || ch == ':')
+                    && mount.value().paths_are_literal()
+                {
+                    return Some(ResolvedResourceSource {
+                        value: path.clone(),
+                        approximation: None,
+                    });
+                }
                 if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
                     Some(ResolvedResourceSource {
                         value: mapped.clone(),
@@ -4277,6 +4323,13 @@ impl<'a> Mapping<'a> {
         builder: &mut QuadletDocumentBuilder,
     ) {
         let subject = format!("{group_subject}.runtime.mounts[{index}]");
+        let literal_expansion = mount.value().target().contains('$')
+            || mount.value().target().contains('%')
+            || matches!(mount.value().source(), MountSource::HostPath(path) if path.contains('$') || path.contains('%'));
+        if mount.value().paths_are_literal() && literal_expansion {
+            self.unsupported(&subject, "literal dollar/percent pod paths need a native expansion-safe pod renderer; use explicit literal target mappings or separate container units", mount.origins());
+            return;
+        }
         let Some((encoded, approximation)) = self.encode_pod_mount(&subject, mount) else {
             return;
         };
@@ -4815,6 +4868,17 @@ impl<'a> Mapping<'a> {
         subject: &str,
         origins: &[Provenance],
     ) {
+        self.staged
+            .push((file_name, builder.clone(), subject.to_owned(), origins.to_vec()));
+    }
+
+    fn build_document(
+        &mut self,
+        file_name: String,
+        builder: &QuadletDocumentBuilder,
+        subject: &str,
+        origins: &[Provenance],
+    ) {
         let source_id = SourceId::new(self.next_source_id);
         let Some(next) = self.next_source_id.checked_add(1) else {
             self.invalid(
@@ -4932,6 +4996,7 @@ impl<'a> Mapping<'a> {
     }
 
     fn finish(mut self) -> (Option<QuadletOutput>, Vec<ConversionOutcome>, Vec<Diagnostic>) {
+        self.finish_staged_documents();
         let candidate = if self.podman_target.is_some() && !self.generation_failed {
             let generated = std::mem::take(&mut self.generated);
             match QuadletOutput::from_generated(generated) {

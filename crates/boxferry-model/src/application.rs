@@ -137,6 +137,8 @@ pub enum ModelError {
     },
     /// A health-check retry count was not a non-negative decimal integer.
     InvalidHealthcheckRetries,
+    /// Invalid deferred expression or provider plan; reason never contains protected values.
+    InvalidDeferred(&'static str),
 }
 
 impl fmt::Display for ModelError {
@@ -226,6 +228,7 @@ impl fmt::Display for ModelError {
                 formatter,
                 "service `{service}` combines rootfs with image source `{source}`"
             ),
+            Self::InvalidDeferred(reason) => formatter.write_str(reason),
             Self::InvalidHealthcheckRetries => {
                 formatter.write_str("health-check retries must be a non-negative decimal integer")
             }
@@ -1918,8 +1921,17 @@ impl Healthcheck {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EnvironmentValue {
-    /// A literal plain or sensitive value.
+    /// A literal plain or sensitive value, never executable source expression syntax.
     Literal(ProtectedString),
+    /// Explicit service-execution environment lookup expression.
+    Deferred(crate::DeferredExpression),
+    /// Opaque authored source intent, preserved only by a matching source-format exporter.
+    UnresolvedSource {
+        /// Explicit native format identity; no source grammar is interpreted by the model.
+        source_format: Identifier,
+        /// Protected authored expression, never a resolved literal value.
+        expression: ProtectedString,
+    },
     /// A named value withheld from this migration artifact; the target operator must supply it.
     Required,
     /// Resolve the value from an explicit caller-provided host environment provider.
@@ -2380,6 +2392,8 @@ pub enum MountSource {
     Volume(Identifier),
     /// Authored host path whose target-specific resolution is deferred.
     HostPath(String),
+    /// Explicit host-bind path resolved in the service execution environment.
+    DeferredHostPath(crate::DeferredExpression),
     /// Anonymous target-managed storage.
     Anonymous,
 }
@@ -2401,9 +2415,24 @@ pub struct Mount {
     target: String,
     read_only: bool,
     selinux_relabel: Option<SelinuxRelabel>,
+    literal_paths: bool,
 }
 
 impl Mount {
+    /// Marks path text as literal rather than target-context syntax.
+    /// Explicit deferred reference segments remain references; resource identifiers retain identity.
+    #[must_use]
+    pub const fn with_literal_paths(mut self) -> Self {
+        self.literal_paths = true;
+        self
+    }
+
+    /// Returns whether host-source and container-target text must remain literal.
+    #[must_use]
+    pub const fn paths_are_literal(&self) -> bool {
+        self.literal_paths
+    }
+
     /// Creates a storage attachment with a non-empty target path.
     ///
     /// # Errors
@@ -2412,11 +2441,13 @@ impl Mount {
     pub fn new(source: MountSource, target: impl Into<String>, read_only: bool) -> Result<Self, ModelError> {
         let target = target.into();
         validate_text("mount target", &target)?;
+        let literal_paths = matches!(&source, MountSource::DeferredHostPath(_));
         Ok(Self {
             source,
             target,
             read_only,
             selinux_relabel: None,
+            literal_paths,
         })
     }
 
@@ -2818,6 +2849,7 @@ pub struct Service {
     stop_signal: Option<Sourced<ProtectedString>>,
     environment: Vec<Sourced<EnvironmentVariable>>,
     environment_files: Vec<Sourced<EnvironmentFile>>,
+    execution_environment: Option<Sourced<crate::ServiceExecutionEnvironment>>,
     host_mappings: Vec<Sourced<HostMapping>>,
     ports: Vec<Sourced<Port>>,
     mounts: Vec<Sourced<Mount>>,
@@ -2828,6 +2860,16 @@ pub struct Service {
 }
 
 impl Service {
+    /// Sets an explicit external execution-environment plan. Validated when added to an application.
+    pub fn set_execution_environment(&mut self, value: Sourced<crate::ServiceExecutionEnvironment>) {
+        self.execution_environment = Some(value);
+    }
+    /// Returns the explicit external execution-environment plan.
+    #[must_use]
+    pub const fn execution_environment(&self) -> Option<&Sourced<crate::ServiceExecutionEnvironment>> {
+        self.execution_environment.as_ref()
+    }
+
     /// Creates an empty service shell for incremental adapter mapping.
     #[must_use]
     pub const fn new(name: Identifier) -> Self {
@@ -2886,6 +2928,7 @@ impl Service {
             stop_signal: None,
             environment: Vec::new(),
             environment_files: Vec::new(),
+            execution_environment: None,
             host_mappings: Vec::new(),
             ports: Vec::new(),
             mounts: Vec::new(),
@@ -3672,6 +3715,7 @@ impl Service {
 pub struct Application {
     name: Identifier,
     retained_native_evidence: Vec<RetainedNativeEvidence>,
+    vendor_metadata: Vec<crate::VendorMetadata>,
     image_acquisitions: Vec<Sourced<ImageAcquisition>>,
     image_builds: Vec<Sourced<ImageBuild>>,
     services: Vec<Sourced<Service>>,
@@ -3689,6 +3733,7 @@ impl Application {
         Self {
             name,
             retained_native_evidence: Vec::new(),
+            vendor_metadata: Vec::new(),
             image_acquisitions: Vec::new(),
             image_builds: Vec::new(),
             services: Vec::new(),
@@ -3704,6 +3749,38 @@ impl Application {
     #[must_use]
     pub const fn name(&self) -> &Identifier {
         &self.name
+    }
+
+    /// Returns ordered inert vendor extensions, including exact namespaces and ownership.
+    #[must_use]
+    pub fn vendor_metadata(&self) -> &[crate::VendorMetadata] {
+        &self.vendor_metadata
+    }
+
+    /// Adds bounded metadata after declaring its service owner.
+    ///
+    /// # Errors
+    /// Rejects absent owners, duplicate exact scope/namespace identities and aggregate size excess.
+    pub fn add_vendor_metadata(&mut self, metadata: crate::VendorMetadata) -> Result<(), crate::MetadataError> {
+        if let crate::MetadataScope::Service(owner) = metadata.scope()
+            && !self.services.iter().any(|service| service.value().name() == owner)
+        {
+            return Err(crate::MetadataError::UnknownOwner);
+        }
+        if self.vendor_metadata.iter().any(|existing| {
+            existing.scope() == metadata.scope()
+                && existing.namespace().value().expose() == metadata.namespace().value().expose()
+        }) {
+            return Err(crate::MetadataError::Duplicate);
+        }
+        let bytes = self.vendor_metadata.iter().try_fold(metadata.measure()?, |sum, item| {
+            sum.checked_add(item.measure()?).ok_or(crate::MetadataError::Limit)
+        })?;
+        if bytes > crate::METADATA_MAX_BYTES {
+            return Err(crate::MetadataError::Limit);
+        }
+        self.vendor_metadata.push(metadata);
+        Ok(())
     }
 
     /// Adds one opaque source event after its owning resource has been declared.
@@ -3916,6 +3993,7 @@ impl Application {
             self.services.iter().map(|candidate| candidate.value().name()),
         )?;
         service.value().validate_image_source_exclusivity()?;
+        crate::deferred::validate_service(service.value())?;
         if let Some(acquisition) = service.value().image_acquisition()
             && !self
                 .image_acquisitions
@@ -3948,14 +4026,17 @@ impl Application {
         &self.services
     }
 
-    /// Withholds all literal service environment values while retaining their names and origins.
+    /// Withholds literal and opaque-source service environment values, retaining names and origins.
     ///
     /// This is an artifact authorization boundary, independent of conversion fidelity. An
     /// exporter must report each required value as an unsupported target prerequisite.
     pub fn withhold_literal_environment_values(&mut self) {
         for service in &mut self.services {
             for environment in &mut service.value_mut().environment {
-                if matches!(environment.value().value(), EnvironmentValue::Literal(_)) {
+                if matches!(
+                    environment.value().value(),
+                    EnvironmentValue::Literal(_) | EnvironmentValue::UnresolvedSource { .. }
+                ) {
                     environment.value_mut().value = EnvironmentValue::Required;
                 }
             }

@@ -41,7 +41,7 @@ use boxferry::podman::podman_lens::{
     read_only_unix_transport::{ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts},
 };
 use boxferry::report::{
-    ConversionReport, DiscoveryDecision, ExitCategory, FailedStage, FidelityCounts, FixFirst, HostMetadata,
+    DiscoveryDecision, ExitCategory, FailedStage, FidelityCounts, FixFirst, HostMetadata, InvocationReport,
     OutputArtifact, ReportChoice, ReportDiagnostic, ReportField, ReportInput, ReportNativeFinding, ReportNativeLabel,
     ReportStatus, SanitizedInvocation, VersionBounds, redact_text,
 };
@@ -57,6 +57,8 @@ use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand, V
 use jiff::{Timestamp, Zoned, tz::TimeZone};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
+mod cli_bundle;
+mod cli_deferred;
 mod route;
 use route::{InputType, OutputType, RouteSpec, TargetSelector};
 
@@ -100,6 +102,8 @@ enum Command {
     Capabilities(Presentation),
     /// Convert one explicit input type into one explicit output type.
     Convert(ConvertCommand),
+    /// Extract a validated transport into unchanged native files.
+    Extract(ExtractCommand),
     /// Explain one diagnostic rule by code or human-readable name.
     Explain(ExplainCommand),
     /// Show contextual command help.
@@ -114,6 +118,26 @@ enum Command {
     Validate(ConversionCommand),
     /// Print `BoxFerry` version information.
     Version,
+}
+
+#[derive(Debug, Args)]
+struct ExtractCommand {
+    #[command(subcommand)]
+    input: ExtractInput,
+}
+#[derive(Debug, Subcommand)]
+enum ExtractInput {
+    Quadlet(ExtractQuadlet),
+}
+#[derive(Debug, Args)]
+struct ExtractQuadlet {
+    /// Explicit `BoxFerry` Quadlet transport bundle.
+    #[arg(long = "input-file", value_name = "FILE")]
+    input_files: PathBuf,
+    #[command(flatten)]
+    destination: OutputDestination,
+    #[command(flatten)]
+    diagnostics: DiagnosticOptions,
 }
 
 #[derive(Clone, Copy, Debug, Args)]
@@ -297,8 +321,8 @@ struct QuadletOutputOptions {
 #[derive(Debug, Args)]
 struct ComposeOutputOptions {
     /// Compose physical output layout.
-    #[arg(long, value_enum, default_value_t = OutputLayout::Files)]
-    output_layout: OutputLayout,
+    #[arg(long, value_enum, default_value_t = NativeOutputLayout::Files)]
+    output_layout: NativeOutputLayout,
 }
 
 #[derive(Debug, Args)]
@@ -310,8 +334,8 @@ struct PodmanOutputOptions {
     #[arg(long, value_enum)]
     podman_target_context: PodmanTargetContext,
     /// Podman artifact physical output layout.
-    #[arg(long, value_enum, default_value_t = OutputLayout::Files)]
-    output_layout: OutputLayout,
+    #[arg(long, value_enum, default_value_t = NativeOutputLayout::Files)]
+    output_layout: NativeOutputLayout,
 }
 
 #[derive(Clone, Copy, Debug, Args)]
@@ -425,6 +449,8 @@ struct ComposeToCompose {
 #[derive(Debug, Args)]
 #[command(about = "Read Compose input and write canonical BoxFerry Quadlet files")]
 struct ComposeToQuadlet {
+    #[command(flatten, next_help_heading = "Deferred service execution environment")]
+    deferred: cli_deferred::DeferredCliOptions,
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
     #[command(flatten, next_help_heading = "Compose input")]
@@ -630,6 +656,8 @@ struct ConvertComposeToCompose {
 #[derive(Debug, Args)]
 #[command(about = "Read Compose input and write canonical BoxFerry Quadlet files")]
 struct ConvertComposeToQuadlet {
+    #[command(flatten, next_help_heading = "Deferred service execution environment")]
+    deferred: cli_deferred::DeferredCliOptions,
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
     #[command(flatten, next_help_heading = "Compose input")]
@@ -762,6 +790,7 @@ struct ConvertPodmanToPodman {
     reason = "preserves typed CLI flag provenance until route execution"
 )]
 struct GenericConversion {
+    deferred: cli_deferred::DeferredCliOptions,
     presentation: Presentation,
     report_file: Option<PathBuf>,
     generate_error_report: bool,
@@ -845,7 +874,7 @@ impl ConvertInput {
                 }
                 ConvertComposeOutput::Quadlet(arguments) => {
                     let destination = arguments.destination.output_directory;
-                    let conversion = GenericConversion::from_route(
+                    let mut conversion = GenericConversion::from_route(
                         InputType::Compose,
                         OutputType::Quadlet,
                         arguments.documents,
@@ -854,6 +883,7 @@ impl ConvertInput {
                         arguments.policy,
                         arguments.diagnostics,
                     );
+                    conversion.deferred = arguments.deferred;
                     (conversion, destination)
                 }
                 ConvertComposeOutput::Podman(arguments) => {
@@ -976,7 +1006,7 @@ impl GenericConversion {
     }
 
     fn from_compose_to_quadlet(arguments: ComposeToQuadlet) -> Self {
-        Self::from_route(
+        let mut generic = Self::from_route(
             InputType::Compose,
             OutputType::Quadlet,
             arguments.documents,
@@ -984,7 +1014,9 @@ impl GenericConversion {
             OutputRouteOptions::Quadlet(arguments.output),
             arguments.policy,
             arguments.diagnostics,
-        )
+        );
+        generic.deferred = arguments.deferred;
+        generic
     }
 
     fn from_quadlet_to_compose(arguments: QuadletToCompose) -> Self {
@@ -1188,7 +1220,7 @@ impl GenericConversion {
                 PodmanTargetContext::Unknown,
                 Grouping::Separate,
                 None,
-                output.output_layout,
+                output.output_layout.into(),
             ),
             OutputRouteOptions::Quadlet(output) => (
                 output.podman_minimum_version,
@@ -1206,10 +1238,11 @@ impl GenericConversion {
                 output.podman_target_context,
                 Grouping::Separate,
                 None,
-                output.output_layout,
+                output.output_layout.into(),
             ),
         };
         Self {
+            deferred: cli_deferred::DeferredCliOptions::default(),
             presentation: diagnostics.presentation,
             report_file: diagnostics.report_file,
             generate_error_report: diagnostics.generate_error_report,
@@ -1263,8 +1296,26 @@ enum OutputRouteOptions {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum NativeOutputLayout {
+    Files,
+}
+impl From<NativeOutputLayout> for OutputLayout {
+    fn from(_: NativeOutputLayout) -> Self {
+        Self::Files
+    }
+}
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum OutputLayout {
     Files,
+    QuadletBundle,
+}
+impl OutputLayout {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::QuadletBundle => "quadlet-bundle",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -1937,7 +1988,28 @@ impl ReportAliases {
 
     fn add_inputs(&mut self, inputs: &[ResolvedInput]) {
         for (index, input) in inputs.iter().enumerate() {
-            if let Some(path) = input.path() {
+            if let ResolvedInput::BundleMember {
+                transport,
+                transport_index,
+                member,
+            } = input
+            {
+                let alias = format!("<input-{}>", index + 1);
+                self.values.push((input.label(), alias.clone()));
+                self.values.push((member.name().to_owned(), alias));
+                let path = transport.display().to_string();
+                let basename = transport
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("")
+                    .to_owned();
+                self.values.retain(|(value, _)| value != &path && value != &basename);
+                self.values.push((path, cli_bundle::transport_alias(*transport_index)));
+                if !basename.is_empty() {
+                    self.values
+                        .push((basename, cli_bundle::transport_alias(*transport_index)));
+                }
+            } else if let Some(path) = input.path() {
                 self.values
                     .push((path.display().to_string(), format!("<input-{}>", index + 1)));
                 if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
@@ -1949,6 +2021,13 @@ impl ReportAliases {
                     ignored.display().to_string(),
                     format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1),
                 ));
+            }
+        }
+        for (index, input) in inputs.iter().enumerate() {
+            if let ResolvedInput::BundleMember { member, .. } = input {
+                self.values.retain(|(value, _)| value != member.name());
+                self.values
+                    .push((member.name().to_owned(), format!("<input-{}>", index + 1)));
             }
         }
         self.values.sort_by_key(|value| std::cmp::Reverse(value.0.len()));
@@ -1988,7 +2067,7 @@ impl ReportAliases {
     }
 }
 
-fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionReport {
+fn new_report(arguments: &GenericConversion, route: RouteSpec) -> InvocationReport {
     let requested_versions = match route.target_selector {
         TargetSelector::PodmanRange => VersionBounds {
             minimum: arguments.podman_minimum_version.requested.clone(),
@@ -2003,7 +2082,7 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
             maximum: "rolling".into(),
         },
     };
-    let mut report = ConversionReport::new(
+    let mut report = InvocationReport::new(
         env!("CARGO_PKG_VERSION"),
         route.source_name(),
         route.target_name(),
@@ -2019,7 +2098,7 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
     });
     report.choices.push(ReportChoice {
         name: "output_layout".into(),
-        value: format!("{:?}", arguments.output_layout).to_lowercase(),
+        value: arguments.output_layout.as_str().into(),
     });
     match route.input {
         InputType::Compose => report.choices.push(ReportChoice {
@@ -2128,6 +2207,9 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("output_layout", "--output-layout"),
         ("loss_policy", "--loss-policy"),
         ("environment_values", "--environment-values"),
+        ("references", "--quadlet-defer"),
+        ("files", "--quadlet-service-env-file"),
+        ("assignments", "--quadlet-service-env"),
         ("report_file", "--report-file"),
         ("generate_error_report", "--generate-error-report"),
         ("include_podman_snapshot", "--include-podman-snapshot"),
@@ -2139,7 +2221,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
     .into_iter()
     .filter_map(|(id, name)| explicitly_supplied(matches, id).then_some(name.into()))
     .collect();
-    if command_kind == "convert" && explicitly_supplied(matches, "output_directory") {
+    if matches!(command_kind, "convert" | "extract") && explicitly_supplied(matches, "output_directory") {
         option_names.push("--output-directory".into());
     }
     SanitizedInvocation {
@@ -2154,7 +2236,7 @@ fn report_failure(
     summary: &str,
     stage: FailedStage,
     aliases: &ReportAliases,
-) -> ConversionReport {
+) -> InvocationReport {
     let mut report = route.map_or_else(
         || new_unavailable_report(arguments),
         |route| new_report(arguments, route),
@@ -2170,8 +2252,8 @@ fn report_failure(
     report
 }
 
-fn new_unavailable_report(arguments: &GenericConversion) -> ConversionReport {
-    let mut report = ConversionReport::new(
+fn new_unavailable_report(arguments: &GenericConversion) -> InvocationReport {
+    let mut report = InvocationReport::new(
         env!("CARGO_PKG_VERSION"),
         arguments.input_type.name(),
         arguments.output_type.name(),
@@ -2240,6 +2322,9 @@ async fn run(cli: Cli, matches: &clap::ArgMatches) -> Result<ExitCode, Box<dyn E
             let (conversion, output_directory) = arguments.input.into_invocation();
             run_generic(&conversion, matches, Some(&output_directory), false).await
         }
+        Command::Extract(arguments) => match arguments.input {
+            ExtractInput::Quadlet(arguments) => cli_bundle::run_extract(arguments, matches),
+        },
         Command::Validate(arguments) => run_generic(&arguments.into_generic(), matches, None, true).await,
         Command::Capabilities(presentation) => print_capabilities(presentation),
         Command::Rules(presentation) => print_rules(presentation),
@@ -2358,6 +2443,23 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                 "routes": route::routes()
                     .map(|route| capability_json(route, &minimum, &maximum, &podman_maximum))
                     .collect::<Vec<_>>(),
+                "quadlet": {
+                    "deferred_service_environment": {
+                        "route": "compose-to-quadlet",
+                        "minimum": minimum,
+                        "maximum": maximum,
+                        "container_environment": "direct-references-and-literal-parts",
+                        "host_bind": "one-leading-direct-reference-and-literal-slash-suffix",
+                        "providers": ["protected-inline", "mandatory-absolute-literal-files"],
+                        "provider_precedence": "inline-then-files-in-order-including-empty-overrides",
+                        "verification": "external-unverified",
+                        "reads_provider_files": false,
+                        "captures_ambient_environment": false,
+                        "literal_environment_parts_require_include": true,
+                        "inline_providers_require_include": true,
+                        "native_capabilities": ["quadlet.container.environment", "quadlet.container.volume", "systemd.section.pass-through"]
+                    }
+                },
                 "podman": {
                     "input_capabilities": podman_inputs
                         .iter()
@@ -2563,6 +2665,9 @@ struct RenderedFile {
 
 struct RenderedConversion {
     output: Option<Vec<RenderedFile>>,
+    bundle_members: Vec<boxferry::report::BundleMember>,
+    private_output: bool,
+    transport_error: Option<boxferry::quadlet_bundle::BundleError>,
     outcomes: Vec<boxferry::ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -2572,6 +2677,9 @@ impl RenderedConversion {
         let (output, outcomes, diagnostics) = result.into_parts();
         Self {
             output: output.map(render),
+            bundle_members: Vec::new(),
+            private_output: false,
+            transport_error: None,
             outcomes,
             diagnostics,
         }
@@ -2610,25 +2718,35 @@ impl std::fmt::Display for StructuredFailure {
 impl Error for StructuredFailure {}
 
 fn resolved_report_context(resolved: &[ResolvedInput]) -> (Vec<ReportInput>, Vec<DiscoveryDecision>) {
-    let inputs = resolved
-        .iter()
-        .enumerate()
-        .map(|(index, input)| ReportInput {
-            alias: if matches!(input, ResolvedInput::Stdin) {
-                "<stdin>".into()
-            } else {
-                format!("<input-{}>", index + 1)
-            },
-            kind: if matches!(
-                input,
-                ResolvedInput::Discovered { .. } | ResolvedInput::ImplicitCompose { .. }
-            ) {
-                "discovered".into()
-            } else {
-                "file".into()
-            },
-        })
-        .collect();
+    let mut inputs = Vec::new();
+    let mut transports = BTreeSet::new();
+    for (index, input) in resolved.iter().enumerate() {
+        if let ResolvedInput::BundleMember { transport_index, .. } = input {
+            if transports.insert(*transport_index) {
+                inputs.push(ReportInput {
+                    alias: cli_bundle::transport_alias(*transport_index),
+                    kind: "quadlet-bundle".into(),
+                });
+            }
+        } else {
+            inputs.push(ReportInput {
+                alias: if matches!(input, ResolvedInput::Stdin) {
+                    "<stdin>".into()
+                } else {
+                    format!("<input-{}>", index + 1)
+                },
+                kind: if matches!(
+                    input,
+                    ResolvedInput::Discovered { .. } | ResolvedInput::ImplicitCompose { .. }
+                ) {
+                    "discovered"
+                } else {
+                    "file"
+                }
+                .into(),
+            });
+        }
+    }
     let discovery = resolved
         .iter()
         .enumerate()
@@ -2678,7 +2796,7 @@ async fn generic_convert(
     validate_only: bool,
 ) -> Result<
     (
-        ConversionReport,
+        InvocationReport,
         ExitCode,
         Vec<ResolvedInput>,
         Option<PodmanSupportEvidence>,
@@ -2702,7 +2820,7 @@ fn generic_compose_convert(
     route: RouteSpec,
     output_directory: Option<&Path>,
     validate_only: bool,
-) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+) -> Result<(InvocationReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
     if arguments.pod_name.is_some() && !matches!(arguments.grouping, Grouping::Pod) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2747,7 +2865,9 @@ fn generic_compose_convert(
             &discovered,
         )
     })?;
+    let deferred_options = arguments.deferred.plan()?;
     let conversion = ComposeConversion {
+        deferred_options: &deferred_options,
         inputs: &discovered,
         project_root: &project_root,
         fallback_name: &fallback_name,
@@ -2798,6 +2918,24 @@ fn explicitly_supplied(matches: &clap::ArgMatches, id: &str) -> bool {
 }
 
 fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io::Result<RouteSpec> {
+    if !arguments.deferred.is_empty() {
+        if arguments.input_type != InputType::Compose || arguments.output_type != OutputType::Quadlet {
+            return Err(io::Error::other(
+                "deferred service providers require Compose-to-Quadlet",
+            ));
+        }
+        if arguments.interpolate || !arguments.environment.is_empty() || !arguments.env_files.is_empty() {
+            return Err(io::Error::other(
+                "deferred mode cannot coexist with --interpolate, --env or --env-file; select one variable stage",
+            ));
+        }
+        if arguments.deferred.has_inline() && arguments.environment_values != EnvironmentValuePolicy::Include {
+            return Err(io::Error::other(
+                "inline service providers require --environment-values include; provider values are withheld by default",
+            ));
+        }
+        arguments.deferred.plan()?;
+    }
     let route = route::find(arguments.input_type, arguments.output_type);
     match route.input {
         InputType::Compose => {}
@@ -2842,6 +2980,12 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
             "--pod-name requires --quadlet-grouping pod",
         ));
     }
+    if matches!(arguments.output_layout, OutputLayout::QuadletBundle) && route.output != OutputType::Quadlet {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--output-layout quadlet-bundle requires Quadlet output",
+        ));
+    }
     Ok(route)
 }
 
@@ -2851,9 +2995,10 @@ fn generic_quadlet_convert(
     route: RouteSpec,
     output_directory: Option<&Path>,
     validate_only: bool,
-) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
-    let discovered = resolve_quadlet_inputs(ordered)?;
+) -> Result<(InvocationReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
+    let discovered =
+        resolve_quadlet_inputs(ordered).map_err(|error| cli_bundle::input_failure(error, arguments, &aliases))?;
     aliases.add_inputs(&discovered);
     let application_name = resolve_quadlet_application_name(arguments.application_name.as_deref(), &discovered)
         .map_err(|error| {
@@ -2896,7 +3041,7 @@ async fn generic_podman_convert(
     validate_only: bool,
 ) -> Result<
     (
-        ConversionReport,
+        InvocationReport,
         ExitCode,
         Vec<ResolvedInput>,
         Option<PodmanSupportEvidence>,
@@ -3453,6 +3598,16 @@ fn export_imported(
     aliases: &ReportAliases,
     discovered: &[ResolvedInput],
 ) -> Result<(RenderedConversion, VersionBounds), Box<dyn Error>> {
+    let protected_quadlet_config = imported.application().is_some_and(|application| {
+        application
+            .vendor_metadata()
+            .iter()
+            .any(boxferry::VendorMetadata::contains_sensitive)
+            || application
+                .services()
+                .iter()
+                .any(|service| service.value().execution_environment().is_some())
+    });
     let imported = if arguments.environment_values == EnvironmentValuePolicy::Withhold {
         let (mut application, outcomes, diagnostics) = imported.into_parts();
         if let Some(application) = &mut application {
@@ -3533,7 +3688,9 @@ fn export_imported(
             } else {
                 arguments.grouping.into()
             };
-            let mut exporter = QuadletExporter::new()?.with_grouping_policy(grouping);
+            let mut exporter = QuadletExporter::new()?
+                .with_grouping_policy(grouping)
+                .with_deferred_environment_values(arguments.environment_values == EnvironmentValuePolicy::Include);
             if let Some(root) = relative_host_path_root {
                 exporter = exporter.with_relative_host_path_root(root.to_owned())?;
             }
@@ -3544,16 +3701,7 @@ fn export_imported(
             let result = convert_imported(imported, &exporter, &target, arguments.loss_policy.into())
                 .map_err(|error| conversion_failure(&error, source_diagnostics, aliases, discovered))?;
             Ok((
-                RenderedConversion::from_result(result, |output| {
-                    output
-                        .files()
-                        .iter()
-                        .map(|file| RenderedFile {
-                            name: file.name().as_str().to_owned(),
-                            text: file.text().to_owned(),
-                        })
-                        .collect()
-                }),
+                cli_bundle::render_quadlet(result, arguments.output_layout, protected_quadlet_config),
                 VersionBounds {
                     minimum: minimum.to_string(),
                     maximum: maximum.to_string(),
@@ -3630,14 +3778,10 @@ fn load_quadlet_source(
 ) -> Result<QuadletSource, Box<dyn Error>> {
     let mut documents = Vec::with_capacity(discovered.len());
     for (index, input) in discovered.iter().enumerate() {
-        let path = input
-            .path()
-            .ok_or_else(|| io::Error::other("Quadlet input has no path"))?;
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
+        let name = input
+            .native_name()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Quadlet input filename is not UTF-8"))?;
-        let text = fs::read_to_string(path).map_err(|error| {
+        let text = input.quadlet_text().map_err(|error| {
             Box::new(StructuredFailure::with_context(
                 FailedStage::InputRead,
                 vec![sanitized_diagnostic(
@@ -3680,8 +3824,8 @@ fn resolve_quadlet_application_name(explicit: Option<&str>, discovered: &[Resolv
         ));
     };
     let stem = input
-        .path()
-        .and_then(Path::file_stem)
+        .native_name()
+        .and_then(|name| Path::new(name).file_stem())
         .and_then(|name| name.to_str())
         .ok_or_else(|| {
             io::Error::new(
@@ -3772,7 +3916,7 @@ fn finish_document_conversion(
     output_directory: Option<&Path>,
     validate_only: bool,
     document_conversion: DocumentConversion,
-) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+) -> Result<(InvocationReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
     let DocumentConversion {
         discovered,
         aliases,
@@ -3782,11 +3926,17 @@ fn finish_document_conversion(
     } = document_conversion;
     let RenderedConversion {
         output,
+        bundle_members,
+        private_output,
+        transport_error,
         outcomes,
         diagnostics,
     } = conversion;
     let mut report = new_report(arguments, route);
     report.application = Some(application_name);
+    report.bundle_members = bundle_members;
+    report.operation = if validate_only { "validate" } else { "convert" }.into();
+    report.input_bundle_members = cli_bundle::input_members(&discovered);
     report.resolved_versions = resolved_versions;
     (report.inputs, report.discovery) = resolved_report_context(&discovered);
     report.diagnostics = diagnostics
@@ -3794,6 +3944,24 @@ fn finish_document_conversion(
         .map(|diagnostic| report_diagnostic(diagnostic, &aliases))
         .collect();
     report.fidelity = fidelity_counts(&outcomes);
+    if let Some(error) = transport_error {
+        report.diagnostics.push(sanitized_diagnostic(
+            RuleId::OrchestrationFailed,
+            "error",
+            "Quadlet bundle transport could not be encoded",
+            &[
+                ("transport", "quadlet-bundle", false),
+                ("reason", &error.to_string(), false),
+            ],
+            &aliases,
+        ));
+        report.events.push("transport-encode-failed".into());
+        report.status = ReportStatus::Failure;
+        report.exit_category = ExitCategory::InputOrExecution;
+        report.failed_stage = Some(FailedStage::Conversion);
+        report.primary_diagnostic_code = Some(RuleId::OrchestrationFailed.definition().code().into());
+        return Ok((report, ExitCode::FAILURE, discovered));
+    }
     let invalid = conversion_is_invalid(&outcomes, &diagnostics);
     if output.is_none() {
         report.primary_diagnostic_code = blocking_diagnostic_code(&outcomes, arguments.loss_policy);
@@ -3811,7 +3979,7 @@ fn finish_document_conversion(
             if let Err(error) = write_rendered_output(
                 directory,
                 output,
-                arguments.environment_values == EnvironmentValuePolicy::Include,
+                arguments.environment_values == EnvironmentValuePolicy::Include || private_output,
             ) {
                 report.diagnostics.push(output_write_diagnostic(&error, &aliases));
                 report.events.push("output-write-failed".into());
@@ -3916,7 +4084,7 @@ async fn run_generic(
         Ok(ordered) => generic_convert(arguments, ordered, output_directory, validate_only).await,
         Err(error) => Err(error),
     };
-    let (mut report, primary_code, inputs, podman_support_evidence) = match result {
+    let (report, primary_code, inputs, podman_support_evidence) = match result {
         Ok(result) => result,
         Err(error) => {
             if let Some(structured) = error.downcast_ref::<StructuredFailure>() {
@@ -3955,7 +4123,38 @@ async fn run_generic(
             }
         }
     };
-    report.invocation = sanitized_invocation(matches, if validate_only { "validate" } else { "convert" });
+    finish_invocation(
+        arguments,
+        matches,
+        &aliases,
+        (report, primary_code, inputs, podman_support_evidence),
+        validate_only,
+        if validate_only { "validate" } else { "convert" },
+    )
+}
+
+type InvocationResult = (
+    InvocationReport,
+    ExitCode,
+    Vec<ResolvedInput>,
+    Option<PodmanSupportEvidence>,
+);
+#[allow(
+    clippy::too_many_lines,
+    reason = "shares report publication and presentation across conversion and extraction"
+)]
+fn finish_invocation(
+    arguments: &GenericConversion,
+    matches: &clap::ArgMatches,
+    aliases: &ReportAliases,
+    result: InvocationResult,
+    validate_only: bool,
+    operation: &str,
+) -> Result<ExitCode, Box<dyn Error>> {
+    let (mut report, primary_code, inputs, podman_support_evidence) = result;
+    report.operation = operation.into();
+    report.input_bundle_members = cli_bundle::input_members(&inputs);
+    report.invocation = sanitized_invocation(matches, operation);
     let mut final_code = primary_code;
     let snapshot_entries = podman_support_evidence
         .as_ref()
@@ -3970,7 +4169,7 @@ async fn run_generic(
         record_support_bundle_failure(
             &mut report,
             &format!("Podman snapshot was omitted before ZIP creation: {reason}"),
-            &aliases,
+            aliases,
         );
         mark_report_write_failure_if_success(&mut report, &mut final_code);
     }
@@ -3982,7 +4181,7 @@ async fn run_generic(
                 "error",
                 RuleId::ReportWriteFailed.definition().description(),
                 &[("reason", &error.to_string(), false)],
-                &aliases,
+                aliases,
             ));
             report.events.push("report-file-write-failed".into());
             if primary_code == ExitCode::SUCCESS {
@@ -4009,7 +4208,7 @@ async fn run_generic(
                 record_support_bundle_failure(
                     &mut report,
                     &format!("Podman snapshot was omitted from the ZIP: {error}"),
-                    &aliases,
+                    aliases,
                 );
                 mark_report_write_failure_if_success(&mut report, &mut final_code);
                 snapshot_redactions = None;
@@ -4023,13 +4222,13 @@ async fn run_generic(
                 ) {
                     Ok(path) => error_report_path = Some(path),
                     Err(fallback_error) => {
-                        record_support_bundle_failure(&mut report, &fallback_error.to_string(), &aliases);
+                        record_support_bundle_failure(&mut report, &fallback_error.to_string(), aliases);
                         mark_report_write_failure_if_success(&mut report, &mut final_code);
                     }
                 }
             }
             Err(error) => {
-                record_support_bundle_failure(&mut report, &error.to_string(), &aliases);
+                record_support_bundle_failure(&mut report, &error.to_string(), aliases);
                 mark_report_write_failure_if_success(&mut report, &mut final_code);
             }
         }
@@ -4055,7 +4254,7 @@ fn print_human_progress(arguments: &GenericConversion, message: &str) {
     }
 }
 
-fn record_support_bundle_failure(report: &mut ConversionReport, reason: &str, aliases: &ReportAliases) {
+fn record_support_bundle_failure(report: &mut InvocationReport, reason: &str, aliases: &ReportAliases) {
     report.diagnostics.push(sanitized_diagnostic(
         RuleId::SupportBundleWriteFailed,
         "error",
@@ -4066,7 +4265,7 @@ fn record_support_bundle_failure(report: &mut ConversionReport, reason: &str, al
     report.events.push("support-bundle-write-failed".into());
 }
 
-fn mark_report_write_failure_if_success(report: &mut ConversionReport, final_code: &mut ExitCode) {
+fn mark_report_write_failure_if_success(report: &mut InvocationReport, final_code: &mut ExitCode) {
     if *final_code == ExitCode::SUCCESS {
         report.failed_stage = Some(FailedStage::ReportWrite);
         report.status = ReportStatus::Failure;
@@ -4090,7 +4289,7 @@ fn failure_stage(message: &str) -> FailedStage {
 
 fn present(
     arguments: &GenericConversion,
-    report: &mut ConversionReport,
+    report: &mut InvocationReport,
     inputs: &[ResolvedInput],
     validate_only: bool,
     error_report_path: Option<&Path>,
@@ -4106,11 +4305,15 @@ fn present(
         return Ok(());
     }
     if !presentation.quiet {
-        println!("route: {} -> {}", report.source_type, report.target_type);
+        if report.operation == "extract" {
+            println!("operation: extract Quadlet bundle to native files");
+        } else {
+            println!("route: {} -> {}", report.source_type, report.target_type);
+        }
         for input in inputs {
             println!("input: {}", input.label());
         }
-        if presentation.verbose {
+        if presentation.verbose && report.operation != "extract" {
             match route::find(arguments.input_type, arguments.output_type).target_selector {
                 TargetSelector::PodmanRange => {
                     println!(
@@ -4156,6 +4359,7 @@ fn present(
             println!("application: {application}");
         }
         match report.status {
+            ReportStatus::Success if report.operation == "extract" => println!("stage: extraction complete"),
             ReportStatus::Success => println!("stage: conversion complete"),
             ReportStatus::Blocked => println!("stage: conversion blocked"),
             ReportStatus::Failure => println!(
@@ -4191,7 +4395,7 @@ fn present(
     Ok(())
 }
 
-fn print_final_result(report: &ConversionReport, validate_only: bool) {
+fn print_final_result(report: &InvocationReport, validate_only: bool) {
     match report.status {
         ReportStatus::Success if validate_only => println!("boxferry: command succeeded; validation complete"),
         ReportStatus::Success => println!(
@@ -4233,6 +4437,7 @@ const fn failed_stage_name(stage: FailedStage) -> &'static str {
 }
 
 struct ComposeConversion<'a> {
+    deferred_options: &'a boxferry::QuadletDeferredOptions,
     inputs: &'a [ResolvedInput],
     project_root: &'a Path,
     fallback_name: &'a str,
@@ -4385,7 +4590,7 @@ fn load_compose_source(
         &merged,
     )?;
     Ok(LoadedComposeSource {
-        source,
+        source: source.with_deferred_options(conversion.deferred_options.clone()),
         application,
         preprocessing_diagnostics,
     })
@@ -4435,6 +4640,9 @@ fn compose_source(
         !loaded.diagnostics().contains(diagnostic) && !interpolation_diagnostics.contains(diagnostic)
     });
     let mut source = ComposeSource::new(project, Identifier::new(fallback_name)?)?;
+    if interpolated.is_some() {
+        source = source.with_interpolation_applied();
+    }
     for (compose, neutral) in identities {
         source = source.with_source_id(compose, neutral);
     }
@@ -4530,59 +4738,7 @@ fn resolve_compose_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<Resolved
 }
 
 fn resolve_quadlet_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<ResolvedInput>> {
-    let mut resolved = Vec::new();
-    let mut paths = BTreeSet::new();
-    let mut basenames = BTreeSet::new();
-    for item in ordered {
-        match item {
-            OrderedInput::File(path) => {
-                if path == Path::new("-") {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "stdin is not supported for Quadlet input",
-                    ));
-                }
-                let path = resolve_regular_file(&path)?;
-                if !is_supported_quadlet_path(&path) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Quadlet input must use a supported lower-case unit extension",
-                    ));
-                }
-                resolved.push(ResolvedInput::File(path));
-            }
-            OrderedInput::Directory(path) => resolved.extend(discover_quadlet_directory(&path)?),
-            OrderedInput::ImplicitCompose => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "implicit Compose input is not a Quadlet input",
-                ));
-            }
-        }
-    }
-    for input in &resolved {
-        let path = input
-            .path()
-            .ok_or_else(|| io::Error::other("Quadlet input has no path"))?;
-        let canonical = fs::canonicalize(path)?;
-        if !paths.insert(canonical) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "duplicate resolved Quadlet input",
-            ));
-        }
-        let basename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Quadlet input filename is not UTF-8"))?;
-        if !basenames.insert(basename.to_owned()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "duplicate Quadlet unit basename",
-            ));
-        }
-    }
-    Ok(resolved)
+    cli_bundle::resolve_inputs(ordered)
 }
 
 fn discover_quadlet_directory(directory: &Path) -> io::Result<Vec<ResolvedInput>> {
@@ -4636,6 +4792,11 @@ fn is_supported_quadlet_path(path: &Path) -> bool {
 #[derive(Clone, Debug)]
 enum ResolvedInput {
     File(PathBuf),
+    BundleMember {
+        transport: PathBuf,
+        transport_index: usize,
+        member: Arc<boxferry::quadlet_bundle::QuadletBundleMember>,
+    },
     Discovered {
         selected: PathBuf,
         ignored: Vec<PathBuf>,
@@ -4653,11 +4814,30 @@ impl ResolvedInput {
     fn path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
+            Self::BundleMember { transport, .. } => Some(transport),
             Self::Discovered { selected, .. } | Self::ImplicitCompose { selected, .. } => Some(selected),
             Self::Stdin => None,
         }
     }
+    fn native_name(&self) -> Option<&str> {
+        match self {
+            Self::BundleMember { member, .. } => Some(member.name()),
+            _ => self.path()?.file_name()?.to_str(),
+        }
+    }
+    fn quadlet_text(&self) -> io::Result<String> {
+        match self {
+            Self::BundleMember { member, .. } => Ok(member.text().to_owned()),
+            _ => fs::read_to_string(
+                self.path()
+                    .ok_or_else(|| io::Error::other("Quadlet input has no path"))?,
+            ),
+        }
+    }
     fn label(&self) -> String {
+        if let Self::BundleMember { transport, member, .. } = self {
+            return format!("{}#{}", transport.display(), member.name());
+        }
         self.path()
             .map_or_else(|| "<stdin>".to_owned(), |path| path.display().to_string())
     }
@@ -4669,13 +4849,18 @@ impl ResolvedInput {
     }
     fn source_directory(&self) -> io::Result<Option<PathBuf>> {
         match self {
-            Self::File(path) | Self::Discovered { selected: path, .. } => absolute_parent(path).map(Some),
+            Self::File(path) | Self::Discovered { selected: path, .. } | Self::BundleMember { transport: path, .. } => {
+                absolute_parent(path).map(Some)
+            }
             Self::ImplicitCompose { directory, .. } => Ok(Some(directory.clone())),
             Self::Stdin => Ok(None),
         }
     }
     fn read(&self, project_root: &Path) -> io::Result<(String, PathBuf, String)> {
         match self {
+            Self::BundleMember { transport, member, .. } => {
+                Ok((self.label(), absolute_parent(transport)?, member.text().to_owned()))
+            }
             Self::Stdin => {
                 let mut text = String::new();
                 io::stdin().read_to_string(&mut text)?;
@@ -5215,7 +5400,8 @@ fn normalize_report_diagnostics(diagnostics: &mut Vec<ReportDiagnostic>) {
     });
 }
 
-fn order_report_diagnostics_causally(report: &mut ConversionReport) {
+fn order_report_diagnostics_causally(report: &mut InvocationReport) {
+    let report = report.as_conversion_mut();
     let primary = report.primary_diagnostic_code.as_deref();
     report.diagnostics.sort_by_key(|diagnostic| {
         if Some(diagnostic.code.as_str()) == primary {
@@ -5230,7 +5416,7 @@ fn order_report_diagnostics_causally(report: &mut ConversionReport) {
     });
 }
 
-fn refresh_report_outcome(report: &mut ConversionReport) {
+fn refresh_report_outcome(report: &mut InvocationReport) {
     normalize_report_diagnostics(&mut report.diagnostics);
     if report.status == ReportStatus::Success {
         report.primary_diagnostic_code = None;
@@ -5300,7 +5486,7 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
 const HUMAN_SUBJECT_SAMPLE_LIMIT: usize = 3;
 const HUMAN_NATIVE_PATH_SAMPLE_LIMIT: usize = 8;
 
-fn print_report_diagnostics(report: &ConversionReport, verbose: bool) {
+fn print_report_diagnostics(report: &InvocationReport, verbose: bool) {
     if verbose {
         print_report_diagnostic_occurrences(report);
         return;
@@ -5374,7 +5560,7 @@ fn print_report_diagnostics(report: &ConversionReport, verbose: bool) {
     }
 }
 
-fn print_report_diagnostic_occurrences(report: &ConversionReport) {
+fn print_report_diagnostic_occurrences(report: &InvocationReport) {
     if let Some(context) = loss_policy_context(report) {
         eprintln!("policy: {context}");
         if !report.diagnostics.is_empty() {
@@ -5674,7 +5860,7 @@ fn bounded_human_samples(values: &BTreeSet<String>, limit: usize) -> String {
     samples
 }
 
-fn print_fix_first(report: &ConversionReport) {
+fn print_fix_first(report: &InvocationReport) {
     let Some(fix_first) = &report.fix_first else {
         return;
     };
@@ -5688,7 +5874,7 @@ fn print_fix_first(report: &ConversionReport) {
     eprintln!("  next: {}", fix_first.next_step);
 }
 
-fn loss_policy_context(report: &ConversionReport) -> Option<String> {
+fn loss_policy_context(report: &InvocationReport) -> Option<String> {
     let policy = report
         .choices
         .iter()
@@ -5755,7 +5941,7 @@ fn human_field_name(name: &str) -> &str {
 }
 
 fn serialize_report(
-    report: &mut ConversionReport,
+    report: &mut InvocationReport,
     podman_snapshot_redactions: Option<usize>,
 ) -> Result<String, Box<dyn Error>> {
     refresh_report_outcome(report);
@@ -5820,7 +6006,7 @@ fn serialize_report(
 }
 
 fn serialize_console_report(
-    report: &mut ConversionReport,
+    report: &mut InvocationReport,
     error_report_path: Option<&Path>,
     podman_snapshot_redactions: Option<usize>,
 ) -> Result<String, Box<dyn Error>> {
@@ -6232,72 +6418,12 @@ fn absolute_parent(path: &Path) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other(format!("input path has no parent: {}", path.display())))
 }
 
-fn prepare_output_directory(directory: &Path, private: bool) -> io::Result<bool> {
-    #[cfg(unix)]
-    let create_result = if private {
-        fs::DirBuilder::new().mode(0o700).create(directory)
-    } else {
-        fs::create_dir(directory)
-    };
-    #[cfg(not(unix))]
-    let create_result = fs::create_dir(directory);
-    match create_result {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(directory)?;
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("output path is not a non-symlink directory: {}", directory.display()),
-                ));
-            }
-            if fs::read_dir(directory)?.next().transpose()?.is_some() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("output directory is not empty: {}", directory.display()),
-                ));
-            }
-            Ok(false)
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn cleanup_output_write(directory: &Path, created_directory: bool, created_files: &[PathBuf]) {
-    for path in created_files {
-        let _ = fs::remove_file(path);
-    }
-    if created_directory {
-        let _ = fs::remove_dir(directory);
-    }
-}
-
 fn write_rendered_output(directory: &Path, files: &[RenderedFile], private: bool) -> io::Result<()> {
-    let created_directory = prepare_output_directory(directory, private)?;
-    let mut created = Vec::with_capacity(files.len());
-    for file in files {
-        let path = directory.join(&file.name);
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        if private {
-            options.mode(0o600);
-        }
-        let mut destination = match options.open(&path) {
-            Ok(destination) => destination,
-            Err(error) => {
-                cleanup_output_write(directory, created_directory, &created);
-                return Err(error);
-            }
-        };
-        if let Err(error) = destination.write_all(file.text.as_bytes()) {
-            created.push(path);
-            cleanup_output_write(directory, created_directory, &created);
-            return Err(error);
-        }
-        created.push(path);
-    }
-    Ok(())
+    let files = files
+        .iter()
+        .map(|file| boxferry::output::OutputFile::new(&file.name, file.text.as_bytes()))
+        .collect::<Vec<_>>();
+    boxferry::output::write_new_files(directory, &files, private)
 }
 
 #[cfg(test)]
@@ -6655,7 +6781,7 @@ mod tests {
         }
 
         assert_eq!(value_names::<ConsoleFormat>(), vec!["json"]);
-        assert_eq!(value_names::<OutputLayout>(), vec!["files"]);
+        assert_eq!(value_names::<OutputLayout>(), vec!["files", "quadlet-bundle"]);
         assert_eq!(value_names::<Grouping>(), vec!["separate", "pod"]);
         assert_eq!(value_names::<CliLossPolicy>(), vec!["exact", "approximate", "partial"]);
 
@@ -6666,7 +6792,7 @@ mod tests {
         };
         for (option, values) in [
             ("--console-format", ["json"].as_slice()),
-            ("--output-layout", ["files"].as_slice()),
+            ("--output-layout", ["files", "quadlet-bundle"].as_slice()),
             ("--quadlet-grouping", ["separate", "pod"].as_slice()),
             ("--loss-policy", ["exact", "approximate", "partial"].as_slice()),
         ] {
@@ -6992,6 +7118,7 @@ mod tests {
         ));
         fs::write(&environment_file, "FILE_VALUE=file-value-canary\n")?;
         let arguments = GenericConversion {
+            deferred: cli_deferred::DeferredCliOptions::default(),
             presentation: Presentation {
                 verbose: false,
                 quiet: false,
@@ -7073,6 +7200,57 @@ mod tests {
             );
         }
         fs::remove_file(environment_file)?;
+        Ok(())
+    }
+
+    #[test]
+    fn invocation_transport_metadata_survives_bounded_json_and_support_bundle() -> Result<(), Box<dyn Error>> {
+        let mut report = InvocationReport::new(
+            "test",
+            "quadlet",
+            "quadlet",
+            VersionBounds {
+                minimum: "not-applicable".into(),
+                maximum: "not-applicable".into(),
+            },
+        );
+        report.operation = "extract".into();
+        report.status = ReportStatus::Success;
+        report.exit_category = ExitCategory::Success;
+        report.review_required = false;
+        report.bundle_members = (0..260)
+            .map(|_| boxferry::report::BundleMember {
+                transport: "<input-1>".into(),
+                name: "x".repeat(boxferry::report::MAX_TEXT_BYTES),
+                unit_type: "container".into(),
+                size: 17,
+            })
+            .collect();
+        report.input_bundle_members.push(boxferry::report::InputBundleMember {
+            transport_alias: "<bundle-input-1>".into(),
+            member_alias: "<input-1>".into(),
+        });
+        let encoded = serialize_report(&mut report, None)?;
+        assert!(encoded.len() <= boxferry::report::MAX_JSON_BYTES);
+        let value: serde_json::Value = serde_json::from_str(&encoded)?;
+        assert_eq!(value["operation"], "extract");
+        assert_eq!(value["input_bundle_members"][0]["member_alias"], "<input-1>");
+        assert!(value["bundle_members"].as_array().ok_or("members")?.len() < 260);
+        assert!(
+            report
+                .truncations
+                .iter()
+                .any(|truncation| truncation.field == "bundle_members")
+        );
+        let console = serialize_console_report(&mut report, Some(Path::new("error.zip")), None)?;
+        let console: serde_json::Value = serde_json::from_str(&console)?;
+        assert_eq!(console["operation"], "extract");
+        assert_eq!(console["error_report_path"], "error.zip");
+        let archive = build_support_bundle(b"readme", encoded.as_bytes())?;
+        let mut zip = zip::ZipArchive::new(Cursor::new(archive))?;
+        let mut bundled = String::new();
+        zip.by_name("report.json")?.read_to_string(&mut bundled)?;
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&bundled)?, value);
         Ok(())
     }
 

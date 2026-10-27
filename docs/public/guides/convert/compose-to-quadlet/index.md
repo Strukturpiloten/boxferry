@@ -100,6 +100,87 @@ boxferry convert compose quadlet --input-file compose-unresolved.yaml --output-d
 appears in `fix first`. Provide the value with `--env` or `--env-file`, or
 use `--interpolate` to select a process-environment fallback.
 
+## Defer explicit values to the target service
+
+Use `compose-deferred.yaml` when the target service must supply deployment values:
+
+```yaml
+---
+name: deferred-example
+services:
+  web:
+    image: example.invalid/web:1
+    restart: "no"
+    environment:
+      APP_MODE: "${RUN_MODE}"
+    volumes:
+      - "${DATA_ROOT}/config:/config:ro"
+```
+
+Declare each reference independently of its provider. The external file need not exist on the
+conversion machine; BoxFerry never reads, copies or creates it.
+
+<!-- boxferry-example: compose-to-quadlet-deferred-files -->
+
+```console
+boxferry convert compose quadlet --input-file compose-deferred.yaml --quadlet-defer web:RUN_MODE --quadlet-defer web:DATA_ROOT --quadlet-service-env-file web=/etc/boxferry/example.env --output-directory quadlet-deferred-output
+```
+
+The container retains `APP_MODE=${RUN_MODE}` and `${DATA_ROOT}/config:/config:ro`. The provider
+is a separate `[Service] EnvironmentFile` declaration. Provider variables are not automatically
+forwarded into the container. `BFQ0015` identifies these requirements as **external-unverified**;
+exact conversion does not prove that files exist or that their values work on the target.
+
+Alternatively, authorize protected inline service providers explicitly:
+
+<!-- boxferry-example: compose-to-quadlet-deferred-inline -->
+
+```console
+boxferry convert compose quadlet --input-file compose-deferred.yaml --quadlet-defer web:RUN_MODE --quadlet-defer web:DATA_ROOT --quadlet-service-env web:RUN_MODE=production --quadlet-service-env web:DATA_ROOT=/srv/example --environment-values include --output-directory quadlet-deferred-inline-output
+```
+
+Inline assignments use `[Service] Environment`. All external files override inline assignments;
+later files override earlier files, including empty overrides. Assignment values are literal:
+`$OTHER` inside a provider value is not recursively expanded. Dollar and percent characters in
+provider paths are also literal. Files must have absolute paths without glob activation.
+
+Pure reference environment expressions work with the default `--environment-values withhold`.
+Any nonempty literal part, such as `prefix-${RUN_MODE}`, and every inline provider require
+`include`, including an empty inline value. Generated output remains private on Unix; diagnostics,
+reports and support ZIPs withhold provider values. Bind suffixes describe paths and need no
+separate environment-value acquisition consent.
+
+Only direct `$NAME`/`${NAME}` references in plain or double-quoted scalars are supported.
+Defaults, alternatives, required operators, malformed/nested expressions, and dollar-bearing
+single-quoted/block scalars require conversion-time resolution. Bind sources allow one leading
+reference and an optional safe slash suffix; native `.volume`/`.artifact` suffix rewrites are
+rejected. Targets/options, named volumes and other deferred fields remain unsupported. Effective
+bind roots must be nonempty absolute paths without colons or control characters. Inline-only
+known-invalid roots fail during conversion; file overrides remain external requirements. Missing
+or empty container environment references contribute empty strings.
+
+Unused references, orphan providers, duplicate entries, unknown or inactive services and unbound
+references fail. These flags cannot coexist with conversion-time `--env`, `--env-file`, or
+`--interpolate`. `validate compose quadlet` checks the same plan without writing output. Bundles
+preserve these declarations, but extraction does not migrate provider files or host data. Reverse
+conversion reports unresolved execution references and providers as unsupported intent.
+
+## Single-file transport
+
+Use `--output-layout quadlet-bundle` to transport the complete generated unit set in one file.
+[Extract the bundle](../../quadlet-bundles/) before native installation. Ordinary native files
+remain the default, and grouping/loss policy are unchanged.
+
+## Vendor extensions
+
+Application and direct-service `x-*` metadata is retained as inert typed data in the original vendor's
+`X-` section. Application metadata uses the lexicographically smallest generated unit filename as
+its carrier; other units contain references. Service metadata stays on its `.container` unit.
+Keep these files together for conversion back to Compose. Folded description strings retain the
+folded presentation hint required by some catalogue validators. Metadata does not execute generators
+or supply runtime settings. See [compatibility](../../../reference/compatibility/#vendor-metadata)
+for supported shapes, limits and privacy behavior.
+
 ## Output policy
 
 - The default target covers Podman 5.4.0 through 6.1.2.

@@ -1,0 +1,10 @@
+---
+name: deferred-example
+services:
+  web:
+    image: example.invalid/web:1
+    restart: "no"
+    environment:
+      APP_MODE: "${RUN_MODE}"
+    volumes:
+      - "${DATA_ROOT}/config:/config:ro"

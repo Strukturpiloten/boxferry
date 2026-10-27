@@ -50,9 +50,9 @@ a gap or an unfinished later task into success.
 
 Lens revisions come only from the reviewed catalogue. Changing a ComposeLens or QuadletLens pin
 requires changing `tiers.toml`; the runner accepts no command-line revision override.
-The QuadletLens candidate is bound to the released 0.2.4 commit and its 6.1.2 generator contracts.
-Its release tag/commit pair is Renovate-managed but requires explicit native revalidation.
-The ComposeLens consumer binds the published 0.3.4 release and independent authored contracts,
+The QuadletLens candidate is bound to the released 0.3.0 commit and its 6.1.2 generator contracts.
+Its verified release tag/commit pair is Renovate-managed and requires explicit native revalidation.
+The ComposeLens consumer binds the published 0.4.0 release and independent authored contracts,
 including the service/environment association repair from
 [release PR #175](https://github.com/Strukturpiloten/compose-lens/pull/175).
 It is not evidence of new Compose-provider or Podman runtime compatibility.

@@ -22,6 +22,13 @@ generated result to a same-format fixed point. The remaining route, CLI, report,
 repository-policy tests exercise focused Compose/Quadlet behaviors and their public orchestration
 boundary.
 
+`vendor_metadata.rs` owns inert metadata type/scope round trips, folded text, native wire records,
+carrier ownership/conflicts, fresh provenance, privacy refusal and explicit Podman losses.
+
+`quadlet_bundle.rs` owns bounded framing and create-new extraction. `quadlet_bundle_cli.rs` owns
+transport output across routes, expanded input identity/provenance, physical/member reports and
+byte-preserving extraction versus semantic conversion losses.
+
 `repository_policy.rs` also owns static and focused helper contracts for the bounded Nextcloud,
 Forgejo, Paperless, and Immich live application profiles. The Immich checks keep the authored
 offline replay distinct from runtime evidence, pin the sole rootless cell and every external digest,
@@ -35,3 +42,7 @@ acquisition while repository policy keeps their redacted evidence separate from 
 `scenario_contract.rs` owns catalogue-only application acceptance. It validates both supported manifest spellings, all exporters for every input, independent neutral intent, exact artifact/diagnostic/loss sidecars, protected-value counterfactuals, and applicable reimports. Real-world Compose blobs are vendored with pinned Git provenance and reviewed legal files so this suite remains offline. Remote corpus fetching is a refresh check, not a test dependency.
 
 Podman JSON and command artifacts are validated as deployment plans—including creates, external preconditions, image operations, start order, and CLI/API parity—and are never treated as observed inventory. `native-validation`, `runtime-probe`, and `reimport` remain separate dimensions; a reviewed gap in one cannot be renamed migration success by updating a golden file.
+
+`deferred_quadlet.rs` covers embedded authorization, sourced expressions, target endpoints and
+native literal parity. `deferred_quadlet_cli.rs` covers explicit provider plans, scope/order,
+no acquisition, disclosure, invalid expressions and private output.

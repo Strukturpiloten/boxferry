@@ -72,6 +72,7 @@ pub enum RuleId {
     QuadletNativeDocumentSet = 5_001_103,
     QuadletNativeFailure = 5_001_104,
     PodmanStateReconstructed = 4_000_009,
+    QuadletExternalEnvironmentUnverified = 5_000_015,
 }
 
 /// Immutable metadata shared by human, JSON, and support-bundle presentation.
@@ -213,7 +214,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-output-unsupported",
         Warning,
         "Neutral application intent is not represented in generated Compose output.",
-        "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+        "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Protected vendor metadata also blocks every loss policy because fresh Compose text cannot retain sensitivity. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
     ),
     rule!(
         ComposeGenerationFailed,
@@ -584,6 +585,14 @@ pub const RULES: &[DiagnosticRule] = &[
         "Resolve source variables before conversion; for Compose input, supply --env-file FILE or --env NAME=VALUE, or use --interpolate for process-variable fallback."
     ),
     rule!(
+        QuadletExternalEnvironmentUnverified,
+        "BFQ0015",
+        "quadlet-external-environment-unverified",
+        Note,
+        "Service execution environment prerequisites are external-unverified.",
+        "Provision mandatory service environment files and reference values on the target; bind roots must resolve to nonempty absolute paths without colons or control characters. Conversion never reads providers or verifies runtime availability."
+    ),
+    rule!(
         QuadletSourceInvalid,
         "BFQ1001",
         "quadlet-source-invalid",
@@ -707,14 +716,15 @@ impl RuleId {
             Self::QuadletDependencyInvalid => &RULES[50],
             Self::QuadletCapabilityDeprecated => &RULES[51],
             Self::QuadletUnresolvedVariable => &RULES[52],
-            Self::QuadletSourceInvalid => &RULES[53],
-            Self::QuadletModelInvalid => &RULES[54],
-            Self::QuadletInputUnsupported => &RULES[55],
-            Self::QuadletInputApproximation => &RULES[56],
-            Self::QuadletNativeSyntax => &RULES[57],
-            Self::QuadletNativeModel => &RULES[58],
-            Self::QuadletNativeDocumentSet => &RULES[59],
-            Self::QuadletNativeFailure => &RULES[60],
+            Self::QuadletSourceInvalid => &RULES[54],
+            Self::QuadletModelInvalid => &RULES[55],
+            Self::QuadletInputUnsupported => &RULES[56],
+            Self::QuadletInputApproximation => &RULES[57],
+            Self::QuadletNativeSyntax => &RULES[58],
+            Self::QuadletNativeModel => &RULES[59],
+            Self::QuadletNativeDocumentSet => &RULES[60],
+            Self::QuadletNativeFailure => &RULES[61],
+            Self::QuadletExternalEnvironmentUnverified => &RULES[53],
         }
     }
 }
@@ -732,6 +742,140 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{RULES, RuleId, find_rule};
+
+    #[test]
+    fn historical_rule_discriminants_remain_stable() {
+        assert_eq!(RuleId::ComposeModelInvalid as u32, 1_000_001);
+        assert_eq!(RuleId::ComposeProfileRequired as u32, 1_000_002);
+        assert_eq!(RuleId::ComposeProfileMismatch as u32, 1_000_003);
+        assert_eq!(RuleId::ComposeIntentUnsupported as u32, 1_000_004);
+        assert_eq!(RuleId::ComposeValueInvalid as u32, 1_000_005);
+        assert_eq!(RuleId::ComposeTargetInvalid as u32, 1_000_006);
+        assert_eq!(RuleId::ComposeOutputUnsupported as u32, 1_000_007);
+        assert_eq!(RuleId::ComposeGenerationFailed as u32, 1_000_008);
+        assert_eq!(RuleId::ComposeCompatibilityConstraint as u32, 1_000_009);
+        assert_eq!(RuleId::ComposeUnsetVariable as u32, 1_000_101);
+        assert_eq!(RuleId::ComposeRequiredVariable as u32, 1_000_102);
+        assert_eq!(RuleId::ComposeInterpolationInvalid as u32, 1_000_103);
+        assert_eq!(RuleId::ComposeInterpolationNestingLimit as u32, 1_000_104);
+        assert_eq!(RuleId::ComposeUnresolvedVariable as u32, 1_000_105);
+        assert_eq!(RuleId::ComposeNativeError as u32, 1_000_197);
+        assert_eq!(RuleId::ComposeNativeWarning as u32, 1_000_198);
+        assert_eq!(RuleId::ComposeNativeNote as u32, 1_000_199);
+        assert_eq!(RuleId::OrchestrationFailed as u32, 3_001_000);
+        assert_eq!(RuleId::InputReadFailed as u32, 3_001_001);
+        assert_eq!(RuleId::ComposeProjectRootInvalid as u32, 3_001_002);
+        assert_eq!(RuleId::PodmanTargetSelectionInvalid as u32, 3_001_003);
+        assert_eq!(RuleId::InterpolationInputInvalid as u32, 3_001_004);
+        assert_eq!(RuleId::ComposeLoadFailed as u32, 3_001_005);
+        assert_eq!(RuleId::ConversionFailed as u32, 3_001_006);
+        assert_eq!(RuleId::QuadletParseFailed as u32, 3_001_007);
+        assert_eq!(RuleId::OutputDirectoryNotEmpty as u32, 3_002_001);
+        assert_eq!(RuleId::OutputPathInvalid as u32, 3_002_002);
+        assert_eq!(RuleId::OutputWriteFailed as u32, 3_002_003);
+        assert_eq!(RuleId::ReportWriteFailed as u32, 3_003_001);
+        assert_eq!(RuleId::SupportBundleWriteFailed as u32, 3_003_002);
+        assert_eq!(RuleId::PodmanSourceInvalid as u32, 4_000_001);
+        assert_eq!(RuleId::PodmanInputUnmodelled as u32, 4_000_002);
+        assert_eq!(RuleId::PodmanPromotionRequired as u32, 4_000_003);
+        assert_eq!(RuleId::PodmanIdentityConflict as u32, 4_000_004);
+        assert_eq!(RuleId::PodmanSecretGrantIncomplete as u32, 4_000_005);
+        assert_eq!(RuleId::PodmanTargetInvalid as u32, 4_000_006);
+        assert_eq!(RuleId::PodmanOutputUnsupported as u32, 4_000_007);
+        assert_eq!(RuleId::PodmanPlanningFailed as u32, 4_000_008);
+        assert_eq!(RuleId::QuadletTargetInvalid as u32, 5_000_001);
+        assert_eq!(RuleId::QuadletOpenEndedTarget as u32, 5_000_002);
+        assert_eq!(RuleId::QuadletOutputUnsupported as u32, 5_000_003);
+        assert_eq!(RuleId::QuadletValueInvalid as u32, 5_000_004);
+        assert_eq!(RuleId::QuadletGenerationFailed as u32, 5_000_005);
+        assert_eq!(RuleId::QuadletCapabilityUnavailable as u32, 5_000_006);
+        assert_eq!(RuleId::QuadletGroupingApproximation as u32, 5_000_007);
+        assert_eq!(RuleId::QuadletDependencyUnsupported as u32, 5_000_008);
+        assert_eq!(RuleId::QuadletRestartApproximation as u32, 5_000_009);
+        assert_eq!(RuleId::QuadletEnvironmentFileApproximation as u32, 5_000_010);
+        assert_eq!(RuleId::QuadletGroupingInvalid as u32, 5_000_011);
+        assert_eq!(RuleId::QuadletDependencyInvalid as u32, 5_000_012);
+        assert_eq!(RuleId::QuadletCapabilityDeprecated as u32, 5_000_013);
+        assert_eq!(RuleId::QuadletUnresolvedVariable as u32, 5_000_014);
+        assert_eq!(RuleId::QuadletSourceInvalid as u32, 5_001_001);
+        assert_eq!(RuleId::QuadletModelInvalid as u32, 5_001_002);
+        assert_eq!(RuleId::QuadletInputUnsupported as u32, 5_001_003);
+        assert_eq!(RuleId::QuadletInputApproximation as u32, 5_001_004);
+        assert_eq!(RuleId::QuadletNativeSyntax as u32, 5_001_101);
+        assert_eq!(RuleId::QuadletNativeModel as u32, 5_001_102);
+        assert_eq!(RuleId::QuadletNativeDocumentSet as u32, 5_001_103);
+        assert_eq!(RuleId::QuadletNativeFailure as u32, 5_001_104);
+        assert_eq!(RuleId::PodmanStateReconstructed as u32, 4_000_009);
+    }
+
+    #[test]
+    fn historical_catalogue_relative_order_remains_stable() {
+        let historical: Vec<_> = RULES
+            .iter()
+            .filter(|rule| rule.id() != RuleId::QuadletExternalEnvironmentUnverified)
+            .collect();
+        assert_eq!(historical[0].id(), RuleId::ComposeModelInvalid);
+        assert_eq!(historical[1].id(), RuleId::ComposeProfileRequired);
+        assert_eq!(historical[2].id(), RuleId::ComposeProfileMismatch);
+        assert_eq!(historical[3].id(), RuleId::ComposeIntentUnsupported);
+        assert_eq!(historical[4].id(), RuleId::ComposeValueInvalid);
+        assert_eq!(historical[5].id(), RuleId::ComposeTargetInvalid);
+        assert_eq!(historical[6].id(), RuleId::ComposeOutputUnsupported);
+        assert_eq!(historical[7].id(), RuleId::ComposeGenerationFailed);
+        assert_eq!(historical[8].id(), RuleId::ComposeCompatibilityConstraint);
+        assert_eq!(historical[9].id(), RuleId::ComposeUnsetVariable);
+        assert_eq!(historical[10].id(), RuleId::ComposeRequiredVariable);
+        assert_eq!(historical[11].id(), RuleId::ComposeInterpolationInvalid);
+        assert_eq!(historical[12].id(), RuleId::ComposeInterpolationNestingLimit);
+        assert_eq!(historical[13].id(), RuleId::ComposeUnresolvedVariable);
+        assert_eq!(historical[14].id(), RuleId::ComposeNativeError);
+        assert_eq!(historical[15].id(), RuleId::ComposeNativeWarning);
+        assert_eq!(historical[16].id(), RuleId::ComposeNativeNote);
+        assert_eq!(historical[17].id(), RuleId::OrchestrationFailed);
+        assert_eq!(historical[18].id(), RuleId::InputReadFailed);
+        assert_eq!(historical[19].id(), RuleId::ComposeProjectRootInvalid);
+        assert_eq!(historical[20].id(), RuleId::PodmanTargetSelectionInvalid);
+        assert_eq!(historical[21].id(), RuleId::InterpolationInputInvalid);
+        assert_eq!(historical[22].id(), RuleId::ComposeLoadFailed);
+        assert_eq!(historical[23].id(), RuleId::ConversionFailed);
+        assert_eq!(historical[24].id(), RuleId::QuadletParseFailed);
+        assert_eq!(historical[25].id(), RuleId::OutputDirectoryNotEmpty);
+        assert_eq!(historical[26].id(), RuleId::OutputPathInvalid);
+        assert_eq!(historical[27].id(), RuleId::OutputWriteFailed);
+        assert_eq!(historical[28].id(), RuleId::ReportWriteFailed);
+        assert_eq!(historical[29].id(), RuleId::SupportBundleWriteFailed);
+        assert_eq!(historical[30].id(), RuleId::PodmanSourceInvalid);
+        assert_eq!(historical[31].id(), RuleId::PodmanInputUnmodelled);
+        assert_eq!(historical[32].id(), RuleId::PodmanPromotionRequired);
+        assert_eq!(historical[33].id(), RuleId::PodmanIdentityConflict);
+        assert_eq!(historical[34].id(), RuleId::PodmanSecretGrantIncomplete);
+        assert_eq!(historical[35].id(), RuleId::PodmanTargetInvalid);
+        assert_eq!(historical[36].id(), RuleId::PodmanOutputUnsupported);
+        assert_eq!(historical[37].id(), RuleId::PodmanPlanningFailed);
+        assert_eq!(historical[38].id(), RuleId::PodmanStateReconstructed);
+        assert_eq!(historical[39].id(), RuleId::QuadletTargetInvalid);
+        assert_eq!(historical[40].id(), RuleId::QuadletOpenEndedTarget);
+        assert_eq!(historical[41].id(), RuleId::QuadletOutputUnsupported);
+        assert_eq!(historical[42].id(), RuleId::QuadletValueInvalid);
+        assert_eq!(historical[43].id(), RuleId::QuadletGenerationFailed);
+        assert_eq!(historical[44].id(), RuleId::QuadletCapabilityUnavailable);
+        assert_eq!(historical[45].id(), RuleId::QuadletGroupingApproximation);
+        assert_eq!(historical[46].id(), RuleId::QuadletDependencyUnsupported);
+        assert_eq!(historical[47].id(), RuleId::QuadletRestartApproximation);
+        assert_eq!(historical[48].id(), RuleId::QuadletEnvironmentFileApproximation);
+        assert_eq!(historical[49].id(), RuleId::QuadletGroupingInvalid);
+        assert_eq!(historical[50].id(), RuleId::QuadletDependencyInvalid);
+        assert_eq!(historical[51].id(), RuleId::QuadletCapabilityDeprecated);
+        assert_eq!(historical[52].id(), RuleId::QuadletUnresolvedVariable);
+        assert_eq!(historical[53].id(), RuleId::QuadletSourceInvalid);
+        assert_eq!(historical[54].id(), RuleId::QuadletModelInvalid);
+        assert_eq!(historical[55].id(), RuleId::QuadletInputUnsupported);
+        assert_eq!(historical[56].id(), RuleId::QuadletInputApproximation);
+        assert_eq!(historical[57].id(), RuleId::QuadletNativeSyntax);
+        assert_eq!(historical[58].id(), RuleId::QuadletNativeModel);
+        assert_eq!(historical[59].id(), RuleId::QuadletNativeDocumentSet);
+        assert_eq!(historical[60].id(), RuleId::QuadletNativeFailure);
+    }
 
     #[test]
     fn compose_output_help_distinguishes_privacy_refusal_from_authorized_omission() {

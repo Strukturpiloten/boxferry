@@ -1,6 +1,5 @@
 BFC0004|services.traefik.ports[0]
 BFC0004|services.traefik.ports[1]
-BFC0004|application
 BFC0105|services.appwrite.image
 BFC0105|services.appwrite-realtime.image
 BFC0105|services.appwrite-worker-webhooks.image

@@ -167,8 +167,12 @@ impl ExportAdapter for PodmanExporter {
         application: &Application,
         target: &TargetProfile,
     ) -> Result<ConversionPlan<Self::Output>, PlanError> {
-        let (evidence_outcomes, evidence_diagnostics) =
+        let (mut evidence_outcomes, mut evidence_diagnostics) =
             boxferry_engine::retained_native_evidence_losses(application, &self.codes.unsupported)?;
+        let (metadata_outcomes, metadata_diagnostics) =
+            boxferry_engine::vendor_metadata_losses(application, &self.codes.unsupported)?;
+        evidence_outcomes.extend(metadata_outcomes);
+        evidence_diagnostics.extend(metadata_diagnostics);
         let resolved = match resolve_podman_target(target) {
             Ok(resolved) => resolved,
             Err(error) => {
@@ -727,6 +731,28 @@ impl<'a> Mapping<'a> {
                 EnvironmentValue::Literal(value) if !value.is_sensitive() => {
                     DeploymentEnvironmentValue::Public(PublicEnvironmentValue::new(value.expose())?)
                 }
+                EnvironmentValue::UnresolvedSource { .. } => {
+                    self.unsupported(
+                        format!(
+                            "services.{}.environment.{}",
+                            service.name().as_str(),
+                            environment.value().name().as_str()
+                        ),
+                        "resolve authored source environment syntax before Podman output",
+                    );
+                    continue;
+                }
+                EnvironmentValue::Deferred(_) => {
+                    self.unsupported(
+                        format!(
+                            "services.{}.environment.{}",
+                            service.name().as_str(),
+                            environment.value().name().as_str()
+                        ),
+                        "deferred service execution expressions require explicit resolution before Podman output",
+                    );
+                    continue;
+                }
                 EnvironmentValue::Required => {
                     self.unsupported(
                         format!(
@@ -955,6 +981,7 @@ impl<'a> Mapping<'a> {
 
     fn report_unmapped_service_fields(&mut self, service: &Service, subject: &str) {
         for (field, present) in [
+            ("execution_environment", service.execution_environment().is_some()),
             ("rootfs", service.rootfs().is_some()),
             ("image_acquisition", service.image_acquisition().is_some()),
             ("image_build", service.image_build().is_some()),

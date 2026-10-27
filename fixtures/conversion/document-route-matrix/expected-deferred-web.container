@@ -1,0 +1,8 @@
+[Container]
+Image=example.invalid/web:1
+Environment="APP_MODE=${RUN_MODE}"
+Volume=${DATA_ROOT}/config:/config:ro
+
+[Service]
+EnvironmentFile="/etc/boxferry/example.env"
+Restart=no

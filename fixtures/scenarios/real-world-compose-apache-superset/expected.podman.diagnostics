@@ -1,3 +1,6 @@
+BFP0007|application.vendor_metadata[0]
+BFP0007|application.vendor_metadata[1]
+BFP0007|application.vendor_metadata[2]
 BFP0008|services.nginx
 BFP0008|services.superset.image
 BFP0008|services.superset-websocket.image
@@ -14,9 +17,6 @@ BFC0004|services.superset.ports[1]
 BFC0004|services.superset-websocket.ports[0]
 BFC0004|services.superset-node.ports[0]
 BFC0004|services.superset-tests-worker.network_mode
-BFC0004|application
-BFC0004|application
-BFC0004|application
 BFC0105|services.superset-node.environment.SCARF_ANALYTICS
 BFP0007|services.nginx.environment_files
 BFP0007|services.nginx.host_mappings

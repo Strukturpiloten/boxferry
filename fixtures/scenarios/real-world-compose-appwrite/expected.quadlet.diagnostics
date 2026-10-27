@@ -1,3 +1,4 @@
+BFQ0003|application.vendor_metadata[0]
 BFQ0012|services.appwrite.dependencies[1]
 BFQ0012|services.appwrite-realtime.dependencies[0]
 BFQ0012|services.appwrite-worker-webhooks.dependencies[1]
@@ -18,7 +19,6 @@ BFQ0012|services.appwrite-task-scheduler-executions.dependencies[0]
 BFQ0012|services.appwrite-task-scheduler-messages.dependencies[0]
 BFC0004|services.traefik.ports[0]
 BFC0004|services.traefik.ports[1]
-BFC0004|application
 BFC0105|services.appwrite.image
 BFC0105|services.appwrite-realtime.image
 BFC0105|services.appwrite-worker-webhooks.image

@@ -1,6 +1,6 @@
-BFC0004	application	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.traefik.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.traefik.ports[1]	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	application.vendor_metadata[0]	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	networks.appwrite.runtime_name	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	networks.gateway.runtime_name	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	networks.runtimes.runtime_name	unsupported	podman@5.4.0..6.1.0	1

@@ -1,4 +1,6 @@
 //! Compose-to-application mapping with explicit fidelity decisions.
+mod deferred;
+mod metadata;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
@@ -83,6 +85,11 @@ impl ImportAdapter for ComposeImporter {
     fn import(&self, source: &Self::Source) -> ImportResult {
         let mut mapping = Mapping::new(&self.codes, source);
         mapping.report_native_findings(source.native_findings());
+        if !source.deferred_options().is_empty() && source.interpolation_applied() {
+            mapping.invalid_optional_span(self.codes.invalid_value.clone(), "services.execution_environment", "deferred mode requires uninterpolated input and cannot consume previously acquired interpolation values", "service execution environment", source.project().root().provenance().effective_source());
+            return ImportResult::new(None, mapping.outcomes, mapping.diagnostics);
+        }
+
         let project_result = build_project_view(source.project(), source.profile_selection());
         let Some(view) = project_result.view() else {
             mapping.invalid_optional_span(
@@ -144,46 +151,9 @@ impl ImportAdapter for ComposeImporter {
                 mapping.invalid_model_optional("secrets", &error, definition.definition().effective_source());
             }
         }
-        for native_service in view.services() {
-            let active = if native_service
-                .profiles()
-                .is_none_or(|profiles| profiles.value().is_empty())
-            {
-                true
-            } else {
-                profiles_valid
-                    && source
-                        .profile_selection()
-                        .is_some_and(|selection| selection.is_active(native_service.name().value()))
-            };
-            if !active {
-                continue;
-            }
-            if let Some(service) = mapping.map_service(native_service) {
-                let (mut service, origins) = service.into_parts();
-                if let Some(build) = mapping.map_service_build(service.name(), service.image(), native_service) {
-                    let build_name = build.value().name().clone();
-                    let build_origins = build.origins().to_vec();
-                    if let Err(error) = application.add_image_build(build) {
-                        mapping.invalid_model_optional("image_builds", &error, view.provenance().effective_source());
-                    } else {
-                        let mut reference = Sourced::generated(build_name);
-                        for origin in build_origins {
-                            reference.add_origin(origin);
-                        }
-                        service.set_image_build(reference);
-                    }
-                }
-                let mut service = Sourced::generated(service);
-                for origin in origins {
-                    service.add_origin(origin);
-                }
-                if let Err(error) = application.add_service(service) {
-                    mapping.invalid_model_optional("services", &error, view.provenance().effective_source());
-                }
-            }
-        }
-
+        mapping.import_services(view, &mut application, profiles_valid);
+        mapping.validate_deferred_services(&application);
+        mapping.import_metadata(&mut application);
         mapping.report_document_unsupported(view);
         ImportResult::new(Some(application), mapping.outcomes, mapping.diagnostics)
     }
@@ -226,6 +196,49 @@ impl<'a> Mapping<'a> {
             source,
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
+        }
+    }
+
+    fn import_services(&mut self, view: &ProjectView, application: &mut Application, profiles_valid: bool) {
+        for native_service in view.services() {
+            let active = if native_service
+                .profiles()
+                .is_none_or(|profiles| profiles.value().is_empty())
+            {
+                true
+            } else {
+                profiles_valid
+                    && self
+                        .source
+                        .profile_selection()
+                        .is_some_and(|selection| selection.is_active(native_service.name().value()))
+            };
+            if !active {
+                continue;
+            }
+            if let Some(service) = self.map_service(native_service) {
+                let (mut service, origins) = service.into_parts();
+                if let Some(build) = self.map_service_build(service.name(), service.image(), native_service) {
+                    let build_name = build.value().name().clone();
+                    let build_origins = build.origins().to_vec();
+                    if let Err(error) = application.add_image_build(build) {
+                        self.invalid_model_optional("image_builds", &error, view.provenance().effective_source());
+                    } else {
+                        let mut reference = Sourced::generated(build_name);
+                        for origin in build_origins {
+                            reference.add_origin(origin);
+                        }
+                        service.set_image_build(reference);
+                    }
+                }
+                let mut service = Sourced::generated(service);
+                for origin in origins {
+                    service.add_origin(origin);
+                }
+                if let Err(error) = application.add_service(service) {
+                    self.invalid_model_optional("services", &error, view.provenance().effective_source());
+                }
+            }
         }
     }
 
@@ -285,7 +298,9 @@ impl<'a> Mapping<'a> {
         self.map_released_container_settings(&subject, native, &mut service);
         self.map_dns(&subject, native, &mut service);
         self.map_security_options(&subject, native, &mut service);
-        self.map_service_environment(&subject, native, &mut service);
+        if !self.map_deferred_service_environment(&subject, native, &mut service) {
+            self.map_service_environment(&subject, native, &mut service);
+        }
         self.map_service_labels(&subject, native, &mut service);
         if let Some(extra_hosts) = native.extra_hosts() {
             for (index, entry) in extra_hosts.value().entries().iter().enumerate() {
@@ -322,15 +337,7 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
-        if let Some(volumes) = native.volumes() {
-            for (index, mount) in volumes.value().iter().enumerate() {
-                let mount_subject = format!("{subject}.volumes[{index}]");
-                if let Some(value) = self.map_mount(&mount_subject, mount.value()) {
-                    service.add_mount(self.sourced_provenance(value, mount.provenance()));
-                    self.exact_provenance(mount_subject, mount.provenance());
-                }
-            }
-        }
+        self.map_service_mounts(&subject, native, &mut service);
         if let Some(configs) = native.configs() {
             self.map_service_grants(&subject, "configs", configs, false, &mut service);
         }
@@ -2432,25 +2439,48 @@ impl<'a> Mapping<'a> {
             else {
                 continue;
             };
+            let mut inspected_literal = false;
             let value = match entry.value().value() {
                 ComposeScalar::Null => EnvironmentValue::Host,
                 ComposeScalar::Boolean(value) => {
                     EnvironmentValue::Literal(ProtectedString::sensitive(value.to_string()))
                 }
                 ComposeScalar::Number(value) | ComposeScalar::String(value) => {
-                    if value.contains('$') {
+                    if self.source.interpolation_applied() {
+                        inspected_literal = true;
+                        EnvironmentValue::Literal(ProtectedString::sensitive(value.clone()))
+                    } else if value.contains('$')
+                        && self.eligible_authored_environment(
+                            service_subject,
+                            entry.name().value(),
+                            entry.value().effective_source(),
+                        )
+                    {
                         self.report_unresolved_variable(
                             &subject,
                             value,
                             "environment value contains unresolved Compose variable syntax",
                         );
+                        self.identifier_optional(&subject, "compose", entry.value().effective_source())
+                            .map_or(EnvironmentValue::Required, |source_format| {
+                                EnvironmentValue::UnresolvedSource {
+                                    source_format,
+                                    expression: ProtectedString::sensitive(value.clone()),
+                                }
+                            })
+                    } else {
+                        if value.contains('$') {
+                            self.unsupported_optional(&subject, "dollar syntax in single-quoted or block environment scalar is excluded from deferral; use eligible authored syntax or conversion-time resolution", entry.value().effective_source());
+                        }
+                        EnvironmentValue::Literal(ProtectedString::sensitive(value.clone()))
                     }
-                    EnvironmentValue::Literal(ProtectedString::sensitive(value.clone()))
                 }
             };
-            service.add_environment(
-                self.sourced_provenance(EnvironmentVariable::new(name, value), entry.value().provenance()),
-            );
+            let mut mapped = self.sourced_provenance(EnvironmentVariable::new(name, value), entry.value().provenance());
+            if inspected_literal && let Some(origin) = mapped.origins().first() {
+                mapped.add_origin(Provenance::conversion_decision(origin.source_id().clone()));
+            }
+            service.add_environment(mapped);
             self.exact_provenance(subject, entry.value().provenance());
         }
     }
@@ -3889,12 +3919,19 @@ impl<'a> Mapping<'a> {
 
     fn report_fields(&mut self, subject: &str, kind: &str, fields: &[compose_lens::model::FieldReference]) {
         for field in fields {
+            // The merged metadata scan owns supported and unsupported extension scopes.
+            if field.name().value().starts_with("x-") {
+                continue;
+            }
             self.unsupported(subject, &format!("{kind} `{}`", field.name().value()), field.span());
         }
     }
 
     fn report_project_fields(&mut self, subject: &str, kind: &str, fields: &[ProjectFieldReference]) {
         for field in fields {
+            if field.path().last().is_some_and(|key| key.starts_with("x-")) {
+                continue;
+            }
             let feature = field.path().join(".");
             self.unsupported_optional(
                 subject,

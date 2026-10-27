@@ -126,6 +126,7 @@ dependencies = [
  "boxferry-engine",
  "boxferry-model",
  "quadlet-lens",
+ "serde",
  "serde_json",
 ]
 
@@ -195,9 +196,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.3.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8a76a2e51ef951948ba9528a6a9d56e2255d40325949fee6c601cfb89a5ba8"
+checksum = "f5408dbb8a4a5f7207a0a300fea4a0d2e7c9a3befec7d493ee3142287b317cef"
 dependencies = [
  "yaml-edit",
 ]
@@ -691,9 +692,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "podman-lens"
-version = "0.2.5"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535c36d3b1a04a96d8018040eb559623a1251d18de88f0599f6328b4802e0d9b"
+checksum = "06ac0e3fe67ae91b7380fd421097695200d6bb70824473cda6194effe0b7b8f7"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -741,9 +742,9 @@ dependencies = [
 
 [[package]]
 name = "quadlet-lens"
-version = "0.2.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e20d20438525a54f8f531e66b29ecededa33e2393d8613fde8e0215e7d8dcb4"
+checksum = "aff98dfd4a8468fa94d3a8a3711ecc8a259decd9baad5936ac3c4d6ff21968b2"
 dependencies = [
  "serde",
  "serde_json",

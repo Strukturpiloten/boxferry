@@ -33,6 +33,11 @@
 //! # }
 //! ```
 
+/// Create-new artifact output shared by conversion and transport extraction.
+pub mod output;
+/// Bounded single-file Quadlet transport and explicit extraction.
+#[cfg(feature = "quadlet")]
+pub mod quadlet_bundle;
 /// Versioned, presentation-independent conversion reports.
 pub mod report;
 
@@ -62,19 +67,22 @@ pub use boxferry_model::{
     EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort,
     GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
     HostAddressKind, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment,
-    ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError,
-    Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString,
-    Protocol, Provenance, ProvenanceKind, PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
-    ResourceOwnership, RestartPolicy, RetainedNativeEvidence, RetainedNativeEvidenceEvent,
-    RetainedNativeEvidenceSubject, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSecret, SourceBuildSetting, SourceId,
-    SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
+    ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, Logging, LoggingOption, METADATA_MAX_BYTES,
+    METADATA_MAX_DEPTH, MetadataEntry, MetadataError, MetadataLabel, MetadataNode, MetadataScope, MetadataValue,
+    ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port,
+    ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy, ReloadAction, ResourceGrant,
+    ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, RetainedNativeEvidence,
+    RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Secret, SecretMaterial, SecurityOption, SelinuxRelabel,
+    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSecret,
+    SourceBuildSetting, SourceId, SourceSpan, Sourced, StartupNotification, StopTimeout, VendorMetadata, Volume,
+    VolumeImageSource,
 };
 
 #[cfg(feature = "compose")]
 pub use boxferry_compose::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
     ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+    QuadletDeferredOptions,
 };
 #[cfg(feature = "podman")]
 pub use boxferry_podman::{
@@ -111,4 +119,9 @@ pub use boxferry_quadlet::{
     QuadletOutput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel, QuadletParseDiagnosticOrigin,
     QuadletParseDiagnosticSeverity, QuadletParseError, QuadletParseFailure, QuadletParseFailureStage,
     QuadletParseResult, QuadletSource,
+};
+
+pub use boxferry_model::{
+    DEFERRED_MAX_BYTES, DEFERRED_MAX_SEGMENTS, DeferredExpression, DeferredSegment, ServiceEnvironmentAssignment,
+    ServiceEnvironmentFile, ServiceEnvironmentName, ServiceExecutionEnvironment,
 };

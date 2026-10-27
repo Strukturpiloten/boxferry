@@ -8,6 +8,15 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0082](0082-explicit-service-environment-deferral.md) defines opt-in direct references,
+explicit service execution providers, disclosure and external-unverified prerequisites.
+
+[ADR 0081](0081-quadlet-transport-bundles.md) defines bounded single-file Quadlet transport,
+explicit byte-preserving extraction and report provenance.
+
+[ADR 0080](0080-inert-vendor-metadata.md) defines inert typed vendor metadata and its reversible
+Compose/Quadlet transport, ownership, finite bounds and privacy refusal.
+
 [ADR 0079](0079-native-test-runtime-selection.md) selects matching GitHub outer
 runtimes while preserving Podman-only local development; implementation is tracked
 separately from native qualification.

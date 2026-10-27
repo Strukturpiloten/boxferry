@@ -195,6 +195,23 @@ pub struct Truncation {
     pub retained: usize,
 }
 
+/// Native member represented inside a physical transport artifact.
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BundleMember {
+    pub transport: String,
+    pub name: String,
+    pub unit_type: String,
+    pub size: u64,
+}
+/// Invocation-local provenance mapping for an expanded input transport member.
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InputBundleMember {
+    pub transport_alias: String,
+    pub member_alias: String,
+}
+
 /// Stable structured result for a conversion invocation.
 #[cfg_attr(feature = "cli", derive(serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -443,6 +460,153 @@ impl ConversionReport {
             return true;
         }
         false
+    }
+}
+
+/// Additive invocation envelope carrying conversion results and transport metadata.
+///
+/// Serialization with `cli` emits the conversion fields and transport fields in
+/// one flat schema-v1 object. Use this envelope for conversion and extraction
+/// reports; `ConversionReport` retains its original public construction contract.
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct InvocationReport {
+    #[cfg_attr(feature = "cli", serde(flatten))]
+    conversion: ConversionReport,
+    pub operation: String,
+    pub bundle_members: Vec<BundleMember>,
+    pub input_bundle_members: Vec<InputBundleMember>,
+}
+
+impl InvocationReport {
+    /// Creates an invocation envelope around a new conversion report.
+    #[must_use]
+    pub fn new(
+        boxferry_version: impl Into<String>,
+        source_type: impl Into<String>,
+        target_type: impl Into<String>,
+        requested_versions: VersionBounds,
+    ) -> Self {
+        ConversionReport::new(boxferry_version, source_type, target_type, requested_versions).into()
+    }
+
+    /// Borrows the original conversion result without transport metadata.
+    #[must_use]
+    pub const fn as_conversion(&self) -> &ConversionReport {
+        &self.conversion
+    }
+
+    /// Mutably borrows the original conversion result.
+    pub const fn as_conversion_mut(&mut self) -> &mut ConversionReport {
+        &mut self.conversion
+    }
+
+    /// Consumes the envelope, returning the legacy view without transport metadata.
+    #[must_use]
+    pub fn into_conversion(self) -> ConversionReport {
+        self.conversion
+    }
+
+    /// Applies v1 limits to both conversion and transport metadata.
+    pub fn enforce_v1_limits(&mut self) {
+        self.conversion.enforce_v1_limits();
+        truncate_collection(
+            &mut self.bundle_members,
+            "bundle_members",
+            &mut self.conversion.truncations,
+        );
+        truncate_collection(
+            &mut self.input_bundle_members,
+            "input_bundle_members",
+            &mut self.conversion.truncations,
+        );
+        truncate_text(&mut self.operation, "operation", &mut self.conversion.truncations);
+        for member in &mut self.bundle_members {
+            truncate_text(
+                &mut member.transport,
+                "bundle_members.transport",
+                &mut self.conversion.truncations,
+            );
+            truncate_text(
+                &mut member.name,
+                "bundle_members.name",
+                &mut self.conversion.truncations,
+            );
+            truncate_text(
+                &mut member.unit_type,
+                "bundle_members.unit_type",
+                &mut self.conversion.truncations,
+            );
+        }
+        for member in &mut self.input_bundle_members {
+            truncate_text(
+                &mut member.transport_alias,
+                "input_bundle_members.transport_alias",
+                &mut self.conversion.truncations,
+            );
+            truncate_text(
+                &mut member.member_alias,
+                "input_bundle_members.member_alias",
+                &mut self.conversion.truncations,
+            );
+        }
+        truncate_collection(&mut self.conversion.truncations, "truncations", &mut Vec::new());
+    }
+
+    /// Drops one deterministic bounded conversion or transport item.
+    pub fn reduce_for_json(&mut self) -> bool {
+        if !self.conversion.diagnostics.is_empty() || !self.conversion.events.is_empty() {
+            return self.conversion.reduce_for_json();
+        }
+        if !self.bundle_members.is_empty() {
+            let original = self.bundle_members.len();
+            self.bundle_members.pop();
+            record_truncation(
+                &mut self.conversion.truncations,
+                "bundle_members",
+                original,
+                original - 1,
+            );
+            return true;
+        }
+        if !self.input_bundle_members.is_empty() {
+            let original = self.input_bundle_members.len();
+            self.input_bundle_members.pop();
+            record_truncation(
+                &mut self.conversion.truncations,
+                "input_bundle_members",
+                original,
+                original - 1,
+            );
+            return true;
+        }
+        self.conversion.reduce_for_json()
+    }
+}
+
+impl From<ConversionReport> for InvocationReport {
+    fn from(conversion: ConversionReport) -> Self {
+        Self {
+            conversion,
+            operation: "convert".into(),
+            bundle_members: Vec::new(),
+            input_bundle_members: Vec::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for InvocationReport {
+    type Target = ConversionReport;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_conversion()
+    }
+}
+
+impl std::ops::DerefMut for InvocationReport {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_conversion_mut()
     }
 }
 
@@ -810,5 +974,57 @@ mod tests {
                 .as_ref()
                 .is_some_and(|finding| finding.notes.is_empty())
         );
+    }
+    #[test]
+    fn transport_members_share_v1_bounds_and_explicit_reduction() {
+        let mut report = InvocationReport::new(
+            "version",
+            "quadlet",
+            "quadlet",
+            VersionBounds {
+                minimum: "not-applicable".into(),
+                maximum: "not-applicable".into(),
+            },
+        );
+        report.bundle_members = (0..=MAX_COLLECTION_ITEMS)
+            .map(|index| BundleMember {
+                transport: if index == 0 {
+                    "x".repeat(MAX_TEXT_BYTES + 1)
+                } else {
+                    "quadlet.bundle".into()
+                },
+                name: "web.container".into(),
+                unit_type: "container".into(),
+                size: 0,
+            })
+            .collect();
+        report.input_bundle_members = (0..=MAX_COLLECTION_ITEMS)
+            .map(|index| InputBundleMember {
+                transport_alias: "<bundle-input-1>".into(),
+                member_alias: if index == 0 {
+                    "λ".repeat(MAX_TEXT_BYTES)
+                } else {
+                    format!("<input-{index}>")
+                },
+            })
+            .collect();
+        report.enforce_v1_limits();
+        assert_eq!(report.bundle_members.len(), MAX_COLLECTION_ITEMS);
+        assert_eq!(report.input_bundle_members.len(), MAX_COLLECTION_ITEMS);
+        assert_eq!(report.bundle_members[0].transport.len(), MAX_TEXT_BYTES);
+        assert!(report.input_bundle_members[0].member_alias.len() <= MAX_TEXT_BYTES);
+        for field in [
+            "bundle_members",
+            "input_bundle_members",
+            "bundle_members.transport",
+            "input_bundle_members.member_alias",
+        ] {
+            assert!(report.truncations.iter().any(|item| item.field == field));
+        }
+        assert!(report.reduce_for_json());
+        assert_eq!(report.bundle_members.len(), MAX_COLLECTION_ITEMS - 1);
+        report.bundle_members.clear();
+        assert!(report.reduce_for_json());
+        assert_eq!(report.input_bundle_members.len(), MAX_COLLECTION_ITEMS - 1);
     }
 }

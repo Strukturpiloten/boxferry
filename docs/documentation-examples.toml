@@ -280,3 +280,44 @@ stdout-contains = ["command succeeded", "error report:"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
 podman-socket-placeholder = "/run/user/1000/podman/podman.sock"
 generated-files = [{ directory = "reports", prefix = "boxferry-error-report-", suffix = ".zip" }]
+
+[[examples]]
+id = "compose-to-quadlet-bundle"
+pages = ["docs/public/guides/quadlet-bundles/index.md"]
+command = "boxferry convert compose quadlet --input-file compose.yaml --output-layout quadlet-bundle --output-directory bundle-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose.yaml", "--output-layout", "quadlet-bundle", "--output-directory", "bundle-output"]
+copy = ["compose.yaml"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+artifact-sets = [{ directory = "bundle-output", files = ["quadlet.bundle"] }]
+artifact-contains = [{ actual = "bundle-output/quadlet.bundle", contains = ["BOXFERRY-QUADLET-BUNDLE 1", '"name":"web.container"'] }]
+
+[[examples]]
+id = "quadlet-bundle-extract"
+pages = ["docs/public/guides/quadlet-bundles/index.md"]
+command = "boxferry extract quadlet --input-file quadlet.bundle --output-directory quadlet-output"
+args = ["extract", "quadlet", "--input-file", "quadlet.bundle", "--output-directory", "quadlet-output"]
+prepare-bundle = { destination = "quadlet.bundle", members = [{ source = "expected-web.container", destination = "web.container" }] }
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected-web.container" }]
+
+[[examples]]
+id = "compose-to-quadlet-deferred-files"
+pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
+command = "boxferry convert compose quadlet --input-file compose-deferred.yaml --quadlet-defer web:RUN_MODE --quadlet-defer web:DATA_ROOT --quadlet-service-env-file web=/etc/boxferry/example.env --output-directory quadlet-deferred-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-deferred.yaml", "--quadlet-defer", "web:RUN_MODE", "--quadlet-defer", "web:DATA_ROOT", "--quadlet-service-env-file", "web=/etc/boxferry/example.env", "--output-directory", "quadlet-deferred-output"]
+copy = ["compose-deferred.yaml"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-deferred-output/web.container", fixture = "expected-deferred-web.container" }]
+
+[[examples]]
+id = "compose-to-quadlet-deferred-inline"
+pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
+command = "boxferry convert compose quadlet --input-file compose-deferred.yaml --quadlet-defer web:RUN_MODE --quadlet-defer web:DATA_ROOT --quadlet-service-env web:RUN_MODE=production --quadlet-service-env web:DATA_ROOT=/srv/example --environment-values include --output-directory quadlet-deferred-inline-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-deferred.yaml", "--quadlet-defer", "web:RUN_MODE", "--quadlet-defer", "web:DATA_ROOT", "--quadlet-service-env", "web:RUN_MODE=production", "--quadlet-service-env", "web:DATA_ROOT=/srv/example", "--environment-values", "include", "--output-directory", "quadlet-deferred-inline-output"]
+copy = ["compose-deferred.yaml"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-deferred-inline-output/web.container", fixture = "expected-deferred-inline-web.container" }]

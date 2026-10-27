@@ -16,6 +16,7 @@ Use route-specific `--help`; it shows only applicable options.
 | ----------------------- | ----------------------------------------------------------- |
 | `convert INPUT OUTPUT`  | Plan and write authorized output.                           |
 | `validate INPUT OUTPUT` | Run the same planning path without writing converted files. |
+| `extract quadlet`       | Extract a BoxFerry bundle into unchanged native files.      |
 | `capabilities`          | List supported routes and target ranges.                    |
 | `rules`                 | List diagnostic rules.                                      |
 | `explain CODE_OR_NAME`  | Explain one diagnostic rule.                                |
@@ -86,6 +87,13 @@ Kinds are container, image, network, pod, secret and volume.
 | `--podman-max-version VERSION`                       | Podman output  | Use newest reviewed exact target at or below ceiling.    |
 | `--podman-target-context unknown\|rootless\|rootful` | Podman output  | Select the required explicit target context.             |
 
+Quadlet output also accepts `--output-layout quadlet-bundle`, producing `quadlet.bundle` instead of
+native files. Native `files` remains the default. `extract quadlet` accepts one `--input-file` bundle,
+`--output-directory`, and the usual presentation/report options; it performs no semantic conversion.
+New extraction files use owner-only permissions. Explicit bundle inputs expand before Quadlet
+application-name inference, so multiple members require `--application-name`. Directory discovery
+remains native-only. See [bundle transport and extraction](../../guides/quadlet-bundles/).
+
 Output directories must be absent or empty, including dotfiles; existing files are never replaced.
 Podman defaults to exact target 6.1.0: `podman.json` and `podman-commands.sh`. BoxFerry never executes
 output or infers targets from the source/development machine.
@@ -124,3 +132,12 @@ or running it.
 | `0`  | The operation completed and requested output was written.    |
 | `1`  | Input, validation, conversion, or file I/O failed.           |
 | `2`  | The selected loss policy blocked otherwise plannable output. |
+
+## Deferred service execution environment
+
+Compose-to-Quadlet conversion and validation accept repeatable `--quadlet-defer SERVICE:NAME`,
+`--quadlet-service-env-file SERVICE=ABSOLUTE_PATH`, and `--quadlet-service-env SERVICE:NAME=VALUE`.
+These select direct target-service references and explicit providers, with no provider-file reads
+or process capture. Inline providers and literal-bearing deferred container environment require
+`--environment-values include`. They cannot coexist with conversion-time `--env`, `--env-file`
+or `--interpolate`. See the [Compose-to-Quadlet guide](../../guides/convert/compose-to-quadlet/).

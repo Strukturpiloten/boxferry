@@ -92,3 +92,9 @@ safe to share.
 
 Use `--report-file FILE` when automation needs the same JSON schema without a ZIP. JSON console,
 report files, and bundles contain the same diagnostic and `fix_first` structures.
+
+Embedded callers can keep constructing `boxferry::report::ConversionReport` with its original
+public fields. Use the additive `InvocationReport::from(conversion)` envelope for transport
+metadata and flat schema-v1 serialization. Its conversion accessors expose the legacy view;
+`into_conversion()` discards the envelope metadata. Both types and their bounds APIs are
+available without the CLI feature; JSON serialization requires `cli`.

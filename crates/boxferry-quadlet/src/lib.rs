@@ -2,6 +2,7 @@
 
 mod export;
 mod import;
+mod metadata;
 mod output;
 mod source;
 
