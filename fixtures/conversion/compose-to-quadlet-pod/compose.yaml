@@ -8,6 +8,7 @@ services:
       - host.docker.internal=host-gateway
     ports:
       - "8080:80/tcp"
+      - "8081"
     networks:
       - frontend
   worker:
@@ -19,6 +20,8 @@ services:
       - host.docker.internal=host-gateway
     ports:
       - "9090:90/tcp"
+      - target: 9091
+        protocol: udp
     networks:
       - frontend
 networks:

@@ -12,7 +12,8 @@ use boxferry::compose::compose_lens::{
 };
 use boxferry::{
     ComposeImporter, ComposeSource, ConversionKind, Identifier, ImportAdapter, LossPolicy, PlatformVersion,
-    QuadletExporter, QuadletGroupingPolicy, SourceId, TargetProfile, convert,
+    QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource, SourceId,
+    TargetProfile, convert,
 };
 
 const BASE_SOURCE_ID: u32 = 91;
@@ -23,6 +24,161 @@ const SECRET_SOURCE_ID: u32 = 95;
 const ENVIRONMENT_FILE_SOURCE_ID: u32 = 96;
 const SECURITY_OPTION_SOURCE_ID: u32 = 99;
 const IMAGE_BUILD_SOURCE_ID: u32 = 100;
+
+#[test]
+fn automatic_publications_are_exact_and_distinct_from_fixed_ports_and_exposure() -> Result<(), Box<dyn Error>> {
+    let source = automatic_port_source()?;
+    for version in [PlatformVersion::new(5, 4, 0), PlatformVersion::new(6, 1, 2)] {
+        let target = TargetProfile::new("podman", version, Some(version))?;
+        for policy in [LossPolicy::ExactOnly, LossPolicy::AllowPartial] {
+            let result = convert(
+                &ComposeImporter::new()?,
+                &source,
+                &QuadletExporter::new()?,
+                &target,
+                policy,
+            )?;
+            assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+            assert!(
+                result
+                    .outcomes()
+                    .iter()
+                    .all(|outcome| outcome.kind() == ConversionKind::Exact)
+            );
+            let output = result.output().ok_or("automatic publication output expected")?;
+            let container = output.file("web.container").ok_or("container expected")?.text();
+            assert_eq!(publication_lines(container), automatic_publication_lines());
+            assert!(container.lines().any(|line| line == "ExposeHostPort=9090/udp"));
+            let imported = reimport_port_output(output)?;
+            assert!(imported.diagnostics().is_empty(), "{:#?}", imported.diagnostics());
+            let application = imported.application().ok_or("reimported application expected")?;
+            let service = application.services()[0].value();
+            assert_port_intent(service.ports());
+            let exposed = service.exposed_ports().ok_or("exposure expected")?;
+            assert_eq!(exposed.len(), 1);
+            assert_eq!(exposed[0].value().container(), 9090);
+            assert_eq!(exposed[0].value().protocol(), &boxferry::Protocol::Udp);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn automatic_publications_move_to_pod_scope_without_additional_loss() -> Result<(), Box<dyn Error>> {
+    let source = automatic_port_source()?;
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 1, 2)),
+    )?;
+    let exporter = QuadletExporter::new()?.with_grouping_policy(QuadletGroupingPolicy::SinglePod);
+    for policy in [LossPolicy::AllowApproximate, LossPolicy::AllowPartial] {
+        let result = convert(&ComposeImporter::new()?, &source, &exporter, &target, policy)?;
+        assert_eq!(result.diagnostics().len(), 1, "{:#?}", result.diagnostics());
+        assert_eq!(result.diagnostics()[0].code().as_str(), "BFQ0007");
+        let port_outcomes = result
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject().starts_with("services.web.ports["));
+        // Each publication has both a Compose import and a Quadlet export decision.
+        assert_eq!(port_outcomes.clone().count(), 14);
+        assert!(
+            port_outcomes
+                .clone()
+                .all(|outcome| outcome.kind() == ConversionKind::Exact)
+        );
+        assert!(port_outcomes.clone().all(|outcome| !outcome.origins().is_empty()));
+        let output = result.output().ok_or("pod publication output expected")?;
+        let pod = output.file("automatic-ports.pod").ok_or("pod expected")?.text();
+        assert_eq!(publication_lines(pod), automatic_publication_lines());
+        assert!(publication_lines(output.file("web.container").ok_or("container expected")?.text()).is_empty());
+        let imported = reimport_port_output(output)?;
+        let application = imported.application().ok_or("reimported pod application expected")?;
+        let runtime = application.service_groups()[0]
+            .value()
+            .runtime()
+            .ok_or("pod runtime expected")?
+            .value();
+        assert_port_intent(runtime.ports().ok_or("pod publications expected")?);
+        assert!(application.services()[0].value().ports().is_empty());
+    }
+    Ok(())
+}
+
+fn automatic_port_source() -> Result<ComposeSource, Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(102);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("automatic.compose.yaml", "automatic.compose.yaml"),
+        concat!(
+            "---\nname: automatic-ports\nservices:\n  web:\n    image: example.invalid/web:1\n    restart: 'no'\n",
+            "    ports:\n      - '8080'\n      - '8081/tcp'\n      - '8082/udp'\n",
+            "      - target: 8083\n        protocol: tcp\n",
+            "      - target: 8084\n        protocol: udp\n",
+            "      - target: 8085\n        host_ip: 127.0.0.1\n        protocol: tcp\n",
+            "      - '18086:8086/tcp'\n    expose: ['9090/udp']\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    Ok(ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("automatic-ports")?,
+    )?
+    .with_source_id(source_id, SourceId::new("automatic.compose.yaml")?))
+}
+
+fn publication_lines(text: &str) -> Vec<&str> {
+    text.lines().filter(|line| line.starts_with("PublishPort=")).collect()
+}
+
+fn automatic_publication_lines() -> [&'static str; 7] {
+    [
+        "PublishPort=8080/tcp",
+        "PublishPort=8081/tcp",
+        "PublishPort=8082/udp",
+        "PublishPort=8083/tcp",
+        "PublishPort=8084/udp",
+        "PublishPort=127.0.0.1::8085/tcp",
+        "PublishPort=18086:8086/tcp",
+    ]
+}
+
+fn assert_port_intent(ports: &[boxferry::Sourced<boxferry::Port>]) {
+    assert_eq!(ports.len(), 7);
+    for (index, port) in ports.iter().enumerate() {
+        assert_eq!(usize::from(port.value().container()), 8080 + index);
+        assert_eq!(port.value().published(), if index == 6 { Some(18086) } else { None });
+        assert_eq!(
+            port.value().host_address(),
+            if index == 5 { Some("127.0.0.1") } else { None }
+        );
+        assert_eq!(
+            port.value().protocol(),
+            if matches!(index, 2 | 4) {
+                &boxferry::Protocol::Udp
+            } else {
+                &boxferry::Protocol::Tcp
+            }
+        );
+        assert!(!port.origins().is_empty());
+    }
+}
+
+fn reimport_port_output(output: &boxferry::QuadletOutput) -> Result<boxferry::ImportResult, Box<dyn Error>> {
+    let source = QuadletSource::parse(
+        Identifier::new("automatic-ports")?,
+        output.files().iter().zip(1_u32..).map(|(file, source_id)| {
+            QuadletDocumentInput::new(
+                file.name().as_str(),
+                boxferry::quadlet::quadlet_lens::source::SourceId::new(source_id),
+                file.text(),
+            )
+        }),
+    )?
+    .into_source();
+    Ok(QuadletImporter::new()?.import(&source))
+}
 
 #[test]
 fn typed_compose_deploy_requires_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
