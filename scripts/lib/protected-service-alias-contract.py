@@ -38,7 +38,7 @@ def closed_object(pairs):
 def inventory(args):
     mode, source, stem, specification = args
     try:
-        role_aliases = json.loads(specification)[mode]
+        role_contracts = json.loads(specification)[mode]
     except (ValueError, KeyError, TypeError):
         raise SystemExit("invalid protected service-alias specification") from None
     root = Path(source)
@@ -51,7 +51,7 @@ def inventory(args):
     digest = hashlib.sha256()
     for path in paths:
         role = path.stem.removeprefix(stem)
-        if path.is_symlink() or not path.stem.startswith(stem) or role not in role_aliases:
+        if path.is_symlink() or not path.stem.startswith(stem) or role not in role_contracts:
             raise SystemExit("unreviewed protected service-alias source")
         raw, lines = read_unit(path)
         digest.update(path.name.encode() + b"\0" + raw + b"\0")
@@ -66,13 +66,15 @@ def inventory(args):
         # Group/pod NetworkAlias fields are outside ADR 0073's service-only guard.
         aliases = [line.removeprefix("NetworkAlias=") for line in container_lines if line.startswith("NetworkAlias=")]
         networks = [line.removeprefix("Network=") for line in container_lines if line.startswith("Network=")]
-        expected = [stem + role if alias == "@service" else alias for alias in role_aliases[role]]
+        contract = role_contracts[role]
+        expected = [stem + role if alias == "@service" else alias for alias in contract["aliases"]]
         if aliases != expected:
             raise SystemExit("protected service-alias source differs from independent literal inventory")
         if aliases:
-            if networks != [stem + "backend.network"]:
+            network = stem + contract["network"]
+            if networks != [network + ".network"]:
                 raise SystemExit("protected service aliases have ambiguous network association")
-            subjects.extend(f"services.{path.stem}.networks.{stem}backend.aliases[{index}]"
+            subjects.extend(f"services.{path.stem}.networks.{network}.aliases[{index}]"
                             for index in range(len(aliases)))
     print(json.dumps({"subjects": subjects, "source_sha256": digest.hexdigest()}, separators=(",", ":")))
 
@@ -84,7 +86,7 @@ def assert_refusal(args):
         data = json.loads(raw, object_pairs_hook=closed_object)
         subjects = json.loads(inventory)["subjects"]
         baseline = json.loads(expected)
-        expected_help = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+        expected_help = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Protected vendor metadata also blocks every loss policy because fresh Compose text cannot retain sensitivity. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
         if data.get("source_type") != "quadlet" or data.get("target_type") != "compose":
             raise ValueError("wrong refusal route")
         if not isinstance(data.get("fix_first"), dict) or data["fix_first"].get("code") != "BFC0007" or data["fix_first"].get("help") != expected_help:

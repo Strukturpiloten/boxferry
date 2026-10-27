@@ -1022,6 +1022,7 @@ bash -c '
   supabase_image_reference() { printf "%s" test-image; }
   supabase_wait_for() { shift 2; "$@"; }
   supabase_create_cli_services test-socket test-prefix test-run
+supabase_create_cli_peer test-socket test-prefix test-run
 ' bash "${library}" "${cli_services_argv}"
 
 python3 - "${cli_services_argv}" << 'PY'
@@ -1055,6 +1056,25 @@ aliases = [
 ]
 assert aliases == [b"realtime-dev.supabase-realtime", b"realtime"]
 assert all(b":alias=" not in argument for argument in realtime)
+# Independent literal provisioner arguments: single-network roles and the edge peer.
+for role, expected_network in (
+    (b"auth", b"test-prefix-supabase-backend:alias=auth"),
+    (b"db", b"test-prefix-supabase-backend:alias=db"),
+    (b"functions", b"test-prefix-supabase-backend:alias=functions"),
+    (b"imgproxy", b"test-prefix-supabase-backend:alias=imgproxy"),
+    (b"meta", b"test-prefix-supabase-backend:alias=meta"),
+    (b"rest", b"test-prefix-supabase-backend:alias=rest"),
+    (b"storage", b"test-prefix-supabase-backend:alias=storage"),
+    (b"studio", b"test-prefix-supabase-backend:alias=studio"),
+    (b"supavisor", b"test-prefix-supabase-backend:alias=supavisor"),
+    (b"boundary-peer", b"test-prefix-supabase-edge:alias=boundary-peer"),
+):
+    service = next(record for record in records
+                   if b"--name" in record and b"test-prefix-supabase-" + role in record)
+    networks = [service[index + 1] for index, argument in enumerate(service[:-1])
+                if argument == b"--network"]
+    assert networks == [expected_network], role
+    assert b"--network-alias" not in service, role
 studio_health_command = (
     b'node -e "fetch(\'http://127.0.0.1:3000/api/platform/profile\').then('
     b'(r) => { if (!r.ok) process.exit(1) })"'
@@ -3476,7 +3496,7 @@ subjects = ["services.fixture.networks.backend.aliases[0]", "services.fixture.ne
 inventory = {"subjects": subjects, "source_sha256": "a" * 64}
 expected = {"diagnostics": [], "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0}}
 reason = "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document"
-help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Protected vendor metadata also blocks every loss policy because fresh Compose text cannot retain sensitivity. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
 report = {"schema_version": 1, "status": "blocked", "exit_category": "policy-blocked",
           "source_type": "quadlet", "target_type": "compose", "fix_first": {"code": "BFC0007", "help": help_text},
           "output_artifacts": [], "fidelity": {"exact": 0, "approximate": 0, "unsupported": 2, "invalid": 0, "other": 0},
@@ -3610,6 +3630,93 @@ unit.write_text(compose_literal.replace("NetworkAlias=realtime\nNetworkAlias=rea
     "NetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n"))
 assert inventory("compose").returncode != 0, "Compose-mode alias order changed"
 unit.unlink()
+# Complete authored inventories cover every role, each provisioner and selection boundary.
+# These tuples are literal expectations, independent of the wrapper specification.
+role_units = {
+    "cli": {
+        "auth": ("backend", ["auth"]),
+        "db": ("backend", ["db"]),
+        "functions": ("backend", ["functions"]),
+        "imgproxy": ("backend", ["imgproxy"]),
+        "kong": ("backend", []),
+        "meta": ("backend", ["meta"]),
+        "realtime": ("backend", ["realtime-dev.supabase-realtime", "realtime"]),
+        "rest": ("backend", ["rest"]),
+        "storage": ("backend", ["storage"]),
+        "studio": ("backend", ["studio"]),
+        "supavisor": ("backend", ["supavisor"]),
+        "boundary-peer": ("edge", ["boundary-peer"]),
+    },
+    "compose": {
+        "auth": ("backend", ["test-supabase-auth", "auth"]),
+        "db": ("backend", ["test-supabase-db", "db"]),
+        "functions": ("backend", ["test-supabase-functions", "functions"]),
+        "imgproxy": ("backend", ["test-supabase-imgproxy", "imgproxy"]),
+        "kong": ("backend", []),
+        "meta": ("backend", ["test-supabase-meta", "meta"]),
+        "realtime": ("backend", ["test-supabase-realtime", "realtime", "realtime-dev.supabase-realtime"]),
+        "rest": ("backend", ["test-supabase-rest", "rest"]),
+        "storage": ("backend", ["test-supabase-storage", "storage"]),
+        "studio": ("backend", ["test-supabase-studio", "studio"]),
+        "supavisor": ("backend", ["test-supabase-supavisor", "supavisor"]),
+        "boundary-peer": ("edge", ["test-supabase-boundary-peer", "boundary-peer"]),
+    },
+}
+def authored_unit(role, network, aliases):
+    networks = [f"test-supabase-{network}.network"]
+    if role == "kong":
+        networks.append("test-supabase-edge.network")
+    return ("[Container]\nImage=example.invalid/authored:1\n"
+            + "".join(f"Network={value}\n" for value in networks)
+            + "".join(f"NetworkAlias={value}\n" for value in aliases))
+
+def rejected_inventory(mode, label):
+    result = inventory(mode)
+    assert result.returncode != 0 and result.stdout == b"", (mode, label)
+    assert b"Traceback" not in result.stderr, (mode, label)
+    assert b"protected-alias-canary-never-print" not in result.stderr, (mode, label)
+
+for mode, without_peer, with_peer in (("cli", 11, 12), ("compose", 21, 23)):
+    for selection in ("exact", "storage", "label", "all"):
+        roles = role_units[mode]
+        selected = {role: values for role, values in roles.items()
+                    if selection == "all" or role != "boundary-peer"}
+        for role, (network, aliases) in selected.items():
+            (source / f"test-supabase-{role}.container").write_text(authored_unit(role, network, aliases))
+        good = inventory(mode)
+        assert good.returncode == 0, (mode, selection, good.stderr)
+        expected_subjects = [
+            f"services.test-supabase-{role}.networks.test-supabase-{network}.aliases[{index}]"
+            for role, (network, aliases) in sorted(selected.items()) for index in range(len(aliases))]
+        assert len(expected_subjects) == (with_peer if selection == "all" else without_peer)
+        assert json.loads(good.stdout)["subjects"] == expected_subjects
+        # Every role's tuple is required exactly, including the alias-free two-network gateway.
+        for role, (network, aliases) in selected.items():
+            path = source / f"test-supabase-{role}.container"
+            original = path.read_text()
+            mutations = [("extra", aliases + ["unexpected-alias"]),
+                         ("private", aliases + ["protected-alias-canary-never-print"])]
+            if aliases:
+                mutations.extend((("missing", aliases[:-1]), ("duplicate", aliases + [aliases[-1]])))
+            if len(aliases) > 1:
+                mutations.append(("reordered", list(reversed(aliases))))
+            for fault, changed_aliases in mutations:
+                path.write_text(authored_unit(role, network, changed_aliases))
+                rejected_inventory(mode, (selection, role, fault))
+            if aliases:
+                for fault, changed_network in (("wrong-network", "edge" if network == "backend" else "backend"),
+                                                ("unknown-network", "unreviewed")):
+                    path.write_text(authored_unit(role, changed_network, aliases))
+                    rejected_inventory(mode, (selection, role, fault))
+                path.write_text(original.replace("NetworkAlias=", "Network=test-supabase-extra.network\nNetworkAlias=", 1))
+                rejected_inventory(mode, (selection, role, "ambiguous-network"))
+            path.write_text(original)
+        unknown = source / "test-supabase-unreviewed.container"
+        unknown.write_text("[Container]\nImage=example.invalid/unknown:1\n")
+        rejected_inventory(mode, (selection, "unknown-role"))
+        unknown.unlink()
+        for path in source.glob("*.container"):
+            path.unlink()
 # A service without aliases stays positive; pod/group aliases are not service obligations.
 (source / "test-supabase-kong.container").write_text(
     "[Container]\nImage=example.invalid/kong:1\nNetwork=test-supabase-backend.network\nNetwork=test-supabase-edge\n[Pod]\nNetworkAlias=group-only\n")
