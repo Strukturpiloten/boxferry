@@ -10,6 +10,8 @@ services:
       - target: 80
         published: "8080"
         protocol: tcp
+      - target: 8081
+        protocol: tcp
     networks:
       frontend: {}
   worker:
@@ -21,6 +23,8 @@ services:
       - target: 90
         published: "9090"
         protocol: tcp
+      - target: 9091
+        protocol: udp
     networks:
       frontend: {}
 networks:

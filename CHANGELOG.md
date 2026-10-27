@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Preserve automatic host-port allocation when converting Compose publications to Quadlet
+  container and pod units, including TCP and UDP, without inventing fixed host ports
+  ([#476](https://github.com/Strukturpiloten/boxferry/issues/476)).
+
 - Preserve sensitivity on interpolated Compose container names so protected identities remain
   guarded during target planning and reporting.
 - Preserve explicit public Podman volume runtime names consistently in declarations and named

@@ -2152,7 +2152,7 @@ fn generic_pod_name_is_applied_only_to_explicit_pod_grouping() -> Result<(), Box
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(
         fs::read_to_string(output.path().join("custom-pod.pod"))?,
-        "[Pod]\nPodName=custom-pod\nUserNS=keep-id\nAddHost=host.docker.internal:host-gateway\nPublishPort=8080:80/tcp\nPublishPort=9090:90/tcp\nNetwork=frontend.network\n"
+        "[Pod]\nPodName=custom-pod\nUserNS=keep-id\nAddHost=host.docker.internal:host-gateway\nPublishPort=8080:80/tcp\nPublishPort=8081/tcp\nPublishPort=9090:90/tcp\nPublishPort=9091/udp\nNetwork=frontend.network\n"
     );
     Ok(())
 }

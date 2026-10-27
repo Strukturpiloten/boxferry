@@ -24,7 +24,7 @@ modifications = "none"
 description = "No Compose profiles are active; explicit single-pod grouping targets Podman 5.4.0 through 6.0.2 and requires AllowApproximate."
 
 [expectations]
-summary = "Compatible services share one generated pod only by caller request; their identical user namespace and host mappings plus ports and networks move to pod scope, while a short Compose dependency remains a systemd Requires/After relationship between generated container services."
+summary = "Compatible services share one generated pod only by caller request; their identical user namespace and host mappings plus fixed and automatically allocated TCP/UDP publications and networks move to pod scope, while a short Compose dependency remains a systemd Requires/After relationship between generated container services."
 
 [extensions.compose]
 source-ids = [93]

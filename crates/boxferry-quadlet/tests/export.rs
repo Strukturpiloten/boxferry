@@ -120,6 +120,111 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
 }
 
 #[test]
+fn preserves_automatic_publications_in_authoritative_pod_runtime() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    let mut group = ServiceGroup::new(id("native")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    let mut runtime = ServiceGroupRuntime::new();
+    runtime.add_port(sourced(Port::new(8080, None, None, Protocol::Tcp)?)?);
+    runtime.add_port(sourced(Port::new(
+        8081,
+        None,
+        Some("127.0.0.1".to_owned()),
+        Protocol::Udp,
+    )?)?);
+    group.set_runtime(sourced(runtime)?);
+    application.add_service_group(sourced(group)?)?;
+    let plan = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup)
+        .plan(&application, &podman_target(Some(version(6, 1, 2)))?)?;
+    for index in 0..2 {
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("service_groups.native.ports[{index}]")
+                && outcome.kind() == ConversionKind::Exact
+                && !outcome.origins().is_empty()
+        }));
+    }
+    let result = plan.authorize(LossPolicy::AllowApproximate);
+    let output = result.output().ok_or("automatic pod publication output expected")?;
+    let pod = output.file("native.pod").ok_or("pod expected")?.text();
+    assert!(pod.lines().any(|line| line == "PublishPort=8080/tcp"));
+    assert!(pod.lines().any(|line| line == "PublishPort=127.0.0.1::8081/udp"));
+    let source = parse_source(
+        id("reimported")?,
+        [
+            QuadletDocumentInput::new("native.pod", QuadletSourceId::new(1), pod),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(2),
+                output.file("web.container").ok_or("container expected")?.text(),
+            ),
+        ],
+    )?;
+    let imported = QuadletImporter::new()?.import(&source);
+    let application = imported.application().ok_or("reimported application expected")?;
+    let runtime = application.service_groups()[0]
+        .value()
+        .runtime()
+        .ok_or("runtime expected")?
+        .value();
+    let ports = runtime.ports().ok_or("pod ports expected")?;
+    assert_eq!(ports.len(), 2);
+    assert!(ports.iter().all(|port| port.value().published().is_none()));
+    assert_eq!(ports[0].value().container(), 8080);
+    assert_eq!(ports[0].value().protocol(), &Protocol::Tcp);
+    assert_eq!(ports[1].value().container(), 8081);
+    assert_eq!(ports[1].value().protocol(), &Protocol::Udp);
+    assert_eq!(ports[1].value().host_address(), Some("127.0.0.1"));
+    Ok(())
+}
+
+#[test]
+fn automatic_publication_retains_value_and_target_guards() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("ports")?);
+    let mut service = image_service("web")?;
+    service.add_port(sourced(Port::new(8080, None, None, Protocol::Tcp)?)?);
+    service.add_port(sourced(Port::new(
+        8081,
+        None,
+        None,
+        Protocol::Other("future".to_owned()),
+    )?)?);
+    service.add_port(sourced(Port::new(8082, None, Some("::1".to_owned()), Protocol::Udp)?)?);
+    application.add_service(sourced(service)?)?;
+    let exporter = QuadletExporter::new()?;
+    let plan = exporter.plan(&application, &podman_target(Some(version(6, 1, 2)))?)?;
+    assert!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked());
+    for index in 1..=2 {
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.ports[{index}]") && outcome.kind() == ConversionKind::Unsupported
+        }));
+    }
+    let partial = plan.authorize(LossPolicy::AllowPartial);
+    let container = partial
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .ok_or("partial container expected")?
+        .text();
+    assert_eq!(
+        container
+            .lines()
+            .filter(|line| line.starts_with("PublishPort="))
+            .collect::<Vec<_>>(),
+        ["PublishPort=8080/tcp"]
+    );
+    for outside in [version(5, 3, 9), version(6, 1, 3)] {
+        let target = TargetProfile::new("podman", outside, Some(outside))?;
+        assert!(
+            exporter
+                .plan(&application, &target)?
+                .authorize(LossPolicy::AllowPartial)
+                .is_blocked()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn exports_typed_network_settings_in_native_ipam_row_order() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("example")?);
     let mut network = Network::new(id("logical")?, ResourceOwnership::Application);

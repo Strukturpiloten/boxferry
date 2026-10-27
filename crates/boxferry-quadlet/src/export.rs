@@ -4103,14 +4103,6 @@ impl<'a> Mapping<'a> {
     }
 
     fn encode_port(&mut self, subject: &str, port: &Sourced<Port>) -> Option<String> {
-        let Some(published) = port.value().published() else {
-            self.unsupported(
-                subject,
-                "container-only exposure without host publication is not in the current Quadlet subset",
-                port.origins(),
-            );
-            return None;
-        };
         let Some(protocol) = protocol_name(port.value().protocol()) else {
             self.unsupported(subject, "unknown port protocol", port.origins());
             return None;
@@ -4127,7 +4119,12 @@ impl<'a> Mapping<'a> {
                 return None;
             }
         };
-        Some(format!("{prefix}{published}:{}/{protocol}", port.value().container()))
+        let publication = match port.value().published() {
+            Some(published) => format!("{prefix}{published}:{}", port.value().container()),
+            None if prefix.is_empty() => port.value().container().to_string(),
+            None => format!("{prefix}:{}", port.value().container()),
+        };
+        Some(format!("{publication}/{protocol}"))
     }
 
     fn map_mount(

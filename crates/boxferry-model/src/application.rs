@@ -2312,7 +2312,10 @@ pub enum Protocol {
     Other(String),
 }
 
-/// One container port and its optional single-host publication.
+/// One container port published to a fixed or automatically allocated host port.
+///
+/// An absent published port requests automatic host-port allocation. Exposure without host
+/// publication is represented separately by [`ExposedPort`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Port {
     container: u16,
@@ -2322,7 +2325,7 @@ pub struct Port {
 }
 
 impl Port {
-    /// Creates a port declaration.
+    /// Creates a host-publication declaration; `published: None` requests automatic allocation.
     ///
     /// # Errors
     ///
@@ -2350,7 +2353,7 @@ impl Port {
         self.container
     }
 
-    /// Returns the optional host port.
+    /// Returns the fixed host port, or `None` when the runtime should allocate one automatically.
     #[must_use]
     pub const fn published(&self) -> Option<u16> {
         self.published
