@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/v0.9.0...v0.10.0) - 2026-10-27
+
 ### Changed
 
 - Embedded Compose callers must mark every applied interpolation overlay with
