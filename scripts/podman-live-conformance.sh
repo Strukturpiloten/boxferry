@@ -1435,7 +1435,18 @@ create_workloads() {
     podman tag "${BF_ARCHIVE_IMAGE_ID}" "${image}"
     loaded_id="$(podman image inspect --format "{{.Id}}" "${image}")"
     [ "${loaded_id#sha256:}" = "${BF_ARCHIVE_IMAGE_ID}" ]
-    podman image rm --no-prune -- "${BF_ARCHIVE_ALIAS}"
+    # Untag only the authenticated archive name. Legacy Podman supports this
+    # without entering image removal or parent-pruning paths.
+    podman untag -- "${BF_ARCHIVE_IMAGE_ID}" "${BF_ARCHIVE_ALIAS}"
+    if alias_presence="$(podman image exists "${BF_ARCHIVE_ALIAS}" 2>&1)"; then
+      exit 1
+    else
+      alias_status=$?
+      [ "${alias_status}" -eq 1 ]
+      [ -z "${alias_presence}" ]
+    fi
+    loaded_id="$(podman image inspect --format "{{.Id}}" "${image}")"
+    [ "${loaded_id#sha256:}" = "${BF_ARCHIVE_IMAGE_ID}" ]
     podman image exists "${image}"
     podman tag "${image}" "${portable_image}"
     major="$(podman version --format "{{.Client.Version}}" | cut -d. -f1)"
