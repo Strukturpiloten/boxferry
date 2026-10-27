@@ -357,8 +357,8 @@ maximum-disk-growth-mib = 4096
 required-tools = ["cargo", "git"]
 lens = "compose-lens"
 repository = "https://github.com/Strukturpiloten/compose-lens.git"
-# renovate: datasource=github-tags depName=Strukturpiloten/compose-lens version=v0.3.4
-revision = "1ada5476149c3314c7b92e4ef339c001adae04f7"
+# renovate: datasource=github-tags depName=Strukturpiloten/compose-lens version=v0.4.0
+revision = "e666085f963bb442a2726d1e9b8ab13cf5e32813"
 commands = [["cargo", "ci-application"]]
 
 [[tasks]]
@@ -378,8 +378,8 @@ maximum-disk-growth-mib = 6144
 required-tools = ["cargo", "git", "podman"]
 lens = "quadlet-lens"
 repository = "https://github.com/Strukturpiloten/quadlet-lens.git"
-# renovate: datasource=github-tags depName=Strukturpiloten/quadlet-lens version=v0.2.4
-revision = "b866ba6d49f41291b96563ab7831e8da3b4841a4"
+# renovate: datasource=github-tags depName=Strukturpiloten/quadlet-lens version=v0.3.0
+revision = "970db063982b20604bc4da678eb9fed4f2e65e26"
 commands = [
   ["cargo", "ci-application"],
   ["cargo", "ci-application-generators"],

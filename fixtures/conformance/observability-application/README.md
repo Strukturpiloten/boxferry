@@ -240,8 +240,8 @@ warnings retain inferred application ownership for backend and the five named vo
 external and must not acquire an ownership warning. All-resource selection adds two boundary-peer
 reconstruction notes and an inferred-ownership warning for the default Podman network. Environment,
 aliases, network definition/IPAM, bind mounts, and child-field warnings remain non-exact.
-The historical tuple review used PodmanLens 0.2.4; the current candidate consumes released
-PodmanLens 0.2.5 and the active Podman 6.1.2 rootless lane. Exact-head acceptance must reprove both
+The historical tuple review used PodmanLens 0.2.4; the current candidate consumes published
+PodmanLens 0.3.0 and the active Podman 6.1.2 rootless lane. Exact-head acceptance must reprove both
 provisioners, every selector, and every exporter/reimport without relabelling the historical review.
 The six application logging observations and the all-selector peer logging observation remain
 non-promoted, not neutral logging intent.

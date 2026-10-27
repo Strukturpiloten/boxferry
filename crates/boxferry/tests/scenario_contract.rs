@@ -4523,6 +4523,9 @@ fn import_compose_files(input: &NativeInput, fixture: &Path, name: &str) -> Resu
     };
     let selection = select_profiles(&project, &profile_request);
     let mut source = ComposeSource::new(project, Identifier::new(name)?)?.with_profile_selection(selection);
+    if interpolation.is_some() {
+        source = source.with_interpolation_applied();
+    }
     for (source_id, file) in source_ids {
         source = source.with_source_id(source_id, SourceId::new(file)?);
     }
@@ -5416,5 +5419,229 @@ fn physical_quadlet_service_alias_reimport_refuses_sensitive_text_but_keeps_alia
             }
         }
     }
+    Ok(())
+}
+
+// Independently transcribed from the pinned public source; these assertions establish why the
+// obsolete root-extension losses disappear without weakening any remaining route/runtime gap.
+#[test]
+fn pinned_vendor_metadata_retains_superset_payloads_and_appwrite_compose_reimport() -> Result<(), Box<dyn Error>> {
+    let expected = [
+        (
+            "apache-superset",
+            vec![
+                ("x-superset-user", serde_json::json!("root")),
+                (
+                    "x-superset-volumes",
+                    serde_json::json!([
+                        "./docker:/app/docker",
+                        "./superset:/app/superset",
+                        "./superset-core:/app/superset-core",
+                        "./superset-frontend:/app/superset-frontend",
+                        "superset_home:/app/superset_home",
+                        "./tests:/app/tests",
+                        "superset_data:/app/data",
+                        "./local_extensions:/app/local_extensions"
+                    ]),
+                ),
+                (
+                    "x-common-build",
+                    serde_json::json!({
+                        "context": ".", "target": "${SUPERSET_BUILD_TARGET:-dev}",
+                        "cache_from": ["apache/superset-cache:3.11-slim-trixie"],
+                        "args": {"DEV_MODE": "true", "INCLUDE_CHROMIUM": "${INCLUDE_CHROMIUM:-false}",
+                            "INCLUDE_FIREFOX": "${INCLUDE_FIREFOX:-false}", "BUILD_TRANSLATIONS": "${BUILD_TRANSLATIONS:-false}"}
+                    }),
+                ),
+            ],
+        ),
+        (
+            "appwrite",
+            vec![(
+                "x-logging",
+                serde_json::json!({"logging": {
+                    "driver": "json-file", "options": {"max-file": "5", "max-size": "10m"}
+                }}),
+            )],
+        ),
+    ];
+    for (project, metadata) in expected {
+        let fixture = repository_root().join(format!("fixtures/scenarios/real-world-compose-{project}"));
+        let manifest = read_manifest(&fixture)?;
+        let input = manifest
+            .native_inputs
+            .iter()
+            .find(|input| input.importer == "compose")
+            .ok_or("Compose input")?;
+        let imported = import_native_input(&manifest, input, &fixture)?;
+        let mut application = imported.application().ok_or("application")?.clone();
+        assert_public_metadata(&application, &metadata)?;
+        if project == "appwrite" {
+            let quadlet = manifest
+                .evidence
+                .iter()
+                .find(|route| route.exporter == "quadlet")
+                .ok_or("Quadlet route")?;
+            assert_eq!(quadlet.outcome, Outcome::ExpectedRejection);
+            assert_appwrite_metadata_has_no_quadlet_carrier(&application)?;
+            application.withhold_literal_environment_values();
+            let version = boxferry::PlatformVersion::new(1, 0, 0);
+            let target = boxferry::TargetProfile::new("compose-specification", version, Some(version))?;
+            let plan = boxferry::ExportAdapter::plan(&ComposeExporter::new()?, &application, &target)?;
+            let authorized = plan.authorize(boxferry::LossPolicy::AllowPartial);
+            let text = authorized.output().ok_or("reviewed partial Compose artifact")?.text();
+            let loaded = LoadedProject::load([DocumentInput::new(
+                ComposeSourceId::new(1),
+                DocumentOrigin::new("generated-appwrite.yaml", &fixture),
+                text,
+            )])?;
+            let merged = merge_project(&loaded, None);
+            let source = ComposeSource::new(
+                merged.project().ok_or("merged generated source")?.clone(),
+                Identifier::new("appwrite")?,
+            )?;
+            let reimported = ComposeImporter::new()?.import(&source);
+            assert_public_metadata(reimported.application().ok_or("reimported application")?, &metadata)?;
+        }
+    }
+    Ok(())
+}
+
+fn assert_public_metadata(
+    application: &boxferry::Application,
+    expected: &[(&str, serde_json::Value)],
+) -> Result<(), Box<dyn Error>> {
+    assert_eq!(application.vendor_metadata().len(), expected.len());
+    for (metadata, (namespace, value)) in application.vendor_metadata().iter().zip(expected) {
+        assert!(matches!(metadata.scope(), boxferry::MetadataScope::Application));
+        assert_eq!(metadata.namespace().value().expose(), *namespace);
+        assert!(!metadata.namespace().origins().is_empty());
+        assert!(!metadata.payload().origins().is_empty());
+        assert_eq!(public_metadata_value(metadata.payload().value())?, *value);
+    }
+    Ok(())
+}
+
+fn public_metadata_value(node: &boxferry::MetadataNode) -> Result<serde_json::Value, Box<dyn Error>> {
+    match node.value() {
+        boxferry::MetadataValue::String(value) => Ok(serde_json::json!(value.expose())),
+        boxferry::MetadataValue::Sequence(values) => Ok(serde_json::Value::Array(
+            values
+                .iter()
+                .map(|value| public_metadata_value(value.value()))
+                .collect::<Result<_, _>>()?,
+        )),
+        boxferry::MetadataValue::Mapping(entries) => Ok(serde_json::Value::Object(
+            entries
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        entry.key().value().expose().to_owned(),
+                        public_metadata_value(entry.value().value())?,
+                    ))
+                })
+                .collect::<Result<_, Box<dyn Error>>>()?,
+        )),
+        _ => Err("pinned extension payload changed its independently expected scalar type".into()),
+    }
+}
+
+#[test]
+fn pinned_authored_environment_expressions_use_the_specific_quadlet_source_rule() -> Result<(), Box<dyn Error>> {
+    // Each expression is independently transcribed from its immutable plain/double-quoted field.
+    // The other Host/Required/literal environment losses keep their generic target rule.
+    for (project, service_name, key, expression) in [
+        (
+            "apache-superset",
+            "superset-node",
+            "SCARF_ANALYTICS",
+            "${SCARF_ANALYTICS:-}",
+        ),
+        ("immich", "database", "POSTGRES_PASSWORD", "${DB_PASSWORD}"),
+        (
+            "librechat",
+            "admin-panel",
+            "SESSION_SECRET",
+            "${ADMIN_PANEL_SESSION_SECRET}",
+        ),
+        ("plausible", "plausible", "SECRET_KEY_BASE", "${SECRET_KEY_BASE}"),
+        ("supabase", "auth", "API_EXTERNAL_URL", "${API_EXTERNAL_URL}"),
+    ] {
+        let fixture = repository_root().join(format!("fixtures/scenarios/real-world-compose-{project}"));
+        let manifest = read_manifest(&fixture)?;
+        let input = manifest
+            .native_inputs
+            .iter()
+            .find(|input| input.importer == "compose")
+            .ok_or("Compose input")?;
+        let imported = import_native_input(&manifest, input, &fixture)?;
+        let application = imported.application().ok_or("application")?;
+        let service = application
+            .services()
+            .iter()
+            .find(|service| service.value().name().as_str() == service_name)
+            .ok_or("required service")?
+            .value();
+        let entry = service
+            .environment()
+            .iter()
+            .find(|entry| entry.value().name().as_str() == key)
+            .ok_or("required environment field")?;
+        assert!(
+            matches!(entry.value().value(), boxferry::EnvironmentValue::UnresolvedSource { source_format, expression: value } if source_format.as_str() == "compose" && value.expose() == expression)
+        );
+        let target = boxferry::TargetProfile::new(
+            "podman",
+            boxferry::PlatformVersion::new(5, 4, 0),
+            Some(boxferry::PlatformVersion::new(6, 1, 0)),
+        )?;
+        let plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
+        let subject = format!("services.{service_name}.environment.{key}");
+        let outcomes = plan
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject() == subject)
+            .collect::<Vec<_>>();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].kind(), ConversionKind::Unsupported);
+        assert_eq!(
+            outcomes[0].diagnostic().map(boxferry::DiagnosticCode::as_str),
+            Some("BFQ0014")
+        );
+        let mut withheld = application.clone();
+        withheld.withhold_literal_environment_values();
+        let withheld_plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, &withheld, &target)?;
+        let withheld_outcomes = withheld_plan
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject() == subject)
+            .collect::<Vec<_>>();
+        assert_eq!(withheld_outcomes.len(), 1);
+        assert_eq!(withheld_outcomes[0].kind(), ConversionKind::Unsupported);
+        assert_eq!(
+            withheld_outcomes[0].diagnostic().map(boxferry::DiagnosticCode::as_str),
+            Some("BFQ0003")
+        );
+    }
+    Ok(())
+}
+
+fn assert_appwrite_metadata_has_no_quadlet_carrier(application: &boxferry::Application) -> Result<(), Box<dyn Error>> {
+    let target = boxferry::TargetProfile::new(
+        "podman",
+        boxferry::PlatformVersion::new(5, 4, 0),
+        Some(boxferry::PlatformVersion::new(6, 1, 0)),
+    )?;
+    let plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.kind() == ConversionKind::Invalid
+                && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0012"))
+    );
+    assert!(plan.diagnostics().iter().any(|diagnostic| diagnostic.code().as_str() == "BFQ0003"
+        && diagnostic.fields().iter().any(|field| field.name() == "subject" && field.value().expose() == "application.vendor_metadata[0]")
+        && diagnostic.fields().iter().any(|field| field.name() == "reason" && field.value().expose() == "metadata has no generated owning unit; retain the source metadata separately or generate its owning service unit")));
+    assert!(plan.authorize(boxferry::LossPolicy::AllowPartial).output().is_none());
     Ok(())
 }

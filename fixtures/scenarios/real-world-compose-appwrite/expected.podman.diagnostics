@@ -1,4 +1,3 @@
-BFC0004|application
 BFC0004|services.traefik.ports[0]
 BFC0004|services.traefik.ports[1]
 BFC0105|services.appwrite-embedding.environment.EMBEDDING_MODELS
@@ -45,6 +44,7 @@ BFC0105|services.openruntimes-executor.environment.OPR_EXECUTOR_SECRET
 BFC0105|services.postgresql.environment.POSTGRES_DB
 BFC0105|services.postgresql.environment.POSTGRES_PASSWORD
 BFC0105|services.postgresql.environment.POSTGRES_USER
+BFP0007|application.vendor_metadata[0]
 BFP0007|networks.appwrite.runtime_name
 BFP0007|networks.gateway.runtime_name
 BFP0007|networks.runtimes.runtime_name

@@ -52,7 +52,7 @@
       "code": "BFC0007",
       "default_severity": "warning",
       "description": "Neutral application intent is not represented in generated Compose output.",
-      "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+      "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Protected vendor metadata also blocks every loss policy because fresh Compose text cannot retain sensitivity. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
       "name": "compose-output-unsupported",
       "owner": "Compose adapter"
     },
@@ -422,6 +422,14 @@
       "description": "A source variable expression cannot be emitted as a Quadlet value.",
       "help": "Resolve source variables before conversion; for Compose input, supply --env-file FILE or --env NAME=VALUE, or use --interpolate for process-variable fallback.",
       "name": "quadlet-unresolved-source-variable",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0015",
+      "default_severity": "note",
+      "description": "Service execution environment prerequisites are external-unverified.",
+      "help": "Provision mandatory service environment files and reference values on the target; bind roots must resolve to nonempty absolute paths without colons or control characters. Conversion never reads providers or verifies runtime availability.",
+      "name": "quadlet-external-environment-unverified",
       "owner": "Quadlet adapter"
     },
     {

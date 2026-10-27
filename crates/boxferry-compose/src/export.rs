@@ -1,5 +1,6 @@
 //! Neutral-application-to-Compose planning through `ComposeLens`'s validated generator.
 
+mod metadata;
 use std::convert::TryFrom;
 
 use boxferry_engine::{
@@ -143,6 +144,7 @@ struct Mapping<'a> {
     diagnostics: Vec<Diagnostic>,
     generation_failed: bool,
     protected_aliases: bool,
+    protected_metadata: bool,
 }
 
 impl<'a> Mapping<'a> {
@@ -157,6 +159,7 @@ impl<'a> Mapping<'a> {
             diagnostics: Vec::new(),
             generation_failed: false,
             protected_aliases: false,
+            protected_metadata: false,
         }
     }
 
@@ -331,6 +334,7 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+        self.map_root_metadata(&mut builder);
         self.builder = Some(builder);
     }
 
@@ -980,6 +984,7 @@ impl<'a> Mapping<'a> {
         self.map_ports(service, &mut generated, &service_subject);
         self.map_mounts(service, &mut generated, &service_subject);
         self.map_network_attachments(service, &mut generated, &service_subject);
+        self.map_service_metadata(service.name(), &mut generated);
         self.report_unimplemented_service_fields(service, &service_subject);
         Some(generated)
     }
@@ -1169,9 +1174,17 @@ impl<'a> Mapping<'a> {
     fn map_environment(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
         let mut environment = service.environment().iter().collect::<Vec<_>>();
         environment.sort_by(|left, right| left.value().name().as_str().cmp(right.value().name().as_str()));
+        if let Some(plan) = service.execution_environment() {
+            self.unsupported(
+                &format!("{service_subject}.execution_environment"),
+                "Compose output cannot preserve service execution providers; resolve explicitly at conversion time",
+                plan.origins(),
+            );
+        }
         for environment in environment {
             let subject = format!("{service_subject}.environment.{}", environment.value().name().as_str());
             match environment.value().value() {
+                EnvironmentValue::Literal(value) if value.expose().contains('$') => self.unsupported(&subject, "Compose renderer cannot safely preserve decoded literal dollars in container environment; supply the literal value on the target or choose Quadlet output", environment.origins()),
                 EnvironmentValue::Literal(value) => match generated_string(value)
                     .and_then(|value| GeneratedEnvironment::literal(environment.value().name().as_str(), value))
                 {
@@ -1181,6 +1194,12 @@ impl<'a> Mapping<'a> {
                     }
                     Err(error) => self.generation_error(&subject, &error, environment.origins()),
                 },
+                EnvironmentValue::UnresolvedSource { source_format, expression } if source_format.as_str() == "compose" => match generated_string(expression).and_then(|value| GeneratedEnvironment::literal(environment.value().name().as_str(), value)) {
+                    Ok(value) => { generated.add_environment(value); self.exact(subject, environment.origins()); }
+                    Err(error) => self.generation_error(&subject, &error, environment.origins()),
+                },
+                EnvironmentValue::UnresolvedSource { .. } => self.unsupported(&subject, "unresolved environment expression belongs to a different source format; resolve it explicitly before Compose output", environment.origins()),
+                EnvironmentValue::Deferred(_) => self.unsupported(&subject, "deferred service-execution expressions require explicit conversion-time resolution for Compose output", environment.origins()),
                 EnvironmentValue::Required => self.unsupported(
                     &subject,
                     "environment value was withheld; supply this named value on the target before use",
@@ -1357,6 +1376,10 @@ impl<'a> Mapping<'a> {
     fn map_mounts(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
         for (index, mount) in service.mounts().iter().enumerate() {
             let subject = format!("{service_subject}.mounts[{index}]");
+            if mount.value().paths_are_literal() && mount.value().target().contains('$') {
+                self.unsupported(&subject, "Compose renderer cannot safely preserve decoded literal dollars in mount targets; supply an explicit target path or choose Quadlet output", mount.origins());
+                continue;
+            }
             let selinux = match mount.value().selinux_relabel() {
                 Some(SelinuxRelabel::Shared) => Some(GeneratedSelinux::Shared),
                 Some(SelinuxRelabel::Private) => Some(GeneratedSelinux::Private),
@@ -1375,8 +1398,16 @@ impl<'a> Mapping<'a> {
                 MountSource::Volume(source) => {
                     GeneratedMount::volume(source.as_str(), mount.value().target(), mount.value().read_only())
                 }
+                MountSource::HostPath(source) if mount.value().paths_are_literal() && source.contains('$') => {
+                    self.unsupported(&subject, "Compose renderer cannot safely preserve decoded literal dollars in bind paths; supply an explicit target path or choose Quadlet output", mount.origins());
+                    continue;
+                }
                 MountSource::HostPath(source) => {
                     GeneratedMount::bind(source, mount.value().target(), mount.value().read_only(), selinux)
+                }
+                MountSource::DeferredHostPath(_) => {
+                    self.unsupported(&subject, "deferred service-execution bind requires explicit conversion-time resolution for Compose output", mount.origins());
+                    continue;
                 }
                 MountSource::Anonymous => GeneratedMount::anonymous(mount.value().target(), mount.value().read_only()),
                 _ => {
@@ -2224,7 +2255,11 @@ impl<'a> Mapping<'a> {
         Vec<ConversionOutcome>,
         Vec<Diagnostic>,
     ) {
-        let candidate = if self.compatibility.is_some() && !self.generation_failed && !self.protected_aliases {
+        let candidate = if self.compatibility.is_some()
+            && !self.generation_failed
+            && !self.protected_aliases
+            && !self.protected_metadata
+        {
             match self.builder.take().unwrap_or_default().build(SourceId::new(1)) {
                 Ok(document) => Some(document),
                 Err(error) => {

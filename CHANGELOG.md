@@ -7,6 +7,27 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Embedded Compose callers must mark every applied interpolation overlay with
+  `ComposeSource::with_interpolation_applied()`, including empty-provider and escape-only overlays.
+
+- Update native dependency requirements to ComposeLens 0.4.0, PodmanLens 0.3.0, and QuadletLens
+  0.3.0, with matching exact Compose/Quadlet conformance source revisions. Preserve the reviewed
+  Podman runtime bounds and separate 6.1.0 deployment-rendering target.
+- Refuse excluded-style and decoded literal dollar values where Compose generation could activate
+  them, preserving eligible authored source expressions as distinct opaque intent. Mark decoded
+  literal mount paths explicitly, independently of provenance.
+- Add explicit Compose-to-Quadlet service execution environment deferral with protected inline
+  providers, ordered mandatory external files, native-owned escaping and external-unverified
+  prerequisites ([#479](https://github.com/Strukturpiloten/boxferry/issues/479)).
+
+- Add an optional bounded Quadlet transport bundle and explicit byte-preserving extraction,
+  retaining native filenames, references, conversion losses and privacy-safe member reports
+  ([#478](https://github.com/Strukturpiloten/boxferry/issues/478)).
+
+- Preserve inert application and direct-service Compose vendor metadata through the neutral model
+  and original Quadlet vendor sections, retaining nested types, folded text, ownership and sensitivity
+  ([#477](https://github.com/Strukturpiloten/boxferry/issues/477)).
+
 - Preserve automatic host-port allocation when converting Compose publications to Quadlet
   container and pod units, including TCP and UDP, without inventing fixed host ports
   ([#476](https://github.com/Strukturpiloten/boxferry/issues/476)).

@@ -55,7 +55,7 @@ toml = "=1.1.8"
 default = ["cli", "compose", "podman", "quadlet"]
 cli = ["dep:clap", "dep:jiff", "dep:serde", "dep:serde_json", "dep:tokio", "dep:zip"]
 compose = ["dep:boxferry-compose"]
-quadlet = ["dep:boxferry-quadlet"]
+quadlet = ["dep:boxferry-quadlet", "dep:serde", "dep:serde_json"]
 podman = ["dep:boxferry-podman"]
 
 [lints]

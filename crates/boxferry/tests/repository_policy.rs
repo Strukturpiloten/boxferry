@@ -7583,6 +7583,9 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
             return Err(format!("release-plz workspace setting {name} must be {expected}"));
         }
     }
+    if workspace.get("git_tag_name").and_then(toml::Value::as_str) != Some("v{{ version }}") {
+        return Err("release-plz must use the shared v{{ version }} release tag convention".to_owned());
+    }
     if workspace.get("pr_branch_prefix").and_then(toml::Value::as_str) != Some("release-plz-") {
         return Err("release-plz branches must use the guarded release-plz- prefix".to_owned());
     }
@@ -7620,6 +7623,9 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
 
     let release = fs::read_to_string(root.join(".github/workflows/release.yml"))
         .map_err(|error| format!("failed to read release workflow: {error}"))?;
+    if !release.contains("printf 'tag=v%s\\n' \"${version}\"") {
+        return Err("release-plz tag template must match the Release workflow's shared v tag".to_owned());
+    }
     if release.contains("docs/releases/${version}.md") || !release.contains("bash scripts/extract-release-notes.sh") {
         return Err("protected publication must derive release notes from CHANGELOG.md".to_owned());
     }

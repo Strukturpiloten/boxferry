@@ -32,6 +32,17 @@
     "truncations"
   ],
   "properties": {
+    "operation": { "enum": ["convert", "validate", "extract"] },
+    "bundle_members": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": { "$ref": "#/$defs/bundle_member" }
+    },
+    "input_bundle_members": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": { "$ref": "#/$defs/input_bundle_member" }
+    },
     "schema_version": { "const": 1 },
     "boxferry_version": { "$ref": "#/$defs/text" },
     "status": { "enum": ["success", "blocked", "failure"] },
@@ -66,6 +77,49 @@
     "truncations": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/truncation" } }
   },
   "$defs": {
+    "bundle_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "name", "unit_type", "size"],
+      "properties": {
+        "transport": {
+          "$ref": "#/$defs/text"
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "unit_type": {
+          "enum": [
+            "container",
+            "pod",
+            "network",
+            "volume",
+            "image",
+            "build",
+            "kube",
+            "artifact",
+            "unknown"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "input_bundle_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport_alias", "member_alias"],
+      "properties": {
+        "transport_alias": {
+          "$ref": "#/$defs/text"
+        },
+        "member_alias": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
     "text": { "type": "string", "maxLength": 16384 },
     "fix_first": {
       "type": "object",

@@ -134,7 +134,7 @@ amd64 platform; the runner still verifies the observed engine version, package a
 Distribution-package lanes are separate evidence and keep their exact package revisions until
 those images receive their own reviewed replacement.
 
-PodmanLens 0.2.5 supplies the read-only API boundary and QuadletLens 0.2.4 admits the generator
+PodmanLens 0.3.0 supplies the read-only API boundary and QuadletLens 0.3.0 admits the generator
 catalogue through 6.1.2. Runtime input, Quadlet generation and Podman deployment rendering are
 distinct claims: PodmanLens's exact renderer catalogue still ends at 6.1.0, so BoxFerry retains
 that output ceiling. Running a 6.1.0 API plan against 6.1.2 does not add a new renderer target.

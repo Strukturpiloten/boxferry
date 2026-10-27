@@ -5,6 +5,7 @@
 //! each contributing source, and attach a [`compose_lens::profiles::ProfileSelection`] whenever a
 //! merged project contains profiled services.
 
+mod deferred;
 mod export;
 mod import;
 mod source;
@@ -18,3 +19,5 @@ pub use source::{ComposeFindingStage, ComposeSource};
 
 /// The native Compose library consumed by this adapter.
 pub use compose_lens;
+
+pub use deferred::QuadletDeferredOptions;

@@ -2312,7 +2312,7 @@ fn assert_unsupported_outcome(result: &boxferry_engine::ImportResult, subject: &
 }
 
 #[test]
-fn unresolved_variables_have_actionable_evidence_without_discarding_literal_values() -> Result<(), Box<dyn Error>> {
+fn unresolved_source_and_excluded_literals_have_distinct_actionable_evidence() -> Result<(), Box<dyn Error>> {
     let source_id = ComposeSourceId::new(198);
     let project = merged_project([(
         source_id,
@@ -2332,13 +2332,13 @@ fn unresolved_variables_have_actionable_evidence_without_discarding_literal_valu
         .iter()
         .filter(|diagnostic| diagnostic.code().as_str() == "BFC0105")
         .collect::<Vec<_>>();
-    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics.len(), 2);
     assert!(
         diagnostics
             .iter()
             .all(|diagnostic| diagnostic.severity() == Severity::Warning)
     );
-    for variable in ["IMAGE_VERSION", "DB_PASSWORD", "DATA_ROOT"] {
+    for variable in ["IMAGE_VERSION", "DATA_ROOT"] {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic
                 .fields()
@@ -2346,6 +2346,7 @@ fn unresolved_variables_have_actionable_evidence_without_discarding_literal_valu
                 .any(|field| field.name() == "variable" && field.value().expose() == variable)
         }));
     }
+    assert_unsupported_outcome(&result, "services.web.environment.DB_PASSWORD")?;
     let service = result.application().ok_or("application")?.services()[0].value();
     assert_eq!(
         service.image().map(|image| image.value().as_str()),

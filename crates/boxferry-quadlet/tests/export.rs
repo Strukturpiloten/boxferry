@@ -2347,7 +2347,7 @@ fn quotes_complex_environment_and_exec_arguments_without_losing_podman_names() -
         .ok_or("quoted Quadlet output expected")?;
     assert!(output.contains("Exec=nginx -g \"daemon off;\""));
     assert!(output.contains(
-        "Environment=\"NC_davstorage.request_timeout=value with \\\"quotes\\\", \\\\backslashes, $dollar, and 100%\""
+        "Environment=\"NC_davstorage.request_timeout=value with \\\"quotes\\\", \\\\backslashes, $$dollar, and 100%%\""
     ));
     Ok(())
 }

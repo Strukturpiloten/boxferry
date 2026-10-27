@@ -1,6 +1,5 @@
 BFC0004|services.traefik.ports[0]
 BFC0004|services.traefik.ports[1]
-BFC0004|application
 BFC0007|services.traefik.dependencies[0]
 BFC0007|services.appwrite.healthcheck
 BFC0007|services.appwrite.dependencies[0]

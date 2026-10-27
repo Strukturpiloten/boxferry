@@ -16,5 +16,8 @@ application model before exporting, including same-format routes.
   promotion decisions.
 - [Quadlet input](quadlet-input/) covers document sets and target-version ranges.
 
+[Quadlet bundles](quadlet-bundles/) covers sharing complete native file sets and extracting them
+without semantic conversion.
+
 Keep the default exact loss policy for a first run. If BoxFerry blocks output, review the reported
 rule before choosing `approximate` or `partial`.

@@ -89,16 +89,49 @@ pub struct ComposeSource {
     source_ids: BTreeMap<ComposeSourceId, SourceId>,
     profile_selection: Option<ProfileSelection>,
     native_findings: Vec<NativeFinding>,
+    deferred_options: crate::QuadletDeferredOptions,
+    interpolation_applied: bool,
 }
 
 impl ComposeSource {
+    /// Records that the native merge consumed an interpolation overlay, including an empty one.
+    /// Callers must set this whenever merging with an overlay: escaped dollars may have been
+    /// decoded even when no substituted provider value carries sensitivity taint.
+    #[must_use]
+    pub const fn with_interpolation_applied(mut self) -> Self {
+        self.interpolation_applied = true;
+        self
+    }
+    /// Returns the explicit native processing-stage evidence supplied by the caller.
+    #[must_use]
+    pub const fn interpolation_applied(&self) -> bool {
+        self.interpolation_applied
+    }
+
+    /// Attaches explicit per-service deferred execution plans to uninterpolated input.
+    ///
+    /// Callers must merge without an interpolation overlay. Explicitly recorded overlays are
+    /// rejected; this option never authorizes a second evaluation stage.
+    #[must_use]
+    pub fn with_deferred_options(mut self, options: crate::QuadletDeferredOptions) -> Self {
+        self.deferred_options = options;
+        self
+    }
+    /// Returns the explicit deferral policy.
+    #[must_use]
+    pub const fn deferred_options(&self) -> &crate::QuadletDeferredOptions {
+        &self.deferred_options
+    }
+
     /// Creates a source without guessing profiles or source filenames from ambient state.
     ///
     /// Every Compose source initially receives the stable neutral identity
     /// `compose-source-<numeric-id>`. Call [`Self::with_source_id`] to replace it with a caller-owned
     /// path, URI, or other display identity. The project's explicit top-level `name` wins when
     /// present; the fallback is used when Compose project naming was supplied externally or
-    /// omitted.
+    /// omitted. If the merge consumed any interpolation overlay, callers must additionally use
+    /// [`Self::with_interpolation_applied`], even when the overlay was empty or only decoded escapes.
+    /// Processing stage is explicit caller context and is never inferred from provenance or taint.
     ///
     /// # Errors
     ///
@@ -120,6 +153,8 @@ impl ComposeSource {
             source_ids,
             profile_selection: None,
             native_findings: Vec::new(),
+            deferred_options: crate::QuadletDeferredOptions::new(),
+            interpolation_applied: false,
         })
     }
 

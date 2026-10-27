@@ -1,5 +1,6 @@
 //! Quadlet-to-application mapping with explicit fidelity decisions.
 
+mod metadata;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -66,6 +67,17 @@ impl ImportAdapter for QuadletImporter {
         mapping.report_native_findings(source.native_findings());
         if !source.documents().is_valid() {
             mapping.invalid_source();
+            // Metadata may explain a missing carrier even when that same missing file also
+            // invalidates a runtime reference. Keep the application unavailable in this branch.
+            let mut metadata_owners = Application::new(source.application_name().clone());
+            for named in source.documents().documents() {
+                if named.document().unit_type() == QuadletUnitType::Container
+                    && let Ok(owner) = Identifier::new(unit_stem(named.name().as_str()))
+                {
+                    let _ = metadata_owners.add_service(Sourced::generated(Service::new(owner)));
+                }
+            }
+            mapping.import_metadata(&mut metadata_owners);
             return ImportResult::new(None, mapping.outcomes, mapping.diagnostics);
         }
 
@@ -126,6 +138,7 @@ impl ImportAdapter for QuadletImporter {
 
         mapping.finish_pod_groups(&mut application, pod_order, pod_groups);
         mapping.collect_retained_native_evidence(&mut application);
+        mapping.import_metadata(&mut application);
         if let Err(error) = application.validate_image_artifact_references() {
             mapping.invalid_model("volumes", "quadlet", &error.to_string(), None);
         }
@@ -313,6 +326,9 @@ impl<'a> Mapping<'a> {
                 }
             };
             for section in document.sections() {
+                if section.name().text().starts_with("X-") {
+                    continue;
+                }
                 for entry in section.entries() {
                     let subject = match entry.kind() {
                         EntryKind::Container(ContainerKey::PodmanArgs) => {
@@ -405,6 +421,9 @@ impl<'a> Mapping<'a> {
             _ => return,
         };
         for (section_index, section) in document.sections().iter().enumerate() {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             let mut occurrences = BTreeMap::<String, usize>::new();
             for entry in section.entries() {
                 let key = entry.key().text();
@@ -505,6 +524,9 @@ impl<'a> Mapping<'a> {
         let mut labels = None;
         let mut label_origins = Vec::new();
         for section in sections {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
                 let EntryKind::Volume(key) = entry.kind() else {
@@ -692,6 +714,9 @@ impl<'a> Mapping<'a> {
         let mut ipam_entries = Vec::new();
 
         for section in sections {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
                 let EntryKind::Network(key) = entry.kind() else {
@@ -1051,6 +1076,9 @@ impl<'a> Mapping<'a> {
         let mut origins = Vec::new();
         let mut singletons = BTreeSet::new();
         for section in sections {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
                 origins.push(origin.clone());
@@ -1146,6 +1174,9 @@ impl<'a> Mapping<'a> {
         let environment = document.build_environment();
         self.report_native_value_diagnostics("build-environment", environment.diagnostics());
         for section in document.sections() {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
                 origins.push(origin.clone());
@@ -1461,6 +1492,9 @@ impl<'a> Mapping<'a> {
         let mut runtime = ServiceGroupRuntime::new();
 
         for section in document.sections() {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             for entry in section.entries() {
                 match (section.kind(), entry.kind()) {
                     (SectionKind::Pod, EntryKind::Pod(PodKey::PodName)) => {
@@ -1798,7 +1832,7 @@ impl<'a> Mapping<'a> {
                     &subject,
                     filename,
                     "Volume",
-                    "the native mount contains a systemd specifier and is deferred until manager expansion",
+                    "the native mount contains a service execution reference or systemd specifier; resolve explicitly before reverse conversion",
                     origin,
                 ),
                 NativeMountDirective::Unmodeled { .. } => self.invalid_model(
@@ -1881,6 +1915,9 @@ impl<'a> Mapping<'a> {
         let mut state = ContainerImportState::default();
 
         for section in document.sections() {
+            if section.name().text().starts_with("X-") {
+                continue;
+            }
             match section.kind() {
                 SectionKind::Container => {
                     self.map_native_container_section(
@@ -2949,10 +2986,12 @@ impl<'a> Mapping<'a> {
                     let Some(name) = self.identifier(name, &subject, origin.clone()) else {
                         continue;
                     };
-                    assignments.push(Sourced::from_source(
+                    let mut assignment = Sourced::from_source(
                         EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value))),
                         origin.clone(),
-                    ));
+                    );
+                    assignment.add_origin(Provenance::conversion_decision(origin.source_id().clone()));
+                    assignments.push(assignment);
                     self.exact(subject, Some(origin));
                 }
                 AuthoredContainerEnvironmentDirective::Reset { .. } => {
@@ -2981,7 +3020,7 @@ impl<'a> Mapping<'a> {
                         &format!("services.{service_name}.environment.{name}"),
                         filename,
                         "Environment",
-                        "an Environment value with a systemd specifier is deferred until manager expansion",
+                        "an Environment value with a service execution reference or systemd specifier is deferred; resolve explicitly before reverse conversion",
                         origin,
                     );
                 }
@@ -3228,7 +3267,7 @@ impl<'a> Mapping<'a> {
                     &subject,
                     filename,
                     "Volume/Mount",
-                    "the native mount contains a systemd specifier and is deferred until manager expansion",
+                    "the native mount contains a service execution reference or systemd specifier; resolve explicitly before reverse conversion",
                     self.provenance(*span),
                 ),
                 NativeMountDirective::Unmodeled { span } => self.invalid_model(
@@ -3252,7 +3291,9 @@ impl<'a> Mapping<'a> {
             {
                 continue;
             }
-            service.add_mount(Sourced::from_source(mount, origin.clone()));
+            let mut mapped = Sourced::from_source(mount.with_literal_paths(), origin.clone());
+            mapped.add_origin(Provenance::conversion_decision(origin.source_id().clone()));
+            service.add_mount(mapped);
         }
     }
 
@@ -4927,7 +4968,8 @@ fn neutral_mount(specification: &NativeMountSpecification) -> Result<(Mount, Opt
     }
     let (source, external_volume) = neutral_mount_source(specification.source(), mount_type)?;
     let mut mount = Mount::new(source, target, read_only)
-        .map_err(|_| ValueIssue::Invalid("decoded native mount destination cannot enter the neutral mount model"))?;
+        .map_err(|_| ValueIssue::Invalid("decoded native mount destination cannot enter the neutral mount model"))?
+        .with_literal_paths();
     if let Some(relabel) = relabel {
         mount.set_selinux_relabel(relabel);
     }

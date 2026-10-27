@@ -53,6 +53,7 @@ struct DocumentationExample {
     copy: Vec<PathBuf>,
     #[serde(default)]
     copy_as: Vec<CopyFile>,
+    prepare_bundle: Option<PreparedBundle>,
     #[serde(default)]
     mkdir: Vec<PathBuf>,
     #[serde(default)]
@@ -85,6 +86,13 @@ struct ExpectedFile {
 struct CopyFile {
     source: PathBuf,
     destination: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedBundle {
+    destination: PathBuf,
+    members: Vec<CopyFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,6 +252,9 @@ fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), 
             }
             fs::copy(fixture_directory.join(&source.source), destination)?;
         }
+        if let Some(bundle) = &example.prepare_bundle {
+            prepare_bundle_fixture(bundle, temporary.path(), &fixture_directory)?;
+        }
         for directory in &example.mkdir {
             fs::create_dir_all(temporary.path().join(directory))?;
         }
@@ -320,6 +331,74 @@ fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), 
         "quadlet->quadlet".to_owned(),
     ]);
     assert_eq!(failing_routes, expected_failing_routes);
+    Ok(())
+}
+
+fn prepare_bundle_fixture(bundle: &PreparedBundle, directory: &Path, fixtures: &Path) -> Result<(), Box<dyn Error>> {
+    use std::{
+        io::{Read as _, Write as _},
+        path::Component,
+    };
+    let safe_path = |path: &Path| {
+        !path.as_os_str().is_empty()
+            && path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+    };
+    if !safe_path(&bundle.destination)
+        || bundle.destination.components().count() != 1
+        || !(1..=4096).contains(&bundle.members.len())
+    {
+        return Err("invalid documentation bundle destination or member count".into());
+    }
+    let fixtures = fs::canonicalize(fixtures)?;
+    let mut bytes = format!("BOXFERRY-QUADLET-BUNDLE 1\nmembers {}\n", bundle.members.len()).into_bytes();
+    for member in &bundle.members {
+        if !safe_path(&member.source) || !safe_path(&member.destination) || member.destination.components().count() != 1
+        {
+            return Err("invalid documentation bundle fixture path".into());
+        }
+        let source = fs::canonicalize(fixtures.join(&member.source))?;
+        if !source.starts_with(&fixtures) {
+            return Err("documentation bundle fixture escapes its directory".into());
+        }
+        let name = member
+            .destination
+            .to_str()
+            .ok_or("documentation bundle name is not UTF-8")?;
+        if name.contains(['/', '\\', ':']) || name.chars().any(char::is_control) {
+            return Err("invalid documentation bundle member name".into());
+        }
+        let mut payload = Vec::new();
+        fs::File::open(source)?
+            .take(8 * 1024 * 1024 + 1)
+            .read_to_end(&mut payload)?;
+        if payload.len() > 8 * 1024 * 1024 {
+            return Err("documentation bundle member exceeds limit".into());
+        }
+        let header = format!(
+            "---\n{{\"name\":{},\"bytes\":{}}}\n",
+            serde_json::to_string(name)?,
+            payload.len()
+        );
+        if header.len() > 16 * 1024
+            || bytes
+                .len()
+                .saturating_add(header.len())
+                .saturating_add(payload.len() + 1)
+                > 64 * 1024 * 1024
+        {
+            return Err("documentation bundle framing exceeds limit".into());
+        }
+        bytes.extend_from_slice(header.as_bytes());
+        bytes.extend_from_slice(&payload);
+        bytes.push(b'\n');
+    }
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(directory.join(&bundle.destination))?;
+    output.write_all(&bytes)?;
     Ok(())
 }
 
