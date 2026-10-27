@@ -134,12 +134,13 @@ writes. The complete gate remains the primary agent's responsibility.
 
 ## Agent roles and verification
 
-Model defaults: [`.codex/config.toml`](.codex/config.toml); roles: [`.codex/agents/`](.codex/agents/).
+Models: [defaults](.codex/config.toml), [roles](.codex/agents/),
+[`presentation_worker`](.codex/agents/presentation-worker.toml) (`gpt-6.1-terra`/`medium`).
 The primary manager always uses `gpt-6-sol` with `xhigh` reasoning. Implementation, specification
 research, and independent review default to `gpt-6.1-sol`/`high`; check-only verification uses
 `gpt-6-luna`/`high`. Use Luna for bounded read-only exploration and Sol for difficult failure diagnosis.
 
-Task-specific subagents may use `gpt-6.1-sol` or `gpt-6-luna` with `medium`, `high`, or `xhigh`
+Task-specific subagents may use `gpt-6.1-sol`, `gpt-6.1-terra`, or `gpt-6-luna` with `medium`, `high`, or `xhigh`
 reasoning. Use `gpt-6-astra` only with `xhigh` reasoning for particularly difficult architectural
 questions.
 
