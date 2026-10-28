@@ -1,7 +1,7 @@
 schema = 1
 id = "observability-application"
 source-capabilities = ["compose", "podman", "quadlet"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = ["boxferry-public-observability-admin-canary"]
 
 [application]
@@ -361,3 +361,83 @@ image-operations = [
   { resource = "prometheus-image", reference = "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0", policy = "missing" },
 ]
 start-order = ["alloy", "grafana", "log-producer", "loki", "metrics-producer", "prometheus"]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+docker-empty-volume-labels = ["alloy-data", "grafana-data", "loki-data", "prometheus-data", "telemetry-logs"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "exact"
+outcome = "expected-rejection"
+reason = "Protected Quadlet Exec arguments cannot enter Docker create requests. Reviewed internal-network and loopback-publication support do not authorize disclosure of those commands."
+artifacts = []
+diagnostics = [
+  "BFD0006|services.<input-10>",
+  "BFD0006|services.<input-11>",
+  "BFD0006|services.<input-12>",
+  "BFD0006|services.<input-7>",
+  "BFD0006|services.<input-9>",
+  "BFD0006|services.alloy.command",
+  "BFD0006|services.log-producer.command",
+  "BFD0006|services.loki.command",
+  "BFD0006|services.metrics-producer.command",
+  "BFD0006|services.prometheus.command",
+]
+allowed-losses = [
+  { rule = "BFD0006", subject = "services.alloy.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.alloy.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.log-producer.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.log-producer.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.loki.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.loki.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.metrics-producer.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.metrics-producer.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.prometheus.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.prometheus.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+]
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+docker-empty-volume-labels = ["alloy-data", "grafana-data", "loki-data", "prometheus-data", "telemetry-logs"]
+diagnostics-file = "expected.podman-docker.diagnostics"
+allowed-losses-file = "expected.podman-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = []

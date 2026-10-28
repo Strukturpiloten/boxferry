@@ -15,7 +15,7 @@ files = [
 source = "authored"
 license = "MPL-2.0"
 redistribution = "allowed"
-modifications = "none"
+modifications = "Added independently authored inert Docker target expectations; existing non-Docker expectations are unchanged."
 
 [environment]
 description = "No host environment, runtime, external process input, or systemd expansion is used."
@@ -64,3 +64,25 @@ expected = "expected-podman-commands.sh"
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman.json"
 expected = "expected-podman.json"
+
+[extensions.scenarios.exports.docker]
+loss-policy = "partial"
+blocked = true
+terminal-status = "failure"
+invalid-outcomes = 1
+diagnostic-codes = ["BFD0007", "BFD0006", "BFD0006", "BFD0006", "BFD0006", "BFD0006", "BFQ1003", "BFQ1003"]
+diagnostic-subjects = [
+  "services.native.mounts.0.selinux_relabel",
+  "services.native.command",
+  "services.native.entrypoint",
+  "services.native.environment.GREETING",
+  "services.native.environment.EMPTY",
+  "services.<input-1>",
+  "",
+  "",
+]
+
+[extensions.scenarios.exports.docker.terminal-diagnostic-orders]
+exact = [6, 7, 0, 1, 2, 3, 4, 5]
+approximate = [6, 7, 0, 1, 2, 3, 4, 5]
+partial = [0, 1, 2, 3, 4, 5, 6, 7]

@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=34
+readonly total_steps=35
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -188,13 +188,14 @@ run_step "Test migration-readiness contracts" python3 scripts/test-migration-rea
 run_step "Test reviewed application catalogue admission" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-reviewed-application-catalogue.py
 run_step "Run offline migration-readiness tier" python3 scripts/migration-readiness.py run \
   --tier offline --evidence target/migration-readiness/offline-evidence-v2.json
-run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
+run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh --development
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint
 run_step "Audit GitHub Actions security" zizmor .github/workflows
 run_step "Check all workspace targets and features" cargo ci-check
 run_step "Check facade core feature boundary" cargo ci-core
 run_step "Check facade Compose feature boundary" cargo ci-compose
+run_step "Check facade Docker target feature boundary" cargo ci-docker
 run_step "Check facade Podman feature boundary" cargo ci-podman
 run_step "Check facade Quadlet feature boundary" cargo ci-quadlet
 run_step "Check repository policies" cargo ci-policy

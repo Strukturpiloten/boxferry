@@ -21,8 +21,33 @@ writes stay at caller-selected boundaries. Podman input uses a caller-selected t
 discovery request. Podman output is deterministic deployment-v1 JSON plus a command script, with no
 execution method. Applying or deploying artifacts is outside BoxFerry.
 
-All six supported crates use one pre-1.0 version. Minor releases may remove or replace APIs with
+All seven supported crates use one pre-1.0 version. Minor releases may remove or replace APIs with
 short migration notes; compatibility shims are not retained by default.
+
+## Unreleased Docker integration
+
+The development CLI defaults to all four adapters and exposes 16 neutral routes. Embedded callers
+retain `default-features = false`; add `docker` explicitly when adopting this development API.
+The `docker` feature itself does not enable the CLI. The dependency example above describes an
+existing release and does not claim Docker availability in that version.
+
+`DockerImporter` consumes `DockerSource` with already decoded DockerLens observations. Library
+sources default to unspecified selection and conservative `DockerPromotionPolicy`; callers choose
+reviewed portable reconstruction explicitly. `acquire_docker_source` takes an application name,
+explicit Unix endpoint, native selector, finite limits and cancellation flag. It performs bounded
+read-only Lens acquisition; it infers no ambient connection or workload and writes no artifact.
+
+Source environment promotion, public-label declarations, checked resource lifecycle decisions,
+same-host binds, target loss policy and `DockerEnvironmentPolicy::IncludeLiteral` are independent.
+`DockerExporter` requires an exact reviewed target profile; source facts do not choose it.
+`DockerOutput` retains complete native bytes, prerequisites and typed dependency decisions. The
+CLI publishes a conditional SHA-256-bound dependency sidecar, not a runtime scheduler. See owning
+Rustdoc and the [Docker guide](../../guides/docker-input/) for finite boundaries.
+
+The published Docker adapter has a historical 0.3.0 API baseline, so ordinary comparison remains
+mandatory. Compatible published Lens dependencies, real package/API checks and complete gates are
+still required; an isolated exact-source rehearsal is not registry proof or a main-ready override.
+Source integration does not establish actual native consumer/application acceptance.
 
 ## Unreleased native-evidence migration
 

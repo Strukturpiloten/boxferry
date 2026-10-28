@@ -50,7 +50,7 @@ jobs:
             echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
             exit 1
           fi
-          bash scripts/validate-release-metadata.sh
+          bash scripts/validate-release-metadata.sh --release
 
   migration-readiness:
     name: Fresh pre-release migration readiness
@@ -345,6 +345,16 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: bash .github/scripts/publish-crate.sh boxferry-compose "${VERSION}"
 
+      - name: Authenticate boxferry-docker to crates.io
+        id: auth_docker
+        if: steps.auth_mode.outputs.bootstrap != 'true'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish boxferry-docker
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_docker.outputs.token || secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-docker "${VERSION}"
+
       - name: Authenticate boxferry-podman to crates.io
         id: auth_podman
         if: steps.auth_mode.outputs.bootstrap != 'true'
@@ -386,6 +396,7 @@ jobs:
             boxferry-model
             boxferry-engine
             boxferry-compose
+            boxferry-docker
             boxferry-podman
             boxferry-quadlet
             boxferry
@@ -476,7 +487,7 @@ jobs:
             exit 1
           fi
 
-          for package in boxferry-model boxferry-engine boxferry-compose boxferry-podman boxferry-quadlet boxferry; do
+          for package in boxferry-model boxferry-engine boxferry-compose boxferry-docker boxferry-podman boxferry-quadlet boxferry; do
             upload_asset "target/release-artifacts/${package}-${VERSION}.crate" "application/gzip"
           done
           upload_asset target/release-artifacts/SHA256SUMS text/plain

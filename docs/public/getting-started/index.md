@@ -58,6 +58,9 @@ BoxFerry never starts the unit. Review the generated file before installing it.
 With no input selector, BoxFerry reads the sole conventional Compose file in the current directory
 and reports which file it selected. This imports an authored definition, not a deployed service.
 
+The Docker guides describe Unreleased development functionality and may expose routes absent
+from the installed release. They do not change this existing Compose-to-Quadlet walkthrough.
+
 ## Next
 
 - [Use interpolation or inspect conversion failures](../guides/convert/compose-to-quadlet/)

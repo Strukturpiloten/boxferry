@@ -5,6 +5,20 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Added
+
+- Add development Docker input, explicit bounded read-only acquisition and all 16 neutral CLI
+  routes, including Docker-to-Docker. Docker output requires an exact reviewed target preset and
+  writes inert `docker-plan.json` with a conditional SHA-256-bound dependency sidecar. Source
+  promotion, environment-value output, binds, public labels and lifecycle decisions have separate
+  controls. CLI defaults include all four adapters; embedded users retain explicit feature
+  selection. Native/application acceptance and compatible published-dependency, API, package and
+  complete-gate qualification remain separate requirements
+  ([#343](https://github.com/Strukturpiloten/boxferry/issues/343)).
+
+- Add structured Docker source diagnostics `BFD0001`–`BFD0004`, preserving the existing target
+  diagnostic identities and separate source/target consent and loss decisions.
+
 ## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/v0.9.0...v0.10.0) - 2026-10-27
 
 ### Changed

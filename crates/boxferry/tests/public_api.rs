@@ -58,6 +58,32 @@ fn facade_converts_through_public_adapter_contracts() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "docker")]
+#[test]
+fn facade_exposes_inert_docker_target_without_cli_features() -> Result<(), Box<dyn std::error::Error>> {
+    use boxferry::docker::docker_lens::version::{DaemonMode, EngineBuild, TargetCapabilityCatalog};
+    use boxferry::{DockerDependencyDecision, DockerEnvironmentPolicy, DockerExporter, DockerOutput, ExportAdapter};
+
+    let catalogue = TargetCapabilityCatalog::reviewed();
+    let profile = catalogue
+        .profiles()
+        .find(|profile| {
+            matches!(profile.identity().build(), EngineBuild::Upstream) && profile.mode() == DaemonMode::Rootful
+        })
+        .ok_or("reviewed Docker target missing")?;
+    let _: Option<&DockerOutput> = None;
+    let _: Option<&DockerDependencyDecision> = None;
+    assert_eq!(boxferry::DOCKER_TARGET, "docker");
+    assert_eq!(DockerEnvironmentPolicy::default(), DockerEnvironmentPolicy::Withhold);
+    let exporter = DockerExporter::new(profile.clone())?;
+    let application = Application::new(Identifier::new("empty-target-control")?);
+    let target = TargetProfile::new("docker", PlatformVersion::new(29, 8, 1), None)?;
+    let planned = exporter.plan(&application, &target)?;
+    assert!(planned.candidate().is_none());
+    assert!(planned.authorize(LossPolicy::ExactOnly).is_blocked());
+    Ok(())
+}
+
 #[test]
 fn facade_continues_conversion_from_a_public_import_result() -> Result<(), String> {
     let application = Application::new(Identifier::new("imported").map_err(|error| error.to_string())?);

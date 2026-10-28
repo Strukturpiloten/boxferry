@@ -5,6 +5,9 @@
 fixtures/**/expected-podman.json
 fixtures/**/expected-*-podman.json
 
+# Generator-owned Docker wire goldens use DockerLens's deterministic byte layout.
+fixtures/**/expected-docker-plan.json
+
 # Immutable third-party inputs retain their reviewed upstream hashes.
 fixtures/differential/podman-lens-complex-corpus/*.cassette.json
 fixtures/scenarios/real-world-compose-*/input.compose.yaml

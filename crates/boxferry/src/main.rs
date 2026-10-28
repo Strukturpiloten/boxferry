@@ -22,8 +22,9 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use boxferry::compose::compose_lens::{
@@ -33,6 +34,17 @@ use boxferry::compose::compose_lens::{
     merge::{MergeResult, MergedProject, merge_project},
     profiles::{ProfileRequest, ProfileSelection, select_profiles},
     source::SourceId as ComposeSourceId,
+};
+use boxferry::docker::docker_lens::{
+    acquisition::{
+        Endpoint as DockerEndpoint, Limits as DockerLimits, NativeId as DockerNativeId, Selector as DockerSelector,
+    },
+    decoder::ContainerSummary as DockerContainerSummary,
+    evidence::ProtectedValue as DockerProtectedValue,
+    version::{
+        DaemonMode as DockerDaemonMode, EngineBuild as DockerEngineBuild,
+        TargetCapabilityCatalog as DockerTargetCapabilityCatalog,
+    },
 };
 use boxferry::podman::podman_lens::{
     AcquisitionOptions, DiscoveryRequest, GroupingEvidence, LabelSelector, ResourceGraph, ResourceIdentity,
@@ -47,14 +59,19 @@ use boxferry::report::{
 };
 use boxferry::{
     Application, COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter,
-    ComposeFindingStage, ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier,
-    ImportAdapter, ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion,
-    PodmanExporter, PodmanImporter, PodmanSource, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy,
-    QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES,
-    ResourceOwnership, RuleId, SourceId, TargetProfile, convert_imported, find_rule, reviewed_podman_versions,
+    ComposeFindingStage, ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic,
+    DockerDependencyDecision, DockerEnvironmentPolicy, DockerExporter, DockerImporter, DockerPromotionPolicy,
+    DockerPublicLabelDecision, DockerPublicLabelDecisions, DockerPublicLabelResourceKind, DockerResourceDecision,
+    DockerResourceDecisions, Identifier, ImportAdapter, ImportResult, LossPolicy, NativeFinding,
+    NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion, PodmanExporter, PodmanImporter, PodmanSource, Provenance,
+    ProvenanceKind, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter,
+    QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES, ResourceOwnership,
+    RuleId, ServiceDependencyCondition, SourceId, TargetProfile, acquire_docker_source, convert_imported, find_rule,
+    reviewed_podman_versions,
 };
 use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
+use sha2::{Digest, Sha256};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 mod cli_bundle;
@@ -98,7 +115,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// List document conversion routes implemented by this build.
+    /// List supported conversion routes and reviewed target profiles.
     Capabilities(Presentation),
     /// Convert one explicit input type into one explicit output type.
     Convert(ConvertCommand),
@@ -270,6 +287,164 @@ struct PodmanInputOptions {
     support: PodmanSupportOptions,
 }
 
+#[derive(Clone, Debug, Args)]
+struct DockerInputOptions {
+    /// Local Docker Engine Unix socket; otherwise checks conventional local sockets only.
+    #[arg(long, value_name = "PATH")]
+    docker_socket: Option<PathBuf>,
+    /// Exact container name; repeat to select multiple containers.
+    #[arg(long = "docker-container", value_name = "NAME")]
+    containers: Vec<String>,
+    /// Full 64-character container ID; repeat to select multiple containers.
+    #[arg(long = "docker-container-id", value_name = "FULL_ID")]
+    container_ids: Vec<String>,
+    /// Full Docker network ID; repeat to select standalone networks.
+    #[arg(long = "docker-network-id", value_name = "FULL_ID")]
+    network_ids: Vec<String>,
+    /// Exact named volume; repeat to select standalone volumes.
+    #[arg(long = "docker-volume", value_name = "NAME")]
+    volumes: Vec<String>,
+    /// Literal container-name prefix matched against bounded list metadata.
+    #[arg(long = "docker-name-prefix", value_name = "PREFIX")]
+    name_prefix: Option<String>,
+    /// Literal container label KEY or KEY=VALUE matched against bounded list metadata.
+    #[arg(long = "docker-label", value_name = "KEY[=VALUE]")]
+    label: Option<String>,
+    /// Explicitly select every container in the bounded native inventory.
+    #[arg(long)]
+    docker_all_containers: bool,
+    /// Neutral application name; defaults to docker-import, never to an ambient label value.
+    #[arg(long)]
+    application_name: Option<String>,
+    /// Reconstruct a reviewed portable current-state subset, or retain effective settings as evidence.
+    #[arg(long, value_enum, default_value_t = DockerImportPolicy::Portable)]
+    docker_import_policy: DockerImportPolicy,
+    /// Independently authorize protected source environment values to enter the neutral model.
+    #[arg(long)]
+    promote_docker_protected_environment_values: bool,
+    /// Independently authorize effective host bind paths for a same-host destination.
+    #[arg(long)]
+    promote_docker_same_host_bind_mounts: bool,
+    /// Explicit selected source-resource decision and target identity; repeat for each resource.
+    #[arg(long = "docker-resource-decision", value_name = "KIND:SOURCE=ACTION:TARGET")]
+    docker_resource_decisions: Vec<RedactedDockerDecisionArg>,
+    /// Declare one selected observed label as ordinary public metadata suitable for generated artifacts.
+    /// Independent of portable reconstruction, environment-value consent, and resource ownership.
+    #[arg(long = "docker-public-label", value_name = "KIND:SOURCE=KEY")]
+    docker_public_labels: Vec<RedactedDockerPublicLabelArg>,
+}
+
+#[derive(Clone)]
+struct RedactedDockerDecisionArg(String);
+
+impl std::fmt::Debug for RedactedDockerDecisionArg {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[redacted Docker resource decision]")
+    }
+}
+
+impl FromStr for RedactedDockerDecisionArg {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone)]
+struct RedactedDockerPublicLabelArg(String);
+
+impl std::fmt::Debug for RedactedDockerPublicLabelArg {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[redacted Docker public label declaration]")
+    }
+}
+
+impl FromStr for RedactedDockerPublicLabelArg {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum DockerImportPolicy {
+    Portable,
+    Conservative,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum DockerTargetPreset {
+    #[value(name = "debian11-20.10.5-rootful")]
+    Debian11Rootful,
+    #[value(name = "debian11-20.10.5-rootless")]
+    Debian11Rootless,
+    #[value(name = "upstream-29.8.1-rootful")]
+    UpstreamRootful,
+    #[value(name = "upstream-29.8.1-rootless")]
+    UpstreamRootless,
+}
+
+impl DockerTargetPreset {
+    const ALL: [Self; 4] = [
+        Self::Debian11Rootful,
+        Self::Debian11Rootless,
+        Self::UpstreamRootful,
+        Self::UpstreamRootless,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Debian11Rootful => "debian11-20.10.5-rootful",
+            Self::Debian11Rootless => "debian11-20.10.5-rootless",
+            Self::UpstreamRootful => "upstream-29.8.1-rootful",
+            Self::UpstreamRootless => "upstream-29.8.1-rootless",
+        }
+    }
+
+    fn resolve(self) -> io::Result<boxferry::docker::docker_lens::version::TargetProfile> {
+        let catalogue = DockerTargetCapabilityCatalog::reviewed();
+        let candidates: Vec<_> = catalogue
+            .profiles()
+            .filter(|profile| {
+                let identity = profile.identity();
+                let expected_mode = match self {
+                    Self::Debian11Rootful | Self::UpstreamRootful => DockerDaemonMode::Rootful,
+                    Self::Debian11Rootless | Self::UpstreamRootless => DockerDaemonMode::Rootless,
+                };
+                if identity.mode() != expected_mode {
+                    return false;
+                }
+                match (self, identity.build()) {
+                    (Self::Debian11Rootful | Self::Debian11Rootless, DockerEngineBuild::DebianPackage(revision)) => {
+                        identity.release().as_str() == "20.10.5+dfsg1" && revision.as_str() == "20.10.5+dfsg1-1+deb11u2"
+                    }
+                    (Self::UpstreamRootful | Self::UpstreamRootless, DockerEngineBuild::Upstream) => {
+                        identity.release().as_str() == "29.8.1"
+                    }
+                    _ => false,
+                }
+            })
+            .cloned()
+            .collect();
+        let [profile] = candidates.as_slice() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Docker target preset must match exactly one reviewed native profile; inspect `boxferry capabilities`",
+            ));
+        };
+        Ok(profile.clone())
+    }
+}
+
+#[derive(Clone, Debug, Args)]
+struct DockerOutputOptions {
+    /// Exact reviewed Docker Engine build/release/mode preset; APIs and evidence resolve from `DockerLens`.
+    #[arg(long, value_enum, value_name = "PROFILE")]
+    docker_target: DockerTargetPreset,
+}
+
 #[derive(Debug, Args)]
 struct PodmanPromotionOptions {
     #[command(flatten)]
@@ -343,7 +518,7 @@ struct ConversionPolicyOptions {
     /// Authorization for documented non-exact conversion outcomes.
     #[arg(long, value_enum, default_value_t = CliLossPolicy::Exact)]
     loss_policy: CliLossPolicy,
-    /// Withhold environment values from artifacts, or explicitly include them (Compose/Quadlet).
+    /// Withhold environment values from artifacts, or explicitly include them (Compose/Docker/Quadlet).
     #[arg(long, value_enum, default_value_t = EnvironmentValuePolicy::Withhold)]
     environment_values: EnvironmentValuePolicy,
 }
@@ -374,6 +549,8 @@ struct ConversionCommand {
 enum ConversionInput {
     /// Use Compose input documents.
     Compose(ComposeInputCommand),
+    /// Acquire selected Docker Engine resources through a read-only local Unix socket.
+    Docker(DockerInputCommand),
     /// Use explicitly selected resources from one read-only Podman endpoint.
     Podman(PodmanInputCommand),
     /// Use a Quadlet input document set.
@@ -391,6 +568,8 @@ struct ComposeInputCommand {
 enum ComposeOutput {
     /// Convert Compose input to canonical Compose output.
     Compose(ComposeToCompose),
+    /// Convert Compose input to inert, reviewable Docker Engine requests.
+    Docker(ComposeToDocker),
     /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ComposeToPodman),
     /// Convert Compose input to canonical Quadlet output.
@@ -408,6 +587,8 @@ struct QuadletInputCommand {
 enum QuadletOutput {
     /// Convert Quadlet input to canonical Compose output.
     Compose(QuadletToCompose),
+    /// Convert Quadlet input to inert, reviewable Docker Engine requests.
+    Docker(QuadletToDocker),
     /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(QuadletToPodman),
     /// Convert Quadlet input to canonical Quadlet output.
@@ -425,10 +606,31 @@ struct PodmanInputCommand {
 enum PodmanOutput {
     /// Convert Podman input to canonical Compose output.
     Compose(PodmanToCompose),
+    /// Convert Podman input to inert, reviewable Docker Engine requests.
+    Docker(PodmanToDocker),
     /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(PodmanToPodman),
     /// Convert Podman input to canonical Quadlet output.
     Quadlet(PodmanToQuadlet),
+}
+
+#[derive(Debug, Args)]
+#[command(subcommand_help_heading = "Output types", subcommand_value_name = "OUTPUT_TYPE")]
+struct DockerInputCommand {
+    #[command(subcommand)]
+    output: DockerOutput,
+}
+
+#[derive(Debug, Subcommand)]
+enum DockerOutput {
+    /// Convert read-only Docker input to canonical Compose output.
+    Compose(DockerToCompose),
+    /// Convert read-only Docker input through the neutral model to inert Docker requests.
+    Docker(DockerToDocker),
+    /// Convert read-only Docker input to reviewable Podman artifacts.
+    Podman(DockerToPodman),
+    /// Convert read-only Docker input to canonical Quadlet output.
+    Quadlet(DockerToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -562,6 +764,101 @@ struct PodmanToPodman {
 }
 
 #[derive(Debug, Args)]
+#[command(about = "Read Compose input and plan inert Docker Engine requests")]
+struct ComposeToDocker {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Compose input")]
+    input: ComposeInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and plan inert Docker Engine requests")]
+struct PodmanToDocker {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Read Quadlet input and plan inert Docker Engine requests")]
+struct QuadletToDocker {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Quadlet input")]
+    input: QuadletInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and plan canonical Compose YAML")]
+struct DockerToCompose {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    output: ComposeOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and plan canonical Quadlet files")]
+struct DockerToQuadlet {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    output: QuadletOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and plan reviewable Podman artifacts")]
+struct DockerToPodman {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and plan inert Docker Engine requests")]
+struct DockerToDocker {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
 #[command(subcommand_help_heading = "Input types", subcommand_value_name = "INPUT_TYPE")]
 struct ConvertCommand {
     #[command(subcommand)]
@@ -572,6 +869,8 @@ struct ConvertCommand {
 enum ConvertInput {
     /// Use Compose input documents.
     Compose(ConvertComposeInputCommand),
+    /// Acquire selected Docker Engine resources through a read-only local Unix socket.
+    Docker(ConvertDockerInputCommand),
     /// Use explicitly selected resources from one read-only Podman endpoint.
     Podman(ConvertPodmanInputCommand),
     /// Use a Quadlet input document set.
@@ -589,6 +888,8 @@ struct ConvertComposeInputCommand {
 enum ConvertComposeOutput {
     /// Convert Compose input to canonical Compose output.
     Compose(ConvertComposeToCompose),
+    /// Convert Compose input to inert, reviewable Docker Engine requests.
+    Docker(ConvertComposeToDocker),
     /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ConvertComposeToPodman),
     /// Convert Compose input to canonical Quadlet output.
@@ -606,6 +907,8 @@ struct ConvertQuadletInputCommand {
 enum ConvertQuadletOutput {
     /// Convert Quadlet input to canonical Compose output.
     Compose(ConvertQuadletToCompose),
+    /// Convert Quadlet input to inert, reviewable Docker Engine requests.
+    Docker(ConvertQuadletToDocker),
     /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(ConvertQuadletToPodman),
     /// Convert Quadlet input to canonical Quadlet output.
@@ -623,10 +926,31 @@ struct ConvertPodmanInputCommand {
 enum ConvertPodmanOutput {
     /// Convert Podman input to canonical Compose output.
     Compose(ConvertPodmanToCompose),
+    /// Convert Podman input to inert, reviewable Docker Engine requests.
+    Docker(ConvertPodmanToDocker),
     /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(ConvertPodmanToPodman),
     /// Convert Podman input to canonical Quadlet output.
     Quadlet(ConvertPodmanToQuadlet),
+}
+
+#[derive(Debug, Args)]
+#[command(subcommand_help_heading = "Output types", subcommand_value_name = "OUTPUT_TYPE")]
+struct ConvertDockerInputCommand {
+    #[command(subcommand)]
+    output: ConvertDockerOutput,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConvertDockerOutput {
+    /// Convert read-only Docker input to canonical Compose output.
+    Compose(ConvertDockerToCompose),
+    /// Convert read-only Docker input through the neutral model to inert Docker requests.
+    Docker(ConvertDockerToDocker),
+    /// Convert read-only Docker input to reviewable Podman artifacts.
+    Podman(ConvertDockerToPodman),
+    /// Convert read-only Docker input to canonical Quadlet output.
+    Quadlet(ConvertDockerToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -785,6 +1109,115 @@ struct ConvertPodmanToPodman {
     diagnostics: DiagnosticOptions,
 }
 
+#[derive(Debug, Args)]
+#[command(about = "Read Compose input and write inert Docker Engine requests for review")]
+struct ConvertComposeToDocker {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Compose input")]
+    input: ComposeInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write inert Docker Engine requests for review")]
+struct ConvertPodmanToDocker {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Read Quadlet input and write inert Docker Engine requests for review")]
+struct ConvertQuadletToDocker {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Quadlet input")]
+    input: QuadletInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and write canonical Compose YAML")]
+struct ConvertDockerToCompose {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    output: ComposeOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and write canonical Quadlet files")]
+struct ConvertDockerToQuadlet {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    output: QuadletOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and write reviewable Podman artifacts")]
+struct ConvertDockerToPodman {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Docker resources and write inert Docker Engine requests for review")]
+struct ConvertDockerToDocker {
+    #[command(flatten, next_help_heading = "Docker input")]
+    input: DockerInputOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    output: DockerOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Docker output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
 #[allow(
     clippy::struct_excessive_bools,
     reason = "preserves typed CLI flag provenance until route execution"
@@ -798,6 +1231,8 @@ struct GenericConversion {
     error_report_directory: Option<PathBuf>,
     input_type: InputType,
     output_type: OutputType,
+    docker_input: Option<DockerInputOptions>,
+    docker_target: Option<DockerTargetPreset>,
     input_files: Vec<PathBuf>,
     input_directories: Vec<PathBuf>,
     project_directory: Option<PathBuf>,
@@ -834,18 +1269,83 @@ impl ConversionInput {
         match self {
             Self::Compose(command) => match command.output {
                 ComposeOutput::Compose(arguments) => GenericConversion::from_compose_to_compose(arguments),
+                ComposeOutput::Docker(arguments) => GenericConversion::from_route(
+                    InputType::Compose,
+                    OutputType::Docker,
+                    arguments.documents,
+                    InputRouteOptions::Compose(arguments.input),
+                    OutputRouteOptions::Docker(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
                 ComposeOutput::Quadlet(arguments) => GenericConversion::from_compose_to_quadlet(arguments),
                 ComposeOutput::Podman(arguments) => GenericConversion::from_compose_to_podman(arguments),
             },
             Self::Quadlet(command) => match command.output {
                 QuadletOutput::Compose(arguments) => GenericConversion::from_quadlet_to_compose(arguments),
+                QuadletOutput::Docker(arguments) => GenericConversion::from_route(
+                    InputType::Quadlet,
+                    OutputType::Docker,
+                    arguments.documents,
+                    InputRouteOptions::Quadlet(arguments.input),
+                    OutputRouteOptions::Docker(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
                 QuadletOutput::Quadlet(arguments) => GenericConversion::from_quadlet_to_quadlet(arguments),
                 QuadletOutput::Podman(arguments) => GenericConversion::from_quadlet_to_podman(arguments),
             },
             Self::Podman(command) => match command.output {
                 PodmanOutput::Compose(arguments) => GenericConversion::from_podman_to_compose(arguments),
+                PodmanOutput::Docker(arguments) => GenericConversion::from_route(
+                    InputType::Podman,
+                    OutputType::Docker,
+                    InputDocuments::empty(),
+                    InputRouteOptions::Podman(arguments.input),
+                    OutputRouteOptions::Docker(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
                 PodmanOutput::Quadlet(arguments) => GenericConversion::from_podman_to_quadlet(arguments),
                 PodmanOutput::Podman(arguments) => GenericConversion::from_podman_to_podman(arguments),
+            },
+            Self::Docker(command) => match command.output {
+                DockerOutput::Compose(arguments) => GenericConversion::from_route(
+                    InputType::Docker,
+                    OutputType::Compose,
+                    InputDocuments::empty(),
+                    InputRouteOptions::Docker(arguments.input),
+                    OutputRouteOptions::Compose(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
+                DockerOutput::Docker(arguments) => GenericConversion::from_route(
+                    InputType::Docker,
+                    OutputType::Docker,
+                    InputDocuments::empty(),
+                    InputRouteOptions::Docker(arguments.input),
+                    OutputRouteOptions::Docker(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
+                DockerOutput::Podman(arguments) => GenericConversion::from_route(
+                    InputType::Docker,
+                    OutputType::Podman,
+                    InputDocuments::empty(),
+                    InputRouteOptions::Docker(arguments.input),
+                    OutputRouteOptions::Podman(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
+                DockerOutput::Quadlet(arguments) => GenericConversion::from_route(
+                    InputType::Docker,
+                    OutputType::Quadlet,
+                    InputDocuments::empty(),
+                    InputRouteOptions::Docker(arguments.input),
+                    OutputRouteOptions::Quadlet(arguments.output),
+                    arguments.policy,
+                    arguments.diagnostics,
+                ),
             },
         }
     }
@@ -867,6 +1367,19 @@ impl ConvertInput {
                         arguments.documents,
                         InputRouteOptions::Compose(arguments.input),
                         OutputRouteOptions::Compose(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
+                ConvertComposeOutput::Docker(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Compose,
+                        OutputType::Docker,
+                        arguments.documents,
+                        InputRouteOptions::Compose(arguments.input),
+                        OutputRouteOptions::Docker(arguments.output),
                         arguments.policy,
                         arguments.diagnostics,
                     );
@@ -914,6 +1427,19 @@ impl ConvertInput {
                     );
                     (conversion, destination)
                 }
+                ConvertQuadletOutput::Docker(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Quadlet,
+                        OutputType::Docker,
+                        arguments.documents,
+                        InputRouteOptions::Quadlet(arguments.input),
+                        OutputRouteOptions::Docker(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
                 ConvertQuadletOutput::Quadlet(arguments) => {
                     let destination = arguments.destination.output_directory;
                     let conversion = GenericConversion::from_route(
@@ -955,6 +1481,19 @@ impl ConvertInput {
                     );
                     (conversion, destination)
                 }
+                ConvertPodmanOutput::Docker(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Podman,
+                        OutputType::Docker,
+                        InputDocuments::empty(),
+                        InputRouteOptions::Podman(arguments.input),
+                        OutputRouteOptions::Docker(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
                 ConvertPodmanOutput::Quadlet(arguments) => {
                     let destination = arguments.destination.output_directory;
                     let conversion = GenericConversion::from_route(
@@ -980,6 +1519,68 @@ impl ConvertInput {
                         arguments.diagnostics,
                     );
                     (conversion, destination)
+                }
+            },
+            Self::Docker(command) => match command.output {
+                ConvertDockerOutput::Compose(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    (
+                        GenericConversion::from_route(
+                            InputType::Docker,
+                            OutputType::Compose,
+                            InputDocuments::empty(),
+                            InputRouteOptions::Docker(arguments.input),
+                            OutputRouteOptions::Compose(arguments.output),
+                            arguments.policy,
+                            arguments.diagnostics,
+                        ),
+                        destination,
+                    )
+                }
+                ConvertDockerOutput::Docker(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    (
+                        GenericConversion::from_route(
+                            InputType::Docker,
+                            OutputType::Docker,
+                            InputDocuments::empty(),
+                            InputRouteOptions::Docker(arguments.input),
+                            OutputRouteOptions::Docker(arguments.output),
+                            arguments.policy,
+                            arguments.diagnostics,
+                        ),
+                        destination,
+                    )
+                }
+                ConvertDockerOutput::Podman(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    (
+                        GenericConversion::from_route(
+                            InputType::Docker,
+                            OutputType::Podman,
+                            InputDocuments::empty(),
+                            InputRouteOptions::Docker(arguments.input),
+                            OutputRouteOptions::Podman(arguments.output),
+                            arguments.policy,
+                            arguments.diagnostics,
+                        ),
+                        destination,
+                    )
+                }
+                ConvertDockerOutput::Quadlet(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    (
+                        GenericConversion::from_route(
+                            InputType::Docker,
+                            OutputType::Quadlet,
+                            InputDocuments::empty(),
+                            InputRouteOptions::Docker(arguments.input),
+                            OutputRouteOptions::Quadlet(arguments.output),
+                            arguments.policy,
+                            arguments.diagnostics,
+                        ),
+                        destination,
+                    )
                 }
             },
         }
@@ -1116,6 +1717,24 @@ impl GenericConversion {
         policy: ConversionPolicyOptions,
         diagnostics: DiagnosticOptions,
     ) -> Self {
+        let (input, docker_input) = match input {
+            InputRouteOptions::Docker(docker) => (
+                InputRouteOptions::Quadlet(QuadletInputOptions {
+                    application_name: docker.application_name.clone(),
+                }),
+                Some(docker),
+            ),
+            other => (other, None),
+        };
+        let (output, docker_target) = match output {
+            OutputRouteOptions::Docker(docker) => (
+                OutputRouteOptions::Compose(ComposeOutputOptions {
+                    output_layout: NativeOutputLayout::Files,
+                }),
+                Some(docker.docker_target),
+            ),
+            other => (other, None),
+        };
         let (
             project_directory,
             application_name,
@@ -1137,6 +1756,7 @@ impl GenericConversion {
             promote_podman_effective_named_networks,
             include_podman_snapshot,
         ) = match input {
+            InputRouteOptions::Docker(_) => unreachable!("Docker input was normalized above"),
             InputRouteOptions::Compose(input) => (
                 input.project_directory,
                 input.project_name,
@@ -1213,6 +1833,7 @@ impl GenericConversion {
             pod_name,
             output_layout,
         ) = match output {
+            OutputRouteOptions::Docker(_) => unreachable!("Docker output was normalized above"),
             OutputRouteOptions::Compose(output) => (
                 PodmanSelector::minimum_default(),
                 PodmanSelector::maximum_default(),
@@ -1250,6 +1871,8 @@ impl GenericConversion {
             error_report_directory: diagnostics.error_report_directory,
             input_type,
             output_type,
+            docker_input,
+            docker_target,
             input_files: documents.input_files,
             input_directories: documents.input_directories,
             project_directory,
@@ -1285,12 +1908,14 @@ impl GenericConversion {
 
 enum InputRouteOptions {
     Compose(ComposeInputOptions),
+    Docker(DockerInputOptions),
     Quadlet(QuadletInputOptions),
     Podman(PodmanInputOptions),
 }
 
 enum OutputRouteOptions {
     Compose(ComposeOutputOptions),
+    Docker(DockerOutputOptions),
     Quadlet(QuadletOutputOptions),
     Podman(PodmanOutputOptions),
 }
@@ -1945,6 +2570,26 @@ impl ReportAliases {
         if let Some(socket) = &arguments.podman_socket {
             values.push((socket.display().to_string(), "<podman-socket>".to_owned()));
         }
+        if let Some(docker) = &arguments.docker_input {
+            if let Some(socket) = &docker.docker_socket {
+                values.push((socket.display().to_string(), "<docker-socket>".to_owned()));
+            }
+            for value in docker
+                .containers
+                .iter()
+                .chain(&docker.container_ids)
+                .chain(&docker.network_ids)
+                .chain(&docker.volumes)
+            {
+                values.push((value.clone(), "<docker-selector>".to_owned()));
+            }
+            if let Some(value) = &docker.name_prefix {
+                values.push((value.clone(), "<docker-selector>".to_owned()));
+            }
+            if let Some(value) = &docker.label {
+                values.push((value.clone(), "<docker-label>".to_owned()));
+            }
+        }
         if let Some(project) = &arguments.project_directory {
             values.push((project.display().to_string(), "<project>".to_owned()));
         }
@@ -2069,6 +2714,13 @@ impl ReportAliases {
 
 fn new_report(arguments: &GenericConversion, route: RouteSpec) -> InvocationReport {
     let requested_versions = match route.target_selector {
+        TargetSelector::DockerExactProfile => {
+            let selected = arguments.docker_target.map_or("missing", DockerTargetPreset::name);
+            VersionBounds {
+                minimum: selected.into(),
+                maximum: selected.into(),
+            }
+        }
         TargetSelector::PodmanRange => VersionBounds {
             minimum: arguments.podman_minimum_version.requested.clone(),
             maximum: arguments.podman_maximum_version.requested.clone(),
@@ -2109,43 +2761,12 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> InvocationRepo
                 arguments.profiles.join(",")
             },
         }),
+        InputType::Docker => append_docker_input_choices(&mut report, arguments),
         InputType::Quadlet => {}
-        InputType::Podman => {
-            report.choices.push(ReportChoice {
-                name: "podman_import_policy".into(),
-                value: format!("{:?}", arguments.podman_import_policy).to_lowercase(),
-            });
-            report.choices.push(ReportChoice {
-                name: "podman_acquisition".into(),
-                value: "explicit-read-only-unix".into(),
-            });
-            report.choices.push(ReportChoice {
-                name: "podman_selector_count".into(),
-                value: (arguments.podman_resources.len()
-                    + arguments.podman_resource_prefixes.len()
-                    + arguments.podman_labels.len()
-                    + usize::from(arguments.podman_all))
-                .to_string(),
-            });
-            report.choices.push(ReportChoice {
-                name: "promote_effective_bind_mounts".into(),
-                value: arguments.promote_podman_effective_bind_mounts.to_string(),
-            });
-            report.choices.push(ReportChoice {
-                name: "promote_portable_effective_settings".into(),
-                value: arguments.promote_podman_portable_effective_settings.to_string(),
-            });
-            report.choices.push(ReportChoice {
-                name: "promote_effective_named_volumes".into(),
-                value: arguments.promote_podman_effective_named_volumes.to_string(),
-            });
-            report.choices.push(ReportChoice {
-                name: "promote_effective_named_networks".into(),
-                value: arguments.promote_podman_effective_named_networks.to_string(),
-            });
-        }
+        InputType::Podman => append_podman_input_choices(&mut report, arguments),
     }
     match route.target_selector {
+        TargetSelector::DockerExactProfile => append_docker_target_choices(&mut report, arguments.docker_target),
         TargetSelector::PodmanRange => report.choices.push(ReportChoice {
             name: "grouping".into(),
             value: format!("{:?}", arguments.grouping).to_lowercase(),
@@ -2163,6 +2784,117 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> InvocationRepo
     report
 }
 
+fn append_docker_input_choices(report: &mut InvocationReport, arguments: &GenericConversion) {
+    if let Some(input) = &arguments.docker_input {
+        report.choices.push(ReportChoice {
+            name: "docker_import_policy".into(),
+            value: format!("{:?}", input.docker_import_policy).to_lowercase(),
+        });
+        report.choices.push(ReportChoice {
+            name: "docker_acquisition".into(),
+            value: "read-only-local-unix".into(),
+        });
+        report.choices.push(ReportChoice {
+            name: "promote_docker_protected_environment_values".into(),
+            value: input.promote_docker_protected_environment_values.to_string(),
+        });
+        report.choices.push(ReportChoice {
+            name: "promote_docker_same_host_bind_mounts".into(),
+            value: input.promote_docker_same_host_bind_mounts.to_string(),
+        });
+    }
+}
+
+fn append_docker_target_choices(report: &mut InvocationReport, preset: Option<DockerTargetPreset>) {
+    let Some(preset) = preset else {
+        return;
+    };
+    report.choices.push(ReportChoice {
+        name: "docker_target".into(),
+        value: preset.name().into(),
+    });
+    if let Ok(profile) = preset.resolve() {
+        let identity = profile.identity();
+        let build = match identity.build() {
+            DockerEngineBuild::Upstream => "upstream".to_owned(),
+            DockerEngineBuild::DebianPackage(revision) => format!("debian-package:{}", revision.as_str()),
+        };
+        for (name, value) in [
+            ("docker_target_build", build),
+            ("docker_target_engine_release", identity.release().as_str().to_owned()),
+            (
+                "docker_target_advertised_api",
+                docker_api_version(identity.advertised_api_version()),
+            ),
+            (
+                "docker_target_acquisition_api",
+                docker_api_version(identity.acquisition_api_version()),
+            ),
+            (
+                "docker_target_rendering_api",
+                docker_api_version(identity.rendering_api_version()),
+            ),
+            (
+                "docker_target_mode",
+                if identity.mode() == DockerDaemonMode::Rootless {
+                    "rootless"
+                } else {
+                    "rootful"
+                }
+                .into(),
+            ),
+            ("docker_target_evidence_sha256", docker_evidence_sha256(&profile)),
+        ] {
+            report.choices.push(ReportChoice {
+                name: name.into(),
+                value,
+            });
+        }
+    }
+}
+
+fn append_podman_input_choices(report: &mut InvocationReport, arguments: &GenericConversion) {
+    report.choices.push(ReportChoice {
+        name: "podman_import_policy".into(),
+        value: format!("{:?}", arguments.podman_import_policy).to_lowercase(),
+    });
+    report.choices.push(ReportChoice {
+        name: "podman_acquisition".into(),
+        value: "explicit-read-only-unix".into(),
+    });
+    report.choices.push(ReportChoice {
+        name: "podman_selector_count".into(),
+        value: (arguments.podman_resources.len()
+            + arguments.podman_resource_prefixes.len()
+            + arguments.podman_labels.len()
+            + usize::from(arguments.podman_all))
+        .to_string(),
+    });
+    for (name, enabled) in [
+        (
+            "promote_effective_bind_mounts",
+            arguments.promote_podman_effective_bind_mounts,
+        ),
+        (
+            "promote_portable_effective_settings",
+            arguments.promote_podman_portable_effective_settings,
+        ),
+        (
+            "promote_effective_named_volumes",
+            arguments.promote_podman_effective_named_volumes,
+        ),
+        (
+            "promote_effective_named_networks",
+            arguments.promote_podman_effective_named_networks,
+        ),
+    ] {
+        report.choices.push(ReportChoice {
+            name: name.into(),
+            value: enabled.to_string(),
+        });
+    }
+}
+
 fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> SanitizedInvocation {
     let mut option_names: Vec<_> = [
         ("input_files", "--input-file"),
@@ -2170,6 +2902,26 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("project_directory", "--project-directory"),
         ("project_name", "--project-name"),
         ("application_name", "--application-name"),
+        ("docker_socket", "--docker-socket"),
+        ("containers", "--docker-container"),
+        ("container_ids", "--docker-container-id"),
+        ("network_ids", "--docker-network-id"),
+        ("volumes", "--docker-volume"),
+        ("name_prefix", "--docker-name-prefix"),
+        ("label", "--docker-label"),
+        ("docker_all_containers", "--docker-all-containers"),
+        ("docker_import_policy", "--docker-import-policy"),
+        ("docker_resource_decisions", "--docker-resource-decision"),
+        ("docker_public_labels", "--docker-public-label"),
+        (
+            "promote_docker_protected_environment_values",
+            "--promote-docker-protected-environment-values",
+        ),
+        (
+            "promote_docker_same_host_bind_mounts",
+            "--promote-docker-same-host-bind-mounts",
+        ),
+        ("docker_target", "--docker-target"),
         ("interpolate", "--interpolate"),
         ("env_files", "--env-file"),
         ("environment", "--env"),
@@ -2470,27 +3222,19 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                         .map(ToString::to_string)
                         .collect::<Vec<_>>(),
                 },
+                "docker": {
+                    "input_acquisition": "read-only-local-unix",
+                    "default_selection": "bounded-metadata-first",
+                    "output_targets": DockerTargetPreset::ALL
+                        .into_iter()
+                        .map(docker_target_capability_json)
+                        .collect::<io::Result<Vec<_>>>()?,
+                },
             }))?
         );
     } else if !presentation.quiet {
         for route in route::routes() {
-            match route.target_selector {
-                TargetSelector::PodmanRange => println!(
-                    "{} -> {} (Podman {minimum} through {maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::PodmanMaximum => println!(
-                    "{} -> {} (newest reviewed Podman through {podman_maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::ComposeSpecification => println!(
-                    "{} -> {} (rolling Compose Specification)",
-                    route.source_name(),
-                    route.target_name()
-                ),
-            }
+            print_route_capability(route, &minimum, &maximum, &podman_maximum);
             if presentation.verbose {
                 println!("fidelity: exact for {}", route.exact_boundary);
                 println!(
@@ -2500,6 +3244,7 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             }
         }
         if presentation.verbose {
+            print_docker_target_capabilities()?;
             println!("Podman input capabilities:");
             for input in &podman_inputs {
                 println!(
@@ -2528,6 +3273,58 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
     Ok(ExitCode::SUCCESS)
 }
 
+fn print_route_capability(route: RouteSpec, minimum: &str, maximum: &str, podman_maximum: &str) {
+    match route.target_selector {
+        TargetSelector::DockerExactProfile => println!(
+            "{} -> {} (explicit exact reviewed Docker target)",
+            route.source_name(),
+            route.target_name()
+        ),
+        TargetSelector::PodmanRange => println!(
+            "{} -> {} (Podman {minimum} through {maximum})",
+            route.source_name(),
+            route.target_name()
+        ),
+        TargetSelector::PodmanMaximum => println!(
+            "{} -> {} (newest reviewed Podman through {podman_maximum})",
+            route.source_name(),
+            route.target_name()
+        ),
+        TargetSelector::ComposeSpecification => println!(
+            "{} -> {} (rolling Compose Specification)",
+            route.source_name(),
+            route.target_name()
+        ),
+    }
+}
+
+fn print_docker_target_capabilities() -> io::Result<()> {
+    println!("Docker target presets (exact reviewed profile, not a version ceiling):");
+    for preset in DockerTargetPreset::ALL {
+        let profile = preset.resolve()?;
+        let package = match profile.identity().build() {
+            DockerEngineBuild::Upstream => "upstream".to_owned(),
+            DockerEngineBuild::DebianPackage(revision) => format!("Debian package {}", revision.as_str()),
+        };
+        println!(
+            "  {}: Engine {}, {}, {}, advertised API {}, acquisition API {}, rendering API {}, evidence sha256:{}",
+            preset.name(),
+            profile.release().as_str(),
+            package,
+            if profile.mode() == DockerDaemonMode::Rootless {
+                "rootless"
+            } else {
+                "rootful"
+            },
+            docker_api_version(profile.identity().advertised_api_version()),
+            docker_api_version(profile.identity().acquisition_api_version()),
+            docker_api_version(profile.identity().rendering_api_version()),
+            docker_evidence_sha256(&profile),
+        );
+    }
+    Ok(())
+}
+
 fn podman_input_capability_json(
     capability: &boxferry::podman::podman_lens::CapabilityCatalogueEntry,
 ) -> serde_json::Value {
@@ -2542,6 +3339,35 @@ fn podman_input_capability_json(
     })
 }
 
+fn docker_target_capability_json(preset: DockerTargetPreset) -> io::Result<serde_json::Value> {
+    let profile = preset.resolve()?;
+    let identity = profile.identity();
+    let (build, package_revision) = match identity.build() {
+        DockerEngineBuild::Upstream => ("upstream", None),
+        DockerEngineBuild::DebianPackage(revision) => ("debian-package", Some(revision.as_str())),
+    };
+    let evidence_sha256 = docker_evidence_sha256(&profile);
+    Ok(serde_json::json!({
+        "preset": preset.name(),
+        "build": build,
+        "package_revision": package_revision,
+        "engine_release": identity.release().as_str(),
+        "advertised_api": docker_api_version(identity.advertised_api_version()),
+        "acquisition_api": docker_api_version(identity.acquisition_api_version()),
+        "rendering_api": docker_api_version(identity.rendering_api_version()),
+        "mode": if identity.mode() == DockerDaemonMode::Rootless { "rootless" } else { "rootful" },
+        "evidence_sha256": evidence_sha256,
+    }))
+}
+
+fn docker_evidence_sha256(profile: &boxferry::docker::docker_lens::version::TargetProfile) -> String {
+    lowercase_hex(profile.evidence_key().as_sha256_bytes())
+}
+
+fn docker_api_version(version: boxferry::docker::docker_lens::version::ApiVersion) -> String {
+    format!("{}.{}", version.major, version.minor)
+}
+
 fn capability_json(route: RouteSpec, minimum: &str, maximum: &str, podman_maximum: &str) -> serde_json::Value {
     let fidelity = serde_json::json!({
         "exact": route.exact_boundary,
@@ -2549,6 +3375,10 @@ fn capability_json(route: RouteSpec, minimum: &str, maximum: &str, podman_maximu
         "policy_controlled": route.policy_controlled_boundaries,
     });
     match route.target_selector {
+        TargetSelector::DockerExactProfile => serde_json::json!({
+            "input_type": route.source_name(), "output_type": route.target_name(),
+            "target_selector": "docker-exact-reviewed-profile", "fidelity_boundaries": fidelity,
+        }),
         TargetSelector::PodmanRange => serde_json::json!({
             "input_type": route.source_name(), "output_type": route.target_name(),
             "target_selector": "podman-range", "podman_minimum": minimum,
@@ -2807,10 +3637,355 @@ async fn generic_convert(
     match route.input {
         InputType::Compose => generic_compose_convert(arguments, ordered, route, output_directory, validate_only)
             .map(|(report, code, inputs)| (report, code, inputs, None)),
+        InputType::Docker => generic_docker_convert(arguments, route, output_directory, validate_only)
+            .map(|(report, code, inputs)| (report, code, inputs, None)),
         InputType::Podman => generic_podman_convert(arguments, route, output_directory, validate_only).await,
         InputType::Quadlet => generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only)
             .map(|(report, code, inputs)| (report, code, inputs, None)),
     }
+}
+
+const DOCKER_CLI_LIMITS: DockerLimits = DockerLimits {
+    max_requests: 128,
+    max_selected_resources: 32,
+    max_expansions: 64,
+    max_response_bytes: 2 * 1024 * 1024,
+    max_total_bytes: 16 * 1024 * 1024,
+    max_elapsed: Duration::from_secs(15),
+};
+
+fn docker_selector(input: &DockerInputOptions) -> io::Result<Option<DockerSelector>> {
+    let ids = |values: &[String]| -> io::Result<Vec<DockerNativeId>> {
+        values
+            .iter()
+            .map(|value| {
+                DockerNativeId::new(value.clone())
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Docker selector value cannot be empty"))
+            })
+            .collect()
+    };
+    if !input.containers.is_empty() {
+        return Ok(Some(DockerSelector::ContainerNames(ids(&input.containers)?)));
+    }
+    if !input.container_ids.is_empty() {
+        return Ok(Some(DockerSelector::ContainerIds(ids(&input.container_ids)?)));
+    }
+    if !input.network_ids.is_empty() {
+        return Ok(Some(DockerSelector::NetworkIds(ids(&input.network_ids)?)));
+    }
+    if !input.volumes.is_empty() {
+        return Ok(Some(DockerSelector::VolumeNames(ids(&input.volumes)?)));
+    }
+    if let Some(prefix) = &input.name_prefix {
+        return Ok(Some(DockerSelector::NamePrefix(
+            DockerNativeId::new(prefix.clone())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Docker name prefix cannot be empty"))?,
+        )));
+    }
+    if let Some(label) = &input.label {
+        let (key, value) = label
+            .split_once('=')
+            .map_or((label.as_str(), None), |(key, value)| (key, Some(value)));
+        return Ok(Some(DockerSelector::Label {
+            key: DockerProtectedValue::new(key.as_bytes().to_vec()),
+            value: value.map(|value| DockerProtectedValue::new(value.as_bytes().to_vec())),
+        }));
+    }
+    if input.docker_all_containers {
+        return Ok(Some(DockerSelector::AllContainers));
+    }
+    Ok(None)
+}
+
+fn docker_summary_label<'a>(summary: &'a DockerContainerSummary, key: &[u8]) -> Option<&'a [u8]> {
+    summary
+        .labels
+        .value()?
+        .iter()
+        .find(|label| label.key.as_bytes() == key)?
+        .value
+        .value()
+        .map(DockerProtectedValue::as_bytes)
+}
+
+fn default_docker_container_ids(summaries: &[DockerContainerSummary]) -> io::Result<Vec<DockerNativeId>> {
+    if summaries.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no Docker container matched default discovery; use --docker-container NAME, --docker-container-id FULL_ID, or another explicit selector",
+        ));
+    }
+    if summaries.len() > DOCKER_CLI_LIMITS.max_selected_resources {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker discovery exceeds the selected-resource budget; choose a narrower exact, prefix, or label selector",
+        ));
+    }
+    let one_off = summaries.iter().any(|summary| {
+        docker_summary_label(summary, b"com.docker.compose.oneoff")
+            .is_some_and(|value| value.eq_ignore_ascii_case(b"true"))
+    });
+    if one_off {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker discovery includes a Compose one-off container; choose application members explicitly",
+        ));
+    }
+    if summaries.len() > 1 {
+        let application = summaries
+            .first()
+            .and_then(|summary| docker_summary_label(summary, b"io.boxferry.application"))
+            .filter(|value| !value.is_empty());
+        let project = summaries
+            .first()
+            .and_then(|summary| docker_summary_label(summary, b"com.docker.compose.project"))
+            .filter(|value| !value.is_empty());
+        let any_application = summaries
+            .iter()
+            .any(|summary| docker_summary_label(summary, b"io.boxferry.application").is_some());
+        let any_compose = summaries.iter().any(|summary| {
+            docker_summary_label(summary, b"com.docker.compose.project").is_some()
+                || docker_summary_label(summary, b"com.docker.compose.service").is_some()
+        });
+        let application_complete = application.is_some_and(|expected| {
+            summaries
+                .iter()
+                .all(|summary| docker_summary_label(summary, b"io.boxferry.application") == Some(expected))
+        });
+        let compose_complete = project.is_some_and(|expected| {
+            summaries.iter().all(|summary| {
+                docker_summary_label(summary, b"com.docker.compose.project") == Some(expected)
+                    && docker_summary_label(summary, b"com.docker.compose.service")
+                        .is_some_and(|value| !value.is_empty())
+            })
+        });
+        let one_complete_group = application_complete || compose_complete;
+        let recognized_families_consistent =
+            (!any_application || application_complete) && (!any_compose || compose_complete);
+        if !one_complete_group || !recognized_families_consistent {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Docker discovery found {} containers without one unambiguous complete application label group; use --docker-container NAME, --docker-name-prefix PREFIX, or --docker-label KEY[=VALUE]",
+                    summaries.len(),
+                ),
+            ));
+        }
+    }
+    summaries
+        .iter()
+        .map(|summary| {
+            let value = std::str::from_utf8(summary.id.as_bytes()).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Docker discovery returned a non-UTF-8 canonical ID",
+                )
+            })?;
+            DockerNativeId::new(value.to_owned()).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Docker discovery returned an empty canonical ID",
+                )
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn local_docker_socket_candidates() -> io::Result<Vec<PathBuf>> {
+    let uid = fs::metadata("/proc/self")?.uid();
+    Ok(vec![
+        PathBuf::from(format!("/run/user/{uid}/docker.sock")),
+        PathBuf::from("/var/run/docker.sock"),
+    ])
+}
+
+#[cfg(target_os = "macos")]
+fn local_docker_socket_candidates() -> io::Result<Vec<PathBuf>> {
+    let mut candidates = Vec::new();
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        if home.is_absolute() {
+            candidates.push(home.join(".docker/run/docker.sock"));
+        }
+    }
+    candidates.push(PathBuf::from("/var/run/docker.sock"));
+    Ok(candidates)
+}
+
+fn checked_docker_socket(path: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| io::Error::new(error.kind(), "the selected local Docker socket is unavailable"))?;
+    if !metadata.file_type().is_socket() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the selected Docker endpoint is not a local Unix socket",
+        ));
+    }
+    // DockerLens owns connection attempts under its acquisition deadline. Even a
+    // connect-only preflight can block indefinitely when a Unix backlog is full.
+    Ok(())
+}
+
+fn resolve_docker_socket(explicit: Option<&Path>) -> io::Result<PathBuf> {
+    if let Some(path) = explicit {
+        checked_docker_socket(path)?;
+        return Ok(path.to_path_buf());
+    }
+    first_local_docker_socket(&local_docker_socket_candidates()?)
+}
+
+fn first_local_docker_socket(candidates: &[PathBuf]) -> io::Result<PathBuf> {
+    for path in candidates {
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                checked_docker_socket(path)?;
+                return Ok(path.clone());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    "a conventional Docker socket cannot be checked",
+                ));
+            }
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "no conventional local Docker socket was found; start a local Docker Engine or pass --docker-socket PATH",
+    ))
+}
+
+fn docker_public_label_decisions(values: &[RedactedDockerPublicLabelArg]) -> io::Result<DockerPublicLabelDecisions> {
+    fn invalid() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidInput, "invalid Docker public label declaration")
+    }
+    if values.len() > 128 {
+        return Err(invalid());
+    }
+    let entries = values
+        .iter()
+        .map(|value| {
+            let (kind, rest) = value.0.split_once(':').ok_or_else(invalid)?;
+            let (source, key) = rest.split_once('=').ok_or_else(invalid)?;
+            if source.len() > 256 || key.len() > 256 {
+                return Err(invalid());
+            }
+            let kind = match kind {
+                "container" => DockerPublicLabelResourceKind::Container,
+                "network" => DockerPublicLabelResourceKind::Network,
+                "volume" => DockerPublicLabelResourceKind::Volume,
+                _ => return Err(invalid()),
+            };
+            DockerPublicLabelDecision::new(kind, source.to_owned(), key.to_owned()).map_err(|_| invalid())
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    DockerPublicLabelDecisions::new(entries).map_err(|_| invalid())
+}
+
+fn generic_docker_convert(
+    arguments: &GenericConversion,
+    route: RouteSpec,
+    output_directory: Option<&Path>,
+    validate_only: bool,
+) -> Result<(InvocationReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+    let input = arguments
+        .docker_input
+        .as_ref()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Docker input options are missing"))?;
+    let mut resource_decisions = DockerResourceDecisions::new();
+    for decision in &input.docker_resource_decisions {
+        resource_decisions.add(decision.0.parse::<DockerResourceDecision>()?)?;
+    }
+    let public_labels = docker_public_label_decisions(&input.docker_public_labels)?;
+    let socket = resolve_docker_socket(input.docker_socket.as_deref())?;
+    let endpoint = DockerEndpoint::unix_socket(socket);
+    let name = Identifier::new(input.application_name.as_deref().unwrap_or("docker-import"))?;
+    let cancelled = AtomicBool::new(false);
+    let source = if let Some(selector) = docker_selector(input)? {
+        acquire_docker_source(name, &endpoint, selector, DOCKER_CLI_LIMITS, &cancelled)?
+    } else {
+        let discovery = acquire_docker_source(
+            name.clone(),
+            &endpoint,
+            DockerSelector::Discovery,
+            DOCKER_CLI_LIMITS,
+            &cancelled,
+        )?;
+        let ids = default_docker_container_ids(&discovery.inventory().discovered_containers)?;
+        acquire_docker_source(
+            name,
+            &endpoint,
+            DockerSelector::ContainerIds(ids),
+            DOCKER_CLI_LIMITS,
+            &cancelled,
+        )?
+    };
+    let observed = &source.inventory().version.daemon;
+    let observed_release = observed.release.as_ref().map(|value| {
+        let release = value.as_str();
+        if release.len() <= 64
+            && release
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_'))
+        {
+            release.to_owned()
+        } else {
+            "[unavailable]".to_owned()
+        }
+    });
+    let observed_api = observed.api_version.map(docker_api_version);
+    let observed_mode = observed.mode;
+    let mut promotion = match input.docker_import_policy {
+        DockerImportPolicy::Portable => DockerPromotionPolicy::portable_application(),
+        DockerImportPolicy::Conservative => DockerPromotionPolicy::conservative(),
+    };
+    promotion = promotion
+        .with_protected_environment_values(input.promote_docker_protected_environment_values)
+        .with_same_host_bind_mounts(input.promote_docker_same_host_bind_mounts);
+    let source = source
+        .with_promotion_policy(promotion)
+        .with_resource_decisions(resource_decisions)
+        .with_public_label_decisions(public_labels);
+    let aliases = ReportAliases::for_invocation(arguments, output_directory);
+    let imported = DockerImporter::new()?.import(&source);
+    let (conversion, resolved_versions) = export_imported(arguments, route.output, imported, None, &[], &aliases, &[])?;
+    let (mut report, code, discovered) = finish_document_conversion(
+        arguments,
+        route,
+        output_directory,
+        validate_only,
+        DocumentConversion {
+            discovered: Vec::new(),
+            aliases,
+            application_name: source.application_name().as_str().to_owned(),
+            resolved_versions,
+            conversion,
+        },
+    )?;
+    if let Some(release) = observed_release {
+        report.choices.push(ReportChoice {
+            name: "observed_docker_engine_release".into(),
+            value: release,
+        });
+    }
+    if let Some(api) = observed_api {
+        report.choices.push(ReportChoice {
+            name: "observed_docker_api".into(),
+            value: api,
+        });
+    }
+    report.choices.push(ReportChoice {
+        name: "observed_docker_mode".into(),
+        value: match observed_mode {
+            DockerDaemonMode::Rootful => "rootful",
+            DockerDaemonMode::Rootless => "rootless",
+            DockerDaemonMode::Unknown => "unknown",
+        }
+        .into(),
+    });
+    Ok((report, code, discovered))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2939,6 +4114,36 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
     let route = route::find(arguments.input_type, arguments.output_type);
     match route.input {
         InputType::Compose => {}
+        InputType::Docker => {
+            let docker = arguments
+                .docker_input
+                .as_ref()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Docker input options are missing"))?;
+            if !ordered.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Docker input does not accept document paths",
+                ));
+            }
+            if let Some(name) = docker.application_name.as_deref() {
+                Identifier::new(name).map_err(io::Error::other)?;
+            }
+            let families = [
+                !docker.containers.is_empty(),
+                !docker.container_ids.is_empty(),
+                !docker.network_ids.is_empty(),
+                !docker.volumes.is_empty(),
+                docker.name_prefix.is_some(),
+                docker.label.is_some(),
+                docker.docker_all_containers,
+            ];
+            if families.into_iter().filter(|selected| *selected).count() > 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "choose one Docker selector family; repeat exact names or IDs within that family",
+                ));
+            }
+        }
         InputType::Quadlet => {
             if let Some(name) = arguments.application_name.as_deref() {
                 Identifier::new(name).map_err(io::Error::other)?;
@@ -3640,6 +4845,110 @@ fn export_imported(
         ));
     }
     match output {
+        OutputType::Docker => {
+            let preset = arguments.docker_target.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "--docker-target PROFILE is required for Docker output",
+                )
+            })?;
+            let profile = preset.resolve()?;
+            let numeric = match preset {
+                DockerTargetPreset::Debian11Rootful | DockerTargetPreset::Debian11Rootless => {
+                    PlatformVersion::new(20, 10, 5)
+                }
+                DockerTargetPreset::UpstreamRootful | DockerTargetPreset::UpstreamRootless => {
+                    PlatformVersion::new(29, 8, 1)
+                }
+            };
+            let target = TargetProfile::new(boxferry::DOCKER_TARGET, numeric, Some(numeric))?;
+            let policy = if arguments.environment_values == EnvironmentValuePolicy::Include {
+                DockerEnvironmentPolicy::IncludeLiteral
+            } else {
+                DockerEnvironmentPolicy::Withhold
+            };
+            let exporter = DockerExporter::new(profile.clone())?.with_environment_policy(policy);
+            let result = convert_imported(imported, &exporter, &target, arguments.loss_policy.into())
+                .map_err(|error| conversion_failure(&error, source_diagnostics, aliases, discovered))?;
+            let (output, outcomes, diagnostics) = result.into_parts();
+            let output = match output {
+                Some(output) => {
+                    let native_text = String::from_utf8(
+                        output
+                            .complete_bytes()
+                            .map_err(|_| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "DockerLens could not serialize the complete native review artifact",
+                                )
+                            })
+                            .map_err(|error| {
+                                post_discovery_failure(
+                                    FailedStage::Conversion,
+                                    RuleId::DockerOutputUnsupported,
+                                    "Docker native artifact preflight failed",
+                                    &error,
+                                    aliases,
+                                    discovered,
+                                )
+                            })?,
+                    )
+                    .map_err(|_| {
+                        post_discovery_failure(
+                            FailedStage::Conversion,
+                            RuleId::DockerOutputUnsupported,
+                            "Docker native artifact preflight failed",
+                            &io::Error::new(io::ErrorKind::InvalidData, "Docker native artifact is not UTF-8"),
+                            aliases,
+                            discovered,
+                        )
+                    })?;
+                    let sidecar = (!output.dependency_decisions().is_empty())
+                        .then(|| {
+                            render_docker_dependency_sidecar(output.dependency_decisions(), native_text.as_bytes())
+                                .map_err(|error| {
+                                    post_discovery_failure(
+                                        FailedStage::Conversion,
+                                        RuleId::DockerOutputUnsupported,
+                                        "Docker dependency sidecar preflight failed",
+                                        &error,
+                                        aliases,
+                                        discovered,
+                                    )
+                                })
+                        })
+                        .transpose()?;
+                    let mut files = vec![RenderedFile {
+                        name: "docker-plan.json".into(),
+                        text: native_text,
+                    }];
+                    if let Some(sidecar) = sidecar {
+                        files.push(RenderedFile {
+                            name: "docker-dependencies.json".into(),
+                            text: sidecar,
+                        });
+                    }
+                    Some(files)
+                }
+                None => None,
+            };
+            let rendered = RenderedConversion {
+                output,
+                bundle_members: Vec::new(),
+                private_output: true,
+                transport_error: None,
+                outcomes,
+                diagnostics,
+            };
+            let release = profile.release().as_str().to_owned();
+            Ok((
+                rendered,
+                VersionBounds {
+                    minimum: release.clone(),
+                    maximum: release,
+                },
+            ))
+        }
         OutputType::Compose => {
             let target = TargetProfile::new(
                 COMPOSE_SPECIFICATION_TARGET,
@@ -3976,11 +5285,16 @@ fn finish_document_conversion(
             .collect();
         if !validate_only {
             let directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
-            if let Err(error) = write_rendered_output(
-                directory,
-                output,
-                arguments.environment_values == EnvironmentValuePolicy::Include || private_output,
-            ) {
+            let write_result = if route.output == OutputType::Docker {
+                write_private_docker_output(directory, output)
+            } else {
+                write_rendered_output(
+                    directory,
+                    output,
+                    arguments.environment_values == EnvironmentValuePolicy::Include || private_output,
+                )
+            };
+            if let Err(error) = write_result {
                 report.diagnostics.push(output_write_diagnostic(&error, &aliases));
                 report.events.push("output-write-failed".into());
                 report.status = ReportStatus::Failure;
@@ -4075,7 +5389,7 @@ async fn run_generic(
     validate_only: bool,
 ) -> Result<ExitCode, Box<dyn Error>> {
     let aliases = ReportAliases::for_invocation(arguments, output_directory);
-    let ordered = if arguments.input_type == InputType::Podman {
+    let ordered = if matches!(arguments.input_type, InputType::Docker | InputType::Podman) {
         Ok(Vec::new())
     } else {
         generic_input_order(matches, arguments.input_type).map_err(Box::<dyn Error>::from)
@@ -4314,23 +5628,7 @@ fn present(
             println!("input: {}", input.label());
         }
         if presentation.verbose && report.operation != "extract" {
-            match route::find(arguments.input_type, arguments.output_type).target_selector {
-                TargetSelector::PodmanRange => {
-                    println!(
-                        "Podman requested: {} through {}",
-                        report.requested_versions.minimum, report.requested_versions.maximum
-                    );
-                    println!(
-                        "Podman resolved: {} through {}",
-                        report.resolved_versions.minimum, report.resolved_versions.maximum
-                    );
-                }
-                TargetSelector::ComposeSpecification => println!("Compose Specification: rolling"),
-                TargetSelector::PodmanMaximum => {
-                    println!("Podman maximum requested: {}", report.requested_versions.maximum);
-                    println!("Podman target resolved: {}", report.resolved_versions.maximum);
-                }
-            }
+            print_target_version_details(arguments, report);
             if arguments.input_type == InputType::Compose {
                 if arguments.all_profiles {
                     println!("profiles: all");
@@ -4393,6 +5691,30 @@ fn present(
         io::stdout().flush()?;
     }
     Ok(())
+}
+
+fn print_target_version_details(arguments: &GenericConversion, report: &InvocationReport) {
+    match route::find(arguments.input_type, arguments.output_type).target_selector {
+        TargetSelector::DockerExactProfile => {
+            println!("Docker target preset: {}", report.requested_versions.minimum);
+            println!("Docker target resolved: {}", report.resolved_versions.minimum);
+        }
+        TargetSelector::PodmanRange => {
+            println!(
+                "Podman requested: {} through {}",
+                report.requested_versions.minimum, report.requested_versions.maximum
+            );
+            println!(
+                "Podman resolved: {} through {}",
+                report.resolved_versions.minimum, report.resolved_versions.maximum
+            );
+        }
+        TargetSelector::ComposeSpecification => println!("Compose Specification: rolling"),
+        TargetSelector::PodmanMaximum => {
+            println!("Podman maximum requested: {}", report.requested_versions.maximum);
+            println!("Podman target resolved: {}", report.resolved_versions.maximum);
+        }
+    }
 }
 
 fn print_final_result(report: &InvocationReport, validate_only: bool) {
@@ -6418,6 +7740,216 @@ fn absolute_parent(path: &Path) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other(format!("input path has no parent: {}", path.display())))
 }
 
+fn prepare_output_directory(directory: &Path, private: bool) -> io::Result<bool> {
+    #[cfg(unix)]
+    let create_result = if private {
+        fs::DirBuilder::new().mode(0o700).create(directory)
+    } else {
+        fs::create_dir(directory)
+    };
+    #[cfg(not(unix))]
+    let create_result = fs::create_dir(directory);
+    match create_result {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(directory)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("output path is not a non-symlink directory: {}", directory.display()),
+                ));
+            }
+            if fs::read_dir(directory)?.next().transpose()?.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("output directory is not empty: {}", directory.display()),
+                ));
+            }
+            #[cfg(unix)]
+            if private && metadata.mode() & 0o077 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "existing output directory is not private; choose an absent directory or restrict it to mode 0700",
+                ));
+            }
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn docker_provenance_categories(origins: &[Provenance]) -> io::Result<Vec<&'static str>> {
+    origins
+        .iter()
+        .map(|origin| match origin.kind() {
+            ProvenanceKind::SourceDocument => Ok("source_document"),
+            ProvenanceKind::RuntimeObservation => Ok("runtime_observation"),
+            ProvenanceKind::UserOverride => Ok("user_override"),
+            ProvenanceKind::ImplementationDefault => Ok("implementation_default"),
+            ProvenanceKind::ConversionDecision => Ok("conversion_decision"),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Docker dependency provenance has an unreviewed category",
+            )),
+        })
+        .collect()
+}
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(*byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn docker_native_plan_sha256(bytes: &[u8]) -> String {
+    lowercase_hex(&Sha256::digest(bytes))
+}
+
+fn render_docker_dependency_sidecar(decisions: &[DockerDependencyDecision], native_plan: &[u8]) -> io::Result<String> {
+    let mut ordered = decisions.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|decision| (decision.service(), decision.dependency()));
+    let mut entries = Vec::with_capacity(ordered.len());
+    for decision in ordered {
+        if decision.sensitive_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "a protected Docker dependency identity cannot be written to the review sidecar",
+            ));
+        }
+        let service_identity = std::str::from_utf8(decision.service_identity())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Docker dependent identity is not UTF-8"))?;
+        let dependency_identity = std::str::from_utf8(decision.dependency_identity())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Docker prerequisite identity is not UTF-8"))?;
+        let condition = match decision.condition() {
+            None | Some(ServiceDependencyCondition::Started) => "started",
+            Some(ServiceDependencyCondition::Healthy) => "healthy",
+            Some(ServiceDependencyCondition::CompletedSuccessfully) => "completed_successfully",
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Docker dependency condition has no reviewed sidecar spelling",
+                ));
+            }
+        };
+        entries.push(serde_json::json!({
+            "service": decision.service(),
+            "service_runtime_name": service_identity,
+            "dependency": decision.dependency(),
+            "dependency_runtime_name": dependency_identity,
+            "condition": condition,
+            "condition_explicit": decision.condition().is_some(),
+            "required": decision.required().unwrap_or(true),
+            "required_explicit": decision.required().is_some(),
+            "restart": decision.restart().unwrap_or(false),
+            "restart_explicit": decision.restart().is_some(),
+            "fidelity": "approximate",
+            "native_engine_field": false,
+            "provenance": {
+                "reference": docker_provenance_categories(decision.reference_origins())?,
+                "condition": docker_provenance_categories(decision.condition_origins())?,
+                "required": docker_provenance_categories(decision.required_origins())?,
+                "restart": docker_provenance_categories(decision.restart_origins())?,
+            },
+        }));
+    }
+    serde_json::to_string(&serde_json::json!({
+        "schema_version": 1,
+        "kind": "boxferry-docker-dependency-decisions",
+        "docker_plan_sha256": docker_native_plan_sha256(native_plan),
+        "native_execution": false,
+        "decisions": entries,
+    }))
+    .map_err(io::Error::other)
+}
+
+fn cleanup_output_write(directory: &Path, created_directory: bool, created_files: &[PathBuf]) {
+    for path in created_files {
+        let _ = fs::remove_file(path);
+    }
+    if created_directory {
+        let _ = fs::remove_dir(directory);
+    }
+}
+
+fn publish_private_docker_artifact(directory: &Path, file: &RenderedFile) -> io::Result<()> {
+    publish_private_docker_artifact_with(directory, file, SupportBundleTemporary::remove)
+}
+
+fn publish_private_docker_artifact_with(
+    directory: &Path,
+    file: &RenderedFile,
+    remove_temporary: impl FnOnce(SupportBundleTemporary) -> io::Result<()>,
+) -> io::Result<()> {
+    let path = directory.join(&file.name);
+    let mut temporary = SupportBundleTemporary::create(directory, &path)?;
+    {
+        let destination = temporary
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("Docker temporary file missing"))?;
+        destination.write_all(file.text.as_bytes())?;
+        destination.sync_all()?;
+    }
+    temporary.file.take();
+    // Same-directory hard linking is atomic and refuses an existing final path, including a
+    // symlink introduced after the initial empty-directory check. Rename could overwrite it.
+    fs::hard_link(temporary.path(), &path)?;
+    let temporary_path = temporary.path().to_path_buf();
+    if let Err(error) = remove_temporary(temporary) {
+        let final_removed = fs::remove_file(&path).is_ok();
+        let temporary_removed = match fs::remove_file(&temporary_path) {
+            Ok(()) => true,
+            Err(cleanup) => cleanup.kind() == io::ErrorKind::NotFound,
+        };
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "Docker artifact temporary cleanup failed; final removed: {final_removed}; temporary removed: {temporary_removed}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn write_private_docker_output(directory: &Path, files: &[RenderedFile]) -> io::Result<()> {
+    write_private_docker_output_with(directory, files, publish_private_docker_artifact)
+}
+
+fn write_private_docker_output_with(
+    directory: &Path,
+    files: &[RenderedFile],
+    mut publish: impl FnMut(&Path, &RenderedFile) -> io::Result<()>,
+) -> io::Result<()> {
+    if files.is_empty() || files.len() > 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker output must contain one native artifact and at most one BoxFerry dependency sidecar",
+        ));
+    }
+    if files[0].name != "docker-plan.json" || files.get(1).is_some_and(|file| file.name != "docker-dependencies.json") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker output has an unexpected native artifact or dependency sidecar name",
+        ));
+    }
+    let created_directory = prepare_output_directory(directory, true)?;
+    let mut published = Vec::new();
+    // The native plan is the completion marker. A crash can leave an inert
+    // sidecar alone, never a usable plan missing its required decisions.
+    for file in files.iter().rev() {
+        if let Err(error) = publish(directory, file) {
+            cleanup_output_write(directory, created_directory, &published);
+            return Err(error);
+        }
+        published.push(directory.join(&file.name));
+    }
+    Ok(())
+}
+
 fn write_rendered_output(directory: &Path, files: &[RenderedFile], private: bool) -> io::Result<()> {
     let files = files
         .iter()
@@ -6433,7 +7965,376 @@ mod tests {
         interpolation::EnvironmentProvider,
         project::{ProjectValue, build_project_view},
     };
-    use boxferry::{Provenance, Service, ServiceGroup, Sourced};
+    use boxferry::docker::docker_lens::{
+        decoder::LabelObservation as DockerLabelObservation,
+        observation::{Availability as DockerAvailability, Observed as DockerObserved, Origin as DockerOrigin},
+    };
+    use boxferry::{Provenance, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, Sourced};
+
+    #[test]
+    fn sha256_hex_encoding_is_fixed_width_lowercase_with_leading_zero_bytes() {
+        assert_eq!(lowercase_hex(&[0x00, 0x0a, 0xf0, 0xff]), "000af0ff");
+        let empty_sha256 = docker_native_plan_sha256(b"");
+        assert_eq!(
+            empty_sha256,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(empty_sha256.len(), 64);
+    }
+
+    fn docker_dependency_test_output(sensitive_name: bool) -> Result<boxferry::DockerOutput, Box<dyn Error>> {
+        let profile = DockerTargetPreset::UpstreamRootful.resolve()?;
+        let mut database = Service::new(Identifier::new("database")?);
+        database.set_image(Sourced::generated(boxferry::ImageReference::parse("busybox:1")?));
+        let mut cache = Service::new(Identifier::new("cache")?);
+        cache.set_image(Sourced::generated(boxferry::ImageReference::parse("busybox:1")?));
+        let mut web = Service::new(Identifier::new("web")?);
+        web.set_image(Sourced::generated(boxferry::ImageReference::parse("busybox:1")?));
+        web.set_runtime_name(Sourced::generated(if sensitive_name {
+            boxferry::ProtectedString::sensitive("web-live")
+        } else {
+            boxferry::ProtectedString::plain("web-live")
+        }));
+        let private_origin = Provenance::source(SourceId::new("private/source.yaml")?);
+        let mut edge = ServiceDependency::new(Identifier::new("database")?);
+        edge.set_condition(Sourced::from_source(
+            ServiceDependencyCondition::Healthy,
+            private_origin.clone(),
+        ));
+        edge.set_required(Sourced::generated(true));
+        edge.set_restart(Sourced::generated(false));
+        web.add_dependency(Sourced::from_source(edge, private_origin));
+        web.add_dependency(Sourced::generated(ServiceDependency::new(Identifier::new("cache")?)));
+        let mut application = Application::new(Identifier::new("example")?);
+        application.add_service(Sourced::generated(database))?;
+        application.add_service(Sourced::generated(cache))?;
+        application.add_service(Sourced::generated(web))?;
+        let numeric = PlatformVersion::new(29, 8, 1);
+        let target = TargetProfile::new(boxferry::DOCKER_TARGET, numeric, Some(numeric))?;
+        let exporter = DockerExporter::new(profile)?;
+        let planned = boxferry::ExportAdapter::plan(&exporter, &application, &target)?;
+        planned
+            .authorize(LossPolicy::AllowApproximate)
+            .into_parts()
+            .0
+            .ok_or_else(|| io::Error::other("Docker dependency candidate missing").into())
+    }
+
+    fn docker_summary(index: u8, labels: &[(&str, &str)]) -> DockerContainerSummary {
+        DockerContainerSummary {
+            id: DockerProtectedValue::new(format!("{index:064x}").into_bytes()),
+            names: DockerObserved::unavailable(DockerAvailability::Missing, DockerOrigin::Unknown),
+            labels: DockerObserved::present(
+                labels
+                    .iter()
+                    .map(|(key, value)| DockerLabelObservation {
+                        key: DockerProtectedValue::new(key.as_bytes().to_vec()),
+                        value: DockerObserved::present(
+                            DockerProtectedValue::new(value.as_bytes().to_vec()),
+                            DockerAvailability::Present,
+                            DockerOrigin::Effective,
+                        ),
+                    })
+                    .collect(),
+                DockerAvailability::Present,
+                DockerOrigin::Effective,
+            ),
+            image: DockerObserved::unavailable(DockerAvailability::Missing, DockerOrigin::Unknown),
+        }
+    }
+
+    #[test]
+    fn docker_metadata_default_selects_one_container_or_one_complete_group() -> Result<(), Box<dyn Error>> {
+        assert_eq!(default_docker_container_ids(&[docker_summary(1, &[])])?.len(), 1);
+        let application = [
+            docker_summary(1, &[("io.boxferry.application", "stack")]),
+            docker_summary(2, &[("io.boxferry.application", "stack")]),
+        ];
+        assert_eq!(default_docker_container_ids(&application)?.len(), 2);
+        let compose_replicas = [
+            docker_summary(
+                1,
+                &[
+                    ("com.docker.compose.project", "stack"),
+                    ("com.docker.compose.service", "web"),
+                ],
+            ),
+            docker_summary(
+                2,
+                &[
+                    ("com.docker.compose.project", "stack"),
+                    ("com.docker.compose.service", "web"),
+                ],
+            ),
+        ];
+        let ids = default_docker_container_ids(&compose_replicas)?;
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0].as_str(), ids[1].as_str());
+        Ok(())
+    }
+
+    #[test]
+    fn docker_metadata_default_rejects_mixed_conflicting_and_one_off_sets() {
+        let cases = [
+            vec![],
+            vec![docker_summary(1, &[]), docker_summary(2, &[])],
+            vec![
+                docker_summary(1, &[("io.boxferry.application", "stack")]),
+                docker_summary(2, &[]),
+            ],
+            vec![
+                docker_summary(
+                    1,
+                    &[
+                        ("com.docker.compose.project", "one"),
+                        ("com.docker.compose.service", "web"),
+                    ],
+                ),
+                docker_summary(
+                    2,
+                    &[
+                        ("com.docker.compose.project", "two"),
+                        ("com.docker.compose.service", "db"),
+                    ],
+                ),
+            ],
+            vec![
+                docker_summary(
+                    1,
+                    &[
+                        ("io.boxferry.application", "one"),
+                        ("com.docker.compose.project", "stack"),
+                        ("com.docker.compose.service", "web"),
+                    ],
+                ),
+                docker_summary(
+                    2,
+                    &[
+                        ("io.boxferry.application", "two"),
+                        ("com.docker.compose.project", "stack"),
+                        ("com.docker.compose.service", "db"),
+                    ],
+                ),
+            ],
+            vec![docker_summary(1, &[("com.docker.compose.oneoff", "True")])],
+        ];
+        for summaries in cases {
+            assert!(default_docker_container_ids(&summaries).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_dependency_sidecar_is_private_versioned_and_source_path_free() -> Result<(), Box<dyn Error>> {
+        let output = docker_dependency_test_output(false)?;
+        let native_plan = output.complete_bytes().map_err(|error| format!("{error:?}"))?;
+        let sidecar = render_docker_dependency_sidecar(output.dependency_decisions(), &native_plan)?;
+        let value: serde_json::Value = serde_json::from_str(&sidecar)?;
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["native_execution"], false);
+        assert_eq!(value["docker_plan_sha256"], docker_native_plan_sha256(&native_plan));
+        assert_eq!(value["decisions"][0]["service_runtime_name"], "web-live");
+        assert_eq!(
+            value["decisions"]
+                .as_array()
+                .ok_or("sidecar decisions array missing")?
+                .len(),
+            2
+        );
+        assert_eq!(value["decisions"][0]["dependency"], "cache");
+        assert_eq!(value["decisions"][0]["dependency_runtime_name"], "cache");
+        assert_eq!(value["decisions"][0]["condition"], "started");
+        assert_eq!(value["decisions"][0]["condition_explicit"], false);
+        assert_eq!(value["decisions"][0]["required_explicit"], false);
+        assert_eq!(value["decisions"][0]["restart_explicit"], false);
+        assert_eq!(value["decisions"][0]["provenance"]["condition"], serde_json::json!([]));
+        assert_eq!(value["decisions"][1]["dependency"], "database");
+        assert_eq!(value["decisions"][1]["dependency_runtime_name"], "database");
+        assert_eq!(value["decisions"][1]["condition"], "healthy");
+        assert_eq!(value["decisions"][1]["required"], true);
+        assert_eq!(value["decisions"][1]["restart"], false);
+        assert_eq!(value["decisions"][1]["provenance"]["condition"][0], "source_document");
+        assert!(!sidecar.contains("private/source.yaml"));
+        let directory = env::temp_dir().join(format!(
+            "boxferry-docker-dependencies-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        write_private_docker_output(
+            &directory,
+            &[
+                RenderedFile {
+                    name: "docker-plan.json".into(),
+                    text: String::from_utf8(native_plan)?,
+                },
+                RenderedFile {
+                    name: "docker-dependencies.json".into(),
+                    text: sidecar.clone(),
+                },
+            ],
+        )?;
+        assert_eq!(fs::metadata(&directory)?.mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(directory.join("docker-plan.json"))?.mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(directory.join("docker-dependencies.json"))?.mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read_dir(&directory)?.count(), 2);
+        fs::remove_file(directory.join("docker-plan.json"))?;
+        fs::remove_file(directory.join("docker-dependencies.json"))?;
+        fs::remove_dir(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn protected_docker_dependency_identity_cannot_form_a_candidate() -> Result<(), Box<dyn Error>> {
+        let Err(error) = docker_dependency_test_output(true) else {
+            return Err("protected identity formed a Docker candidate".into());
+        };
+        assert!(!error.to_string().contains("web-live"));
+        Ok(())
+    }
+
+    #[test]
+    fn docker_dependency_sidecar_is_bound_to_exact_native_plan_bytes() -> Result<(), Box<dyn Error>> {
+        let output = docker_dependency_test_output(false)?;
+        let native_plan = output.complete_bytes().map_err(|error| format!("{error:?}"))?;
+        let sidecar = render_docker_dependency_sidecar(output.dependency_decisions(), &native_plan)?;
+        let value: serde_json::Value = serde_json::from_str(&sidecar)?;
+        assert_eq!(value["docker_plan_sha256"], docker_native_plan_sha256(&native_plan));
+        let mut altered = native_plan.clone();
+        altered.push(b' ');
+        assert_ne!(value["docker_plan_sha256"], docker_native_plan_sha256(&altered));
+        assert!(!sidecar.contains("private/source.yaml"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_plan_publication_failure_cleans_earlier_dependency_sidecar() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-docker-publish-fail-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let files = [
+            RenderedFile {
+                name: "docker-plan.json".into(),
+                text: "native plan".into(),
+            },
+            RenderedFile {
+                name: "docker-dependencies.json".into(),
+                text: "dependency decisions".into(),
+            },
+        ];
+        let mut seen = Vec::new();
+        let Err(error) = write_private_docker_output_with(&directory, &files, |parent, file| {
+            seen.push(file.name.clone());
+            if file.name == "docker-plan.json" {
+                assert_eq!(
+                    fs::read(parent.join("docker-dependencies.json"))?,
+                    b"dependency decisions"
+                );
+                return Err(io::Error::other("injected final publication failure"));
+            }
+            publish_private_docker_artifact(parent, file)
+        }) else {
+            return Err(io::Error::other("injected native-plan publication succeeded"));
+        };
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(seen, ["docker-dependencies.json", "docker-plan.json"]);
+        assert!(!directory.join("docker-plan.json").exists());
+        assert!(!directory.join("docker-dependencies.json").exists());
+        assert!(!directory.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_temporary_unlink_failure_does_not_leave_protected_copy_or_final() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-docker-unlink-fail-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let file = RenderedFile {
+            name: "docker-plan.json".into(),
+            text: "protected native plan".into(),
+        };
+        let Err(error) = publish_private_docker_artifact_with(&directory, &file, |_temporary| {
+            Err(io::Error::other("injected temporary unlink failure"))
+        }) else {
+            return Err(io::Error::other("temporary unlink failure was ignored"));
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("final removed: true; temporary removed: true")
+        );
+        assert_eq!(fs::read_dir(&directory)?.count(), 0);
+        fs::remove_dir(directory)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_docker_artifact_publishes_only_complete_bytes_without_replacing_a_racing_final() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-docker-atomic-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let artifact = directory.join("docker-plan.json");
+        let file = RenderedFile {
+            name: "docker-plan.json".into(),
+            text: "complete private plan".into(),
+        };
+        write_private_docker_output(
+            &directory,
+            &[RenderedFile {
+                name: file.name.clone(),
+                text: file.text.clone(),
+            }],
+        )?;
+        assert_eq!(fs::read(&artifact)?, b"complete private plan");
+        assert_eq!(fs::metadata(&directory)?.mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(&artifact)?.mode() & 0o777, 0o600);
+        assert_eq!(fs::read_dir(&directory)?.count(), 1);
+        let Err(existing_error) = write_private_docker_output(&directory, &[file]) else {
+            return Err(io::Error::other("existing Docker artifact was replaced"));
+        };
+        assert_eq!(existing_error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&artifact)?, b"complete private plan");
+
+        fs::remove_file(&artifact)?;
+        let mut interrupted = SupportBundleTemporary::create(&directory, &artifact)?;
+        interrupted
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("temporary file missing"))?
+            .write_all(b"partial")?;
+        drop(interrupted);
+        assert!(!artifact.exists());
+        assert_eq!(fs::read_dir(&directory)?.count(), 0);
+
+        fs::write(&artifact, b"racing final")?;
+        let Err(error) = publish_private_docker_artifact(
+            &directory,
+            &RenderedFile {
+                name: "docker-plan.json".into(),
+                text: "replacement".into(),
+            },
+        ) else {
+            return Err(io::Error::other("racing Docker artifact was replaced"));
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&artifact)?, b"racing final");
+        assert_eq!(fs::read_dir(&directory)?.count(), 1);
+        fs::remove_file(artifact)?;
+        fs::remove_dir(directory)?;
+        Ok(())
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     struct ComposeDiscoveryTestDirectory(PathBuf);
@@ -6554,6 +8455,109 @@ mod tests {
     }
 
     #[test]
+    fn docker_public_label_parser_preserves_exact_identity_and_key_without_debug_echo() -> Result<(), Box<dyn Error>> {
+        let id = "a".repeat(64);
+        let raw = format!("container:{id}=private-label-key-canary");
+        let values = vec![
+            raw.parse::<RedactedDockerPublicLabelArg>()?,
+            format!("network:{id}=exact=key").parse()?,
+            "volume:exact-volume=label.key".parse()?,
+        ];
+        let decisions = docker_public_label_decisions(&values)?;
+        assert_eq!(decisions.entries().len(), 3);
+        assert_eq!(decisions.entries()[0].kind(), DockerPublicLabelResourceKind::Container);
+        assert_eq!(decisions.entries()[0].source(), id);
+        assert_eq!(decisions.entries()[0].key(), "private-label-key-canary");
+        assert_eq!(decisions.entries()[1].kind(), DockerPublicLabelResourceKind::Network);
+        assert_eq!(decisions.entries()[1].key(), "exact=key");
+        assert_eq!(decisions.entries()[2].kind(), DockerPublicLabelResourceKind::Volume);
+        assert!(!format!("{values:?}").contains("private-label-key-canary"));
+        assert!(!format!("{values:?}").contains(&id));
+        assert!(docker_public_label_decisions(&[])?.entries().is_empty());
+        assert_eq!(
+            docker_public_label_decisions(&[RedactedDockerPublicLabelArg(format!(
+                "volume:source={}",
+                "é".repeat(128)
+            ))])?
+            .entries()[0]
+                .key()
+                .len(),
+            256
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn docker_public_label_parser_rejects_malformed_duplicate_and_over_limit_input() -> Result<(), Box<dyn Error>> {
+        for raw in [
+            "private-label-key-canary",
+            "image:private-source=private-label-key-canary",
+            "container:short=private-label-key-canary",
+            "network:short=private-label-key-canary",
+            "volume:bad/name=private-label-key-canary",
+            "volume:private-source=",
+        ] {
+            let value = raw.parse::<RedactedDockerPublicLabelArg>()?;
+            let error = docker_public_label_decisions(&[value])
+                .err()
+                .ok_or("malformed declaration was accepted")?;
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert!(!error.to_string().contains("private-source"));
+            assert!(!error.to_string().contains("private-label-key-canary"));
+        }
+        let value = "volume:private-source=private-label-key-canary".parse::<RedactedDockerPublicLabelArg>()?;
+        assert!(docker_public_label_decisions(&[value.clone(), value]).is_err());
+        let mut values = (0..128)
+            .map(|index| RedactedDockerPublicLabelArg(format!("volume:source=key-{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(docker_public_label_decisions(&values)?.entries().len(), 128);
+        values.push(RedactedDockerPublicLabelArg("volume:source=key-128".into()));
+        assert!(docker_public_label_decisions(&values).is_err());
+        assert!(
+            docker_public_label_decisions(&[RedactedDockerPublicLabelArg(format!(
+                "volume:source={}",
+                "k".repeat(257)
+            ))])
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn docker_public_label_flag_is_repeatable_and_only_available_on_docker_input() -> Result<(), Box<dyn Error>> {
+        let conversion = parse_validation(&[
+            "boxferry",
+            "validate",
+            "docker",
+            "compose",
+            "--docker-public-label",
+            "volume:one=key-one",
+            "--docker-public-label",
+            "volume:two=key-two",
+        ])?;
+        let input = conversion.docker_input.ok_or("Docker options missing")?;
+        assert_eq!(
+            docker_public_label_decisions(&input.docker_public_labels)?
+                .entries()
+                .len(),
+            2
+        );
+        let error = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "compose",
+            "compose",
+            "--docker-public-label",
+            "volume:private-source=private-label-key-canary",
+        ])
+        .err()
+        .ok_or("non-Docker source accepted public label declaration")?;
+        assert!(!error.to_string().contains("private-source"));
+        assert!(!error.to_string().contains("private-label-key-canary"));
+        Ok(())
+    }
+
+    #[test]
     fn cli_definition_is_internally_consistent() {
         Cli::command().debug_assert();
     }
@@ -6567,7 +8571,7 @@ mod tests {
 
     #[test]
     fn quadlet_target_defaults_are_visible_and_consistent_for_every_input() -> Result<(), Box<dyn Error>> {
-        let routes: [&[&str]; 3] = [
+        let routes: [&[&str]; 4] = [
             &["boxferry", "validate", "compose", "quadlet", "--input-file", "input"],
             &[
                 "boxferry",
@@ -6588,6 +8592,16 @@ mod tests {
                 "/unused/podman.sock",
                 "--podman-all",
             ],
+            &[
+                "boxferry",
+                "validate",
+                "docker",
+                "quadlet",
+                "--docker-socket",
+                "/unused/docker.sock",
+                "--docker-label",
+                "io.boxferry.application=example",
+            ],
         ];
         for arguments in routes {
             let conversion = parse_validation(arguments)?;
@@ -6595,13 +8609,15 @@ mod tests {
             assert_eq!(conversion.podman_maximum_version.requested, "6.1");
         }
 
-        let help = Cli::try_parse_from(["boxferry", "convert", "compose", "quadlet", "--help"])
-            .err()
-            .ok_or("--help should display the route help")?;
-        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
-        let help = help.to_string();
-        assert!(help.contains("[default: 5.4]"), "{help}");
-        assert!(help.contains("[default: 6.1]"), "{help}");
+        for input in ["compose", "quadlet", "podman", "docker"] {
+            let help = Cli::try_parse_from(["boxferry", "convert", input, "quadlet", "--help"])
+                .err()
+                .ok_or("--help should display route help")?;
+            assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+            let help = help.to_string();
+            assert!(help.contains("[default: 5.4]"), "{help}");
+            assert!(help.contains("[default: 6.1]"), "{help}");
+        }
         Ok(())
     }
 
@@ -7072,22 +9088,93 @@ mod tests {
     }
 
     #[cfg(unix)]
+    struct SocketTestDirectory(PathBuf);
+
+    #[cfg(unix)]
+    impl SocketTestDirectory {
+        fn new() -> io::Result<Self> {
+            // AF_UNIX has a short path limit. The developer's TMPDIR can be
+            // arbitrarily long; only these socket fixtures need a short root.
+            loop {
+                let path = Path::new("/tmp").join(format!(
+                    "bf-socket-{}-{}",
+                    std::process::id(),
+                    SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed),
+                ));
+                match fs::DirBuilder::new().mode(0o700).create(&path) {
+                    Ok(()) => return Ok(Self(path)),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SocketTestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_preferred_socket_selection_never_connects_or_retries_a_fallback() -> Result<(), Box<dyn Error>> {
+        use std::os::unix::net::UnixListener;
+
+        let socket_directory = SocketTestDirectory::new()?;
+        let directory = &socket_directory.0;
+        assert_eq!(directory.parent(), Some(Path::new("/tmp")));
+        let stale = directory.join("private-preferred.sock");
+        let active = directory.join("private-fallback.sock");
+        let regular = directory.join("private-regular.sock");
+        drop(UnixListener::bind(&stale)?);
+        let listener = UnixListener::bind(&active)?;
+        listener.set_nonblocking(true)?;
+        fs::write(&regular, "not a socket")?;
+
+        // A stale preferred socket is still the selected endpoint. Only native
+        // acquisition establishes connectability; that failure cannot select another.
+        let selected = first_local_docker_socket(&[stale.clone(), active.clone()])?;
+        assert_eq!(selected, stale);
+        let error = acquire_docker_source(
+            Identifier::new("selection-test")?,
+            &DockerEndpoint::unix_socket(selected),
+            DockerSelector::ContainerIds(vec![DockerNativeId::new("a".repeat(64)).ok_or("invalid test ID")?]),
+            DOCKER_CLI_LIMITS,
+            &AtomicBool::new(false),
+        )
+        .err()
+        .ok_or("stale preferred socket unexpectedly acquired a source")?;
+        assert!(matches!(
+            error,
+            boxferry::DockerSourceError::Acquisition(boxferry::docker::docker_lens::acquisition::AcquisitionError::Io)
+        ));
+        assert!(!error.to_string().contains("private-"));
+        assert!(matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
+
+        // Existing non-sockets fail closed rather than authorizing fallback.
+        assert!(first_local_docker_socket(&[regular.clone(), active.clone()]).is_err());
+        assert_eq!(resolve_docker_socket(Some(&active))?, active);
+        assert!(matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
+        fs::remove_file(&stale)?;
+        assert_eq!(first_local_docker_socket(&[stale, active.clone()])?, active);
+        assert!(matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
+
+        drop(listener);
+        fs::remove_file(regular)?;
+        fs::remove_file(active)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
     #[test]
     fn stale_rootless_socket_does_not_silently_fall_back_to_rootful() -> io::Result<()> {
         use std::os::unix::net::UnixListener;
 
-        let directory = loop {
-            let candidate = env::temp_dir().join(format!(
-                "boxferry-podman-socket-fallback-{}-{}",
-                std::process::id(),
-                SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-            ));
-            match fs::create_dir(&candidate) {
-                Ok(()) => break candidate,
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
-        };
+        let socket_directory = SocketTestDirectory::new()?;
+        let directory = &socket_directory.0;
+        assert_eq!(directory.parent(), Some(Path::new("/tmp")));
         let stale = directory.join("rootless.sock");
         let active = directory.join("rootful.sock");
         let regular = directory.join("regular.sock");
@@ -7106,7 +9193,7 @@ mod tests {
         assert!(first_local_podman_socket(std::slice::from_ref(&active)).is_err());
         fs::remove_file(regular)?;
         fs::remove_file(active)?;
-        fs::remove_dir(directory)
+        Ok(())
     }
 
     #[test]
@@ -7130,6 +9217,8 @@ mod tests {
             error_report_directory: None,
             input_type: InputType::Compose,
             output_type: OutputType::Quadlet,
+            docker_input: None,
+            docker_target: None,
             input_files: Vec::new(),
             input_directories: Vec::new(),
             project_directory: None,

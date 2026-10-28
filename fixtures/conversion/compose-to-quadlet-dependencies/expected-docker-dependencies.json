@@ -1,0 +1,48 @@
+{
+  "decisions": [
+    {
+      "condition": "started",
+      "condition_explicit": false,
+      "dependency": "cache",
+      "dependency_runtime_name": "cache",
+      "fidelity": "approximate",
+      "native_engine_field": false,
+      "provenance": {
+        "condition": [],
+        "reference": ["source_document"],
+        "required": ["source_document"],
+        "restart": []
+      },
+      "required": false,
+      "required_explicit": true,
+      "restart": false,
+      "restart_explicit": false,
+      "service": "web",
+      "service_runtime_name": "web"
+    },
+    {
+      "condition": "healthy",
+      "condition_explicit": true,
+      "dependency": "database",
+      "dependency_runtime_name": "database",
+      "fidelity": "approximate",
+      "native_engine_field": false,
+      "provenance": {
+        "condition": ["source_document"],
+        "reference": ["source_document"],
+        "required": [],
+        "restart": []
+      },
+      "required": true,
+      "required_explicit": false,
+      "restart": false,
+      "restart_explicit": false,
+      "service": "web",
+      "service_runtime_name": "web"
+    }
+  ],
+  "docker_plan_sha256": "2bf74332275be2e8dee60dee3f77c94d0a2aed2f1211902cd6163e293e6ed1c3",
+  "kind": "boxferry-docker-dependency-decisions",
+  "native_execution": false,
+  "schema_version": 1
+}

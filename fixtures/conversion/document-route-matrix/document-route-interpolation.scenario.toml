@@ -1,7 +1,7 @@
 schema = 1
 id = "document-route-interpolation"
 source-capabilities = ["compose"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 
 [application]
 name = "route-matrix"
@@ -101,3 +101,19 @@ semantic-gaps = ["environment:web:LOG_LEVEL"]
 allowed-losses = [
   { rule = "BFP0007", subject = "services.web.environment.LOG_LEVEL", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
 ]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+environment-values = "include"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }

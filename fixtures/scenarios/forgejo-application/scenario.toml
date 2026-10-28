@@ -1,7 +1,7 @@
 schema = 1
 id = "forgejo-application"
 source-capabilities = ["compose", "podman", "quadlet"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = [
   "boxferry-public-db-password-canary",
   "boxferry-public-forgejo-secret-canary",
@@ -127,6 +127,11 @@ required-ports = [
 ]
 required-restart = []
 required-runtime-names = []
+required-users = ["forgejo:1000:1000"]
+exact-network-memberships = [
+  "db:backend",
+  "forgejo:backend,edge",
+]
 unpublished-services = ["db"]
 external-prerequisites = []
 expected-diagnostics = []
@@ -396,3 +401,69 @@ podman-plan = { creatable-resources = ["container:db", "container:forgejo", "net
   { resource = "db-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" },
   { resource = "forgejo-image", reference = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685", policy = "missing" },
 ], start-order = ["db", "forgejo"] }
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "approximate"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+docker-empty-volume-labels = ["db-data", "forgejo-data"]
+docker-exact-native-inventory = true
+diagnostics = ["BFD0006|networks.edge.driver"]
+allowed-losses = [
+  { rule = "BFD0006", subject = "networks.edge.driver", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "approximate"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+docker-empty-volume-labels = ["db-data", "forgejo-data"]
+docker-exact-native-inventory = true
+diagnostics = ["BFD0006|networks.edge.driver"]
+allowed-losses = [
+  { rule = "BFD0006", subject = "networks.edge.driver", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "docker"
+docker-external-network-internal = { edge = false }
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["docker-plan.json"]
+docker-empty-volume-labels = ["db-data", "forgejo-data"]
+docker-exact-native-inventory = true
+diagnostics-file = "expected.podman-docker.diagnostics"
+allowed-losses-file = "expected.podman-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = []

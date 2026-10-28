@@ -50,7 +50,7 @@ struct HashedArtifact {
 }
 
 #[test]
-fn cassette_manifest_hashes_pin_every_reviewed_artifact() -> Result<(), Box<dyn Error>> {
+fn cassette_manifest_hashes_pin_every_captured_artifact() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory();
     let manifest: CorpusManifest = toml::from_str(&fs::read_to_string(fixture.join("fixture.toml"))?)?;
     let artifacts = manifest
@@ -62,7 +62,17 @@ fn cassette_manifest_hashes_pin_every_reviewed_artifact() -> Result<(), Box<dyn 
         .collect::<BTreeMap<_, _>>();
 
     assert_eq!(artifacts.len(), VERSIONS.len() * CONTEXTS.len());
-    assert_eq!(artifacts.keys().cloned().collect::<BTreeSet<_>>(), manifest.files);
+    let captured_files = VERSIONS
+        .into_iter()
+        .flat_map(|version| CONTEXTS.map(move |context| format!("complex-{version}-{context}.cassette.json")))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(artifacts.keys().cloned().collect::<BTreeSet<_>>(), captured_files);
+    let authored_files = authored_docker_sidecars(&fixture)?;
+    assert!(captured_files.is_disjoint(&authored_files));
+    assert_eq!(
+        captured_files.union(&authored_files).cloned().collect::<BTreeSet<_>>(),
+        manifest.files
+    );
     for (file, expected) in artifacts {
         assert_eq!(
             sha256(&fixture.join(&file))?,
@@ -71,6 +81,39 @@ fn cassette_manifest_hashes_pin_every_reviewed_artifact() -> Result<(), Box<dyn 
         );
     }
     Ok(())
+}
+
+fn authored_docker_sidecars(fixture: &Path) -> Result<BTreeSet<String>, Box<dyn Error>> {
+    let scenario: toml::Value = toml::from_str(&fs::read_to_string(fixture.join("scenario.toml"))?)?;
+    let routes = scenario
+        .get("evidence")
+        .and_then(toml::Value::as_array)
+        .ok_or("cassette scenario has no evidence routes")?;
+    let mut files = BTreeSet::new();
+    let mut count = 0;
+    for route in routes
+        .iter()
+        .filter(|route| route.get("exporter").and_then(toml::Value::as_str) == Some("docker"))
+    {
+        count += 1;
+        for field in ["diagnostics-file", "allowed-losses-file"] {
+            let file = route
+                .get(field)
+                .and_then(toml::Value::as_str)
+                .ok_or("Docker cassette route lacks an authored sidecar")?;
+            let path = Path::new(file);
+            if !path.starts_with("expectations")
+                || !path
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err("Docker cassette sidecar must stay within expectations".into());
+            }
+            files.insert(file.to_owned());
+        }
+    }
+    assert_eq!(count, VERSIONS.len() * CONTEXTS.len());
+    Ok(files)
 }
 
 #[test]

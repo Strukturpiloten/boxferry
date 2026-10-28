@@ -1,7 +1,7 @@
 schema = 1
 id = "compose-to-quadlet-core"
 source-capabilities = ["compose"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = ['{"channel": "stable"}', "literal%h"]
 
 [application]
@@ -158,4 +158,39 @@ allowed-losses = [
   { rule = "BFP0007", subject = "services.web.read_only_root_filesystem", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.host_mappings", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.ports", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+environment-values = "include"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The three independently authored relative bind sources are invalid for the Docker target's absolute-path mount contract. Unsupported user namespace, host mappings and unresolved environment intent also prevent a complete standalone request; the authored public alias is not protected."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = [
+  "BFD0006|services.web.user_namespace",
+  "BFD0006|services.web.host_mappings",
+  "BFD0006|services.web.environment.FROM_HOST",
+  "BFD0006|services.web.container",
+  "BFD0007|services.web.mounts.1",
+  "BFD0007|services.web.mounts.2",
+  "BFD0007|services.web.mounts.3",
+]
+allowed-losses = [
+  { rule = "BFD0006", subject = "services.web.user_namespace", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.host_mappings", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.environment.FROM_HOST", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.web.mounts.1", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.web.mounts.2", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.web.mounts.3", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
 ]

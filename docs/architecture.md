@@ -14,8 +14,8 @@ native source → Lens → importer → Application → exporter → native cand
                         authorized reviewable output
 ```
 
-Every route follows this pipeline, including Compose-to-Compose, Quadlet-to-Quadlet, and
-Podman-to-Podman. A native parser or renderer cannot bypass the neutral model.
+Every route follows this pipeline, including Compose-to-Compose, Docker-to-Docker,
+Quadlet-to-Quadlet, and Podman-to-Podman. A native parser or renderer cannot bypass the neutral model.
 
 1. Parse a document or explicitly acquire a read-only inventory.
 2. Import native intent and findings into the neutral `Application`.
@@ -34,6 +34,7 @@ public orchestration APIs available to embedded callers.
 | `boxferry-model`         | Format-neutral intent, provenance, and protected values              |
 | `boxferry-engine`        | Adapter traits, planning, target profiles, outcomes, and loss policy |
 | `boxferry-compose`       | Compose ↔ neutral semantic mapping                                   |
+| `boxferry-docker`        | DockerLens observations ↔ neutral intent ↔ inert Docker plans        |
 | `boxferry-podman`        | PodmanLens ↔ neutral semantic mapping                                |
 | `boxferry-quadlet`       | QuadletLens ↔ neutral semantic mapping                               |
 | `boxferry`               | Facade, CLI, reports, presentation, and create-new file boundary     |
@@ -91,9 +92,44 @@ describe desired operations and cannot be used as observed Podman input. BoxFerr
 the command script, but a user who runs it performs real Podman operations. Tests therefore protect
 deterministic bytes, semantic operations, findings, and redaction.
 
+Docker output is also terminal review material: `docker-plan.json` contains native inert requests,
+not observed inventory. Conditional `docker-dependencies.json` carries typed dependency decisions,
+provenance and `native_execution=false`, bound by SHA-256 to the exact plan bytes. Dependency
+conditions are manual obligations, not Engine fields or readiness execution. Review external
+resource, bind-source and destination obligations separately. POST entries inside a plan are data;
+actual acquisition uses only read-only GET requests.
+
 BoxFerry exposes no executor, invokes no generated command, starts no unit, and sends no mutating
-runtime request. Docker and Kubernetes remain deferred until independent native libraries and
-reviewed adapter contracts exist.
+runtime request. Kubernetes remains deferred.
+
+## Docker development contract
+
+The Unreleased CLI registers four inputs and four outputs, all 16 neutral routes. Default CLI
+features include all four adapters; embedded callers can disable defaults and select adapters.
+The `docker` feature itself exposes library integration without requiring the CLI. DockerLens
+owns native acquisition/decoding, types, version/context evidence, validation, planning and
+serialization; no Lens product depends on BoxFerry.
+
+`acquire_docker_source` requires an explicit application name, Unix endpoint, selector, finite
+limits and cancellation flag. The importer consumes already decoded observations. Library sources
+start with unspecified selection and conservative promotion. The CLI adds bounded local selection
+and a portable reconstruction preset, independently of the exact-default loss policy. Source
+reconstruction does not prove authorship, grant lifecycle ownership, choose a target or authorize
+sensitive artifact values. Environment, binds, public labels and resource decisions have separate
+controls described in the [Docker guide](public/guides/docker-input/).
+
+Docker targets require one exact reviewed Debian 11 or upstream profile in the chosen daemon mode;
+source/host facts never select output profiles. Required intent that is incomplete or protected can
+block the complete Docker candidate under every loss policy. A permissive policy is not a general
+secret-dropping mechanism. Docker files use owner-only/create-new publication; diagnostics and
+reports retain default redaction.
+
+[ADR 0085](decisions/0085-docker-cli-neutral-routes.md) extends the historical
+[target checkpoint](decisions/0083-bounded-docker-target-consumer-preparation.md) and
+[source library checkpoint](decisions/0084-bounded-docker-source-adapter.md). Source tests,
+native Lens evidence, exact-pair admission, actual BoxFerry consumer/application acceptance and
+normal registry/package/API checks remain distinct. Source integration alone establishes none of
+the latter qualifications.
 
 ## Change checklist
 

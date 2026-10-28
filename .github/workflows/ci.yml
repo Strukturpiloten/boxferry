@@ -114,6 +114,7 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
+          cargo ci-docker
           cargo ci-podman
           cargo ci-quadlet
       - name: Check repository policies
@@ -245,8 +246,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Test release metadata contexts and structural checks
+        run: bash scripts/test-release-metadata.sh
       - name: Validate current-version release metadata and changelog
-        run: bash scripts/validate-release-metadata.sh
+        env:
+          RELEASE_METADATA_MODE: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-plz-') && '--release' || '--development' }}
+        run: bash scripts/validate-release-metadata.sh "${RELEASE_METADATA_MODE}"
 
   semver-release-type:
     name: SemVer release type
@@ -299,6 +304,7 @@ jobs:
           - boxferry-model
           - boxferry-engine
           - boxferry-compose
+          - boxferry-docker
           - boxferry-podman
           - boxferry-quadlet
           - boxferry

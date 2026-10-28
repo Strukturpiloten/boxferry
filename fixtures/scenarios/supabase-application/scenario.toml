@@ -1,7 +1,7 @@
 schema = 1
 id = "supabase-application"
 source-capabilities = ["compose", "podman", "quadlet"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = ["boxferry-public-supabase-db-password"]
 
 [application]
@@ -742,3 +742,118 @@ podman-plan = { creatable-resources = ["container:auth", "container:db", "contai
   { resource = "studio-image", reference = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8", policy = "missing" },
   { resource = "supavisor-image", reference = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07", policy = "missing" },
 ], start-order = ["db", "auth", "functions", "imgproxy", "meta", "realtime", "rest", "storage", "studio", "kong", "supavisor"] }
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Reviewed create requests retain loopback publication and authored resources; the dependency sidecar cannot execute the required start relationships."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["deno-cache", "pgdata", "storage"]
+diagnostics-file = "expected.compose-docker.diagnostics"
+allowed-losses-file = "expected.compose-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:auth:db", "dependency:functions:db", "dependency:kong:auth", "dependency:kong:functions", "dependency:kong:realtime", "dependency:kong:rest", "dependency:kong:storage", "dependency:kong:studio", "dependency:meta:db", "dependency:realtime:db", "dependency:rest:db", "dependency:storage:db", "dependency:storage:imgproxy", "dependency:storage:rest", "dependency:studio:meta", "dependency:supavisor:db"]
+docker-dependencies = [
+  { service = "auth", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "functions", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "auth", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "functions", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "realtime", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "rest", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "storage", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "studio", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "meta", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "realtime", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "rest", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "imgproxy", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "rest", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "studio", dependency = "meta", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "supavisor", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+]
+
+[[evidence]]
+input = "quadlet"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Reviewed create requests retain loopback publication and authored resources; the dependency sidecar cannot execute the required start relationships."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["deno-cache", "pgdata", "storage"]
+diagnostics-file = "expected.quadlet-docker.diagnostics"
+allowed-losses-file = "expected.quadlet-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:auth:db", "dependency:functions:db", "dependency:kong:auth", "dependency:kong:functions", "dependency:kong:realtime", "dependency:kong:rest", "dependency:kong:storage", "dependency:kong:studio", "dependency:meta:db", "dependency:realtime:db", "dependency:rest:db", "dependency:storage:db", "dependency:storage:imgproxy", "dependency:storage:rest", "dependency:studio:meta", "dependency:supavisor:db"]
+docker-dependencies = [
+  { service = "auth", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "functions", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "auth", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "functions", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "realtime", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "rest", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "storage", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "studio", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "meta", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "realtime", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "rest", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "imgproxy", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "rest", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "studio", dependency = "meta", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "supavisor", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+]
+
+[[evidence]]
+input = "podman"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Reviewed create requests retain loopback publication and authored resources; the dependency sidecar cannot execute the required start relationships."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["deno-cache", "pgdata", "storage"]
+diagnostics-file = "expected.podman-docker.diagnostics"
+allowed-losses-file = "expected.podman-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:auth:db", "dependency:functions:db", "dependency:kong:auth", "dependency:kong:functions", "dependency:kong:realtime", "dependency:kong:rest", "dependency:kong:storage", "dependency:kong:studio", "dependency:meta:db", "dependency:realtime:db", "dependency:rest:db", "dependency:storage:db", "dependency:storage:imgproxy", "dependency:storage:rest", "dependency:studio:meta", "dependency:supavisor:db"]
+docker-dependencies = [
+  { service = "auth", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "functions", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "auth", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "functions", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "realtime", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "rest", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "storage", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "kong", dependency = "studio", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "meta", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "realtime", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "rest", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "imgproxy", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "storage", dependency = "rest", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "studio", dependency = "meta", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "supavisor", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+]

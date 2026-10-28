@@ -21,12 +21,18 @@ const FIXTURE_SUITES: &[&str] = &[
     "real-world",
 ];
 
-const FORMAT_ADAPTER_PACKAGES: &[&str] = &["boxferry-compose", "boxferry-podman", "boxferry-quadlet"];
+const FORMAT_ADAPTER_PACKAGES: &[&str] = &[
+    "boxferry-compose",
+    "boxferry-docker",
+    "boxferry-podman",
+    "boxferry-quadlet",
+];
 
 const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
+    "boxferry-docker",
     "boxferry-podman",
     "boxferry-quadlet",
     "boxferry",
@@ -6319,6 +6325,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-check",
         "cargo ci-core",
         "cargo ci-compose",
+        "cargo ci-docker",
         "cargo ci-podman",
         "cargo ci-quadlet",
         "cargo ci-policy",
@@ -6417,6 +6424,7 @@ const REVIEWED_PRETTIER_EXCLUSIONS: &[&str] = &[
     "/CHANGELOG.md",
     "fixtures/**/expected-podman.json",
     "fixtures/**/expected-*-podman.json",
+    "fixtures/**/expected-docker-plan.json",
     "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
     "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
     "fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json",
@@ -7217,7 +7225,7 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         ),
         (
             ".github/workflows/release.yml",
-            "bash scripts/validate-release-metadata.sh",
+            "bash scripts/validate-release-metadata.sh --release",
         ),
     ] {
         let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
@@ -7243,19 +7251,6 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         return Err("release workflow must not duplicate shared release metadata validation".to_owned());
     }
 
-    let tests = fs::read_to_string(root.join("scripts/test-release-metadata.sh"))
-        .map_err(|error| format!("failed to read release metadata policy tests: {error}"))?;
-    for required in [
-        "non-empty Unreleased during release preparation",
-        "newest release differs from workspace version",
-        "duplicate current-version release section",
-        "duplicate Unreleased section",
-    ] {
-        if !tests.contains(required) {
-            return Err(format!("release metadata policy tests are missing {required}"));
-        }
-    }
-
     for (path, required) in [
         (
             "docs/releasing.md",
@@ -7270,6 +7265,82 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn release_metadata_policy_tests_cover_structural_and_context_failures() -> Result<(), String> {
+    let root = repository_root();
+    let tests = fs::read_to_string(root.join("scripts/test-release-metadata.sh"))
+        .map_err(|error| format!("failed to read release metadata policy tests: {error}"))?;
+    for required in [
+        "non-empty Unreleased during release preparation",
+        "newest release differs from workspace version",
+        "duplicate current-version release section",
+        "duplicate Unreleased section",
+        "default release mode rejects pending notes for any tag state",
+        "Invalid validator arguments were not rejected",
+        "Empty validator argument was not rejected",
+        "missing Unreleased section",
+        "missing current-version release section",
+        "missing or malformed release date",
+        "empty numbered release notes",
+        "unusable numbered release notes",
+        "missing changelog",
+        "Invalid package metadata was not rejected",
+    ] {
+        if !tests.contains(required) {
+            return Err(format!("release metadata policy tests are missing {required}"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn release_metadata_context_selection_is_explicit() -> Result<(), String> {
+    let root = repository_root();
+    let script = fs::read_to_string(root.join("scripts/validate-release-metadata.sh"))
+        .map_err(|error| format!("failed to read release metadata validator: {error}"))?;
+    for required in [
+        "case \"${1---release}\" in",
+        "--development) validation_mode=development",
+        "--release) validation_mode=release",
+        "if (($# > 1))",
+        "if [[ \"${validation_mode}\" == \"release\" ]]",
+    ] {
+        if !script.contains(required) {
+            return Err(format!(
+                "release metadata validator missing explicit context `{required}`"
+            ));
+        }
+    }
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|error| format!("failed to read CI workflow: {error}"))?;
+    let release_metadata_job = ci
+        .split_once("  release-metadata:\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n  semver-release-type:"))
+        .map(|(job, _)| job)
+        .ok_or_else(|| "CI release-metadata job boundary missing".to_owned())?;
+    for required in [
+        "run: bash scripts/test-release-metadata.sh",
+        "RELEASE_METADATA_MODE: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-plz-') && '--release' || '--development' }}",
+        "run: bash scripts/validate-release-metadata.sh \"${RELEASE_METADATA_MODE}\"",
+    ] {
+        if !release_metadata_job.contains(required) {
+            return Err(format!(
+                "CI release-metadata job missing safe context selection `{required}`"
+            ));
+        }
+    }
+    if script.contains("git describe") || script.contains("latest_tag") {
+        return Err("release metadata context must be explicit rather than inferred from tags".to_owned());
+    }
+    let check_all = fs::read_to_string(root.join("scripts/check-all.sh"))
+        .map_err(|error| format!("failed to read complete gate: {error}"))?;
+    if !check_all.contains("bash scripts/validate-release-metadata.sh --development") {
+        return Err("complete development gate must select development metadata validation".to_owned());
+    }
     Ok(())
 }
 
@@ -7707,7 +7778,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .as_array()
         .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
     if packages.len() != PUBLISHED_PACKAGES.len() {
-        return Err("release-plz.toml must configure all six lockstep packages".to_owned());
+        return Err("release-plz.toml must configure all seven lockstep packages".to_owned());
     }
     for package in PUBLISHED_PACKAGES {
         let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
@@ -7722,7 +7793,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
     if facade["changelog_update"].as_bool() != Some(true)
         || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
-        || facade["changelog_include"].as_array().map(Vec::len) != Some(5)
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(PUBLISHED_PACKAGES.len() - 1)
     {
         return Err("the facade must aggregate all component changes into the root changelog".to_owned());
     }
@@ -8151,6 +8222,7 @@ fn validate_first_party_release_age(renovate: &serde_json::Value) -> Result<(), 
         "boxferry-model",
         "boxferry-engine",
         "boxferry-compose",
+        "boxferry-docker",
         "boxferry-podman",
         "boxferry-quadlet",
         "compose-lens",
@@ -9738,14 +9810,111 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
 }
 
 #[test]
-fn deferred_docker_and_runtime_namespaces_are_not_published_by_the_current_product() {
+fn docker_source_and_target_namespaces_are_bounded_and_runtime_namespace_remains_deferred() {
+    let docker: Vec<_> = boxferry_engine::RULES
+        .iter()
+        .filter(|rule| rule.code().starts_with("BFD"))
+        .map(|rule| (rule.code(), rule.owner()))
+        .collect();
+    assert_eq!(
+        docker,
+        [
+            ("BFD0001", "Docker source adapter"),
+            ("BFD0002", "Docker source adapter"),
+            ("BFD0003", "Docker source adapter"),
+            ("BFD0004", "Docker source adapter"),
+            ("BFD0005", "Docker target adapter"),
+            ("BFD0006", "Docker target adapter"),
+            ("BFD0007", "Docker target adapter"),
+        ]
+    );
     for rule in boxferry_engine::RULES {
         assert!(
-            !matches!(rule.code().get(..3), Some("BFD" | "BFR")),
-            "deferred Docker or runtime rule namespace must not remain published: {}",
+            !rule.code().starts_with("BFR"),
+            "deferred runtime rule namespace must not remain published: {}",
             rule.code()
         );
     }
+}
+
+#[test]
+fn docker_cli_feature_wiring_preserves_explicit_embedded_adapter_selection() -> Result<(), String> {
+    let root = repository_root();
+    let read_toml = |path: &Path| -> Result<toml::Value, String> {
+        let text = fs::read_to_string(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&text).map_err(|error| format!("invalid {}: {error}", path.display()))
+    };
+    let manifest = read_toml(&root.join("crates/boxferry/Cargo.toml"))?;
+    let features = manifest["features"].as_table().ok_or("facade features missing")?;
+    assert_eq!(features["docker"].as_array().map(Vec::len), Some(1));
+    assert_eq!(features["docker"][0].as_str(), Some("dep:boxferry-docker"));
+    let defaults = manifest["features"]["default"].as_array().ok_or("defaults missing")?;
+    assert_eq!(
+        defaults.iter().map(toml::Value::as_str).collect::<Vec<_>>(),
+        [
+            Some("cli"),
+            Some("compose"),
+            Some("docker"),
+            Some("podman"),
+            Some("quadlet")
+        ]
+    );
+    for binary in manifest["bin"].as_array().ok_or("CLI registration missing")? {
+        let required = binary["required-features"]
+            .as_array()
+            .ok_or("CLI feature boundary missing")?;
+        assert_eq!(
+            required, defaults,
+            "the CLI must require every semantic adapter explicitly"
+        );
+    }
+    assert_eq!(
+        manifest["dependencies"]["boxferry-docker"]["optional"].as_bool(),
+        Some(true)
+    );
+    let aliases = read_toml(&root.join(".cargo/config.toml"))?;
+    assert_eq!(
+        aliases["alias"]["ci-docker"].as_str(),
+        Some("check --locked --package boxferry --all-targets --no-default-features --features docker")
+    );
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).map_err(|error| error.to_string())?;
+    assert!(ci.contains("cargo ci-docker"));
+    let facade = fs::read_to_string(root.join("crates/boxferry/src/lib.rs")).map_err(|error| error.to_string())?;
+    for public_api in ["DockerImporter", "DockerSource", "acquire_docker_source"] {
+        assert!(
+            facade.contains(public_api),
+            "Docker CLI must use the public source API {public_api}"
+        );
+    }
+    assert!(facade.contains("endpoint: &docker::docker_lens::acquisition::Endpoint"));
+    assert!(facade.contains("selector: docker::docker_lens::acquisition::Selector"));
+    assert!(facade.contains("limits: docker::docker_lens::acquisition::Limits"));
+    assert!(facade.contains("cancelled: &std::sync::atomic::AtomicBool"));
+    assert!(facade.contains("docker::docker_lens::acquisition::acquire(endpoint, selector, limits, cancelled)?"));
+    assert!(facade.contains("docker::docker_lens::decoder::decode_capture(&capture)?"));
+    let routes = fs::read_to_string(root.join("crates/boxferry/src/route.rs")).map_err(|error| error.to_string())?;
+    assert!(routes.contains("Docker => \"docker\""));
+    assert!(routes.contains("DockerExactProfile"));
+    for module in ["import.rs", "source.rs", "resource_decisions.rs", "public_labels.rs"] {
+        assert!(root.join("crates/boxferry-docker/src").join(module).is_file());
+    }
+    let source =
+        fs::read_to_string(root.join("crates/boxferry-docker/src/source.rs")).map_err(|error| error.to_string())?;
+    assert!(source.contains("selection: DockerSelection::Unspecified"));
+    assert!(source.contains("promotion_policy: DockerPromotionPolicy::conservative()"));
+    let importer =
+        fs::read_to_string(root.join("crates/boxferry-docker/src/import.rs")).map_err(|error| error.to_string())?;
+    assert!(importer.contains("impl ImportAdapter for DockerImporter"));
+    assert!(importer.contains("field!(\"runtime_ports\", container.runtime_ports)"));
+    assert!(importer.contains("fn validate_public_label_decisions"));
+    assert!(importer.contains("fn validate_resource_decisions"));
+    for forbidden in ["std::os::unix", "std::process::Command", "acquisition::acquire("] {
+        assert!(
+            !importer.contains(forbidden),
+            "semantic importer must not acquire or execute: {forbidden}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

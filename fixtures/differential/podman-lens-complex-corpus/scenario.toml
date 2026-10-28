@@ -1,7 +1,7 @@
 schema = 1
 id = "podman-lens-complex-corpus"
 source-capabilities = ["podman"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = [
   "COMPLEX_PROTECTED_VALUE_NEVER_PRINT",
   "COMPLEX_DB_PROTECTED_VALUE",
@@ -1598,6 +1598,7 @@ native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
 diagnostics-file = "expectations/route-6-any-quadlet.diagnostics"
+
 allowed-losses-file = "expectations/route-6-any-quadlet.losses.tsv"
 semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
 reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
@@ -1652,3 +1653,242 @@ image-operations = [
   { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
 ]
 start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "podman-5-4-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-54-rootful-docker.diagnostics"
+allowed-losses-file = "expectations/route-54-rootful-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-4-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-54-rootless-docker.diagnostics"
+allowed-losses-file = "expectations/route-54-rootless-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-5-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootful-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-5-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootless-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-6-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootful-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-6-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootless-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-7-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootful-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-7-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootless-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-8-6-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootful-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-5-8-6-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-55-rootless-docker.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-6-0-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-6-any-docker.diagnostics"
+allowed-losses-file = "expectations/route-6-any-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-6-0-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-6-any-docker.diagnostics"
+allowed-losses-file = "expectations/route-6-any-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-6-1-0-rootful"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-6-any-docker.diagnostics"
+allowed-losses-file = "expectations/route-6-any-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "podman-6-1-0-rootless"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping rejects configured label constraints on external app-net and configured database DNS options/search. Observer cannot attach to the unrepresented network; unsafe services block the complete artifact before native planning. Required uncertain groups/secrets also remain unsupported, not migration success."
+artifacts = []
+diagnostics-file = "expectations/route-6-any-docker.diagnostics"
+allowed-losses-file = "expectations/route-6-any-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

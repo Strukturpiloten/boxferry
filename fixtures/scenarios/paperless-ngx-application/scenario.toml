@@ -1,7 +1,7 @@
 schema = 1
 id = "paperless-ngx-application"
 source-capabilities = ["compose", "podman", "quadlet"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = [
   "boxferry-public-paperless-db-password-canary",
   "boxferry-public-paperless-secret-key-canary",
@@ -444,3 +444,82 @@ podman-plan = { creatable-resources = ["container:broker", "container:db", "cont
   { resource = "db-image", reference = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2", policy = "missing" },
   { resource = "webserver-image", reference = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a", policy = "missing" },
 ], start-order = ["broker", "db", "webserver"] }
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "approximate"
+outcome = "known-migration-gap"
+reason = "Docker create requests retain the authored resource fields, but the dependency sidecar is review-only and cannot execute start order."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["consume", "data", "export", "media", "pgdata", "redisdata"]
+diagnostics = ["BFD0006|services.webserver.dependencies.0", "BFD0006|services.webserver.dependencies.1"]
+allowed-losses = [
+  { rule = "BFD0006", subject = "services.webserver.dependencies.0", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.webserver.dependencies.1", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db"]
+docker-dependencies = [
+  { service = "webserver", dependency = "broker", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "webserver", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+]
+
+[[evidence]]
+input = "quadlet"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "approximate"
+outcome = "known-migration-gap"
+reason = "Docker create requests retain the authored resource fields, but the dependency sidecar is review-only and cannot execute start order."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["consume", "data", "export", "media", "pgdata", "redisdata"]
+diagnostics = ["BFD0006|services.webserver.dependencies.0", "BFD0006|services.webserver.dependencies.1"]
+allowed-losses = [
+  { rule = "BFD0006", subject = "services.webserver.dependencies.0", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.webserver.dependencies.1", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db"]
+docker-dependencies = [
+  { service = "webserver", dependency = "broker", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+  { service = "webserver", dependency = "db", condition = "started", condition-explicit = true, required = true, required-explicit = true, restart = false, restart-explicit = false },
+]
+
+[[evidence]]
+input = "podman"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Docker create requests retain the authored resource fields, but the dependency sidecar is review-only and cannot execute start order."
+artifacts = ["docker-plan.json", "docker-dependencies.json"]
+docker-empty-volume-labels = ["consume", "data", "export", "media", "pgdata", "redisdata"]
+diagnostics-file = "expected.podman-docker.diagnostics"
+allowed-losses-file = "expected.podman-docker.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db"]
+docker-dependencies = [
+  { service = "webserver", dependency = "broker", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+  { service = "webserver", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+]

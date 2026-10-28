@@ -73,6 +73,13 @@ pub enum RuleId {
     QuadletNativeFailure = 5_001_104,
     PodmanStateReconstructed = 4_000_009,
     QuadletExternalEnvironmentUnverified = 5_000_015,
+    DockerSourceInvalid = 2_000_001,
+    DockerInputUnsupported = 2_000_002,
+    DockerStateReconstructed = 2_000_003,
+    DockerInputApproximation = 2_000_004,
+    DockerTargetInvalid = 2_000_005,
+    DockerOutputUnsupported = 2_000_006,
+    DockerPlanningFailed = 2_000_007,
 }
 
 /// Immutable metadata shared by human, JSON, and support-bundle presentation.
@@ -116,6 +123,13 @@ impl DiagnosticRule {
     pub fn owner(self) -> &'static str {
         match self.code.as_bytes().get(..3) {
             Some(b"BFC") => "Compose adapter",
+            Some(b"BFD") => match self.id {
+                RuleId::DockerSourceInvalid
+                | RuleId::DockerInputUnsupported
+                | RuleId::DockerStateReconstructed
+                | RuleId::DockerInputApproximation => "Docker source adapter",
+                _ => "Docker target adapter",
+            },
             Some(b"BFO") => "BoxFerry orchestration",
             Some(b"BFP") => "Podman adapter",
             Some(b"BFQ") => "Quadlet adapter",
@@ -295,6 +309,62 @@ pub const RULES: &[DiagnosticRule] = &[
         Note,
         "ComposeLens reported native Compose information.",
         "Review the retained source code when more context is needed."
+    ),
+    rule!(
+        DockerSourceInvalid,
+        "BFD0001",
+        "docker-source-invalid",
+        Error,
+        "A selected Docker observation cannot be mapped safely to neutral intent.",
+        "Correct the selected source or inspect the reported native field before retrying."
+    ),
+    rule!(
+        DockerInputUnsupported,
+        "BFD0002",
+        "docker-input-unsupported",
+        Warning,
+        "A Docker observation remains evidence because its portable intent is unproved or unmapped.",
+        "Review and author the affected field before accepting a target conversion."
+    ),
+    rule!(
+        DockerStateReconstructed,
+        "BFD0003",
+        "docker-state-reconstructed",
+        Note,
+        "A reviewed effective Docker observation was reconstructed as a current-state candidate, not proven authorship.",
+        "Review the original authored-versus-default distinction before treating the candidate as maintained intent."
+    ),
+    rule!(
+        DockerInputApproximation,
+        "BFD0004",
+        "docker-input-approximation",
+        Warning,
+        "A Docker source decision requires an explicit assumption or may change behavior.",
+        "Review the reported source field and accept or repair the approximation before target conversion."
+    ),
+    rule!(
+        DockerTargetInvalid,
+        "BFD0005",
+        "docker-target-invalid",
+        Error,
+        "The Docker target does not match an exact reviewed native profile or the requested version range.",
+        "Select one DockerLens reviewed target profile and a compatible BoxFerry version range."
+    ),
+    rule!(
+        DockerOutputUnsupported,
+        "BFD0006",
+        "docker-output-unsupported",
+        Warning,
+        "The Docker target cannot represent this neutral application field under the reviewed contract.",
+        "Review the subject and author a supported standalone shape, or explicitly allow partial loss."
+    ),
+    rule!(
+        DockerPlanningFailed,
+        "BFD0007",
+        "docker-planning-failed",
+        Error,
+        "DockerLens rejected the typed standalone target or inert request rendering.",
+        "Correct the reported subject and select a reviewed native target capability profile."
     ),
     rule!(
         OrchestrationFailed,
@@ -680,51 +750,58 @@ impl RuleId {
             Self::ComposeNativeError => &RULES[14],
             Self::ComposeNativeWarning => &RULES[15],
             Self::ComposeNativeNote => &RULES[16],
-            Self::OrchestrationFailed => &RULES[17],
-            Self::InputReadFailed => &RULES[18],
-            Self::ComposeProjectRootInvalid => &RULES[19],
-            Self::PodmanTargetSelectionInvalid => &RULES[20],
-            Self::InterpolationInputInvalid => &RULES[21],
-            Self::ComposeLoadFailed => &RULES[22],
-            Self::ConversionFailed => &RULES[23],
-            Self::QuadletParseFailed => &RULES[24],
-            Self::OutputDirectoryNotEmpty => &RULES[25],
-            Self::OutputPathInvalid => &RULES[26],
-            Self::OutputWriteFailed => &RULES[27],
-            Self::ReportWriteFailed => &RULES[28],
-            Self::SupportBundleWriteFailed => &RULES[29],
-            Self::PodmanSourceInvalid => &RULES[30],
-            Self::PodmanInputUnmodelled => &RULES[31],
-            Self::PodmanPromotionRequired => &RULES[32],
-            Self::PodmanIdentityConflict => &RULES[33],
-            Self::PodmanSecretGrantIncomplete => &RULES[34],
-            Self::PodmanTargetInvalid => &RULES[35],
-            Self::PodmanOutputUnsupported => &RULES[36],
-            Self::PodmanPlanningFailed => &RULES[37],
-            Self::PodmanStateReconstructed => &RULES[38],
-            Self::QuadletTargetInvalid => &RULES[39],
-            Self::QuadletOpenEndedTarget => &RULES[40],
-            Self::QuadletOutputUnsupported => &RULES[41],
-            Self::QuadletValueInvalid => &RULES[42],
-            Self::QuadletGenerationFailed => &RULES[43],
-            Self::QuadletCapabilityUnavailable => &RULES[44],
-            Self::QuadletGroupingApproximation => &RULES[45],
-            Self::QuadletDependencyUnsupported => &RULES[46],
-            Self::QuadletRestartApproximation => &RULES[47],
-            Self::QuadletEnvironmentFileApproximation => &RULES[48],
-            Self::QuadletGroupingInvalid => &RULES[49],
-            Self::QuadletDependencyInvalid => &RULES[50],
-            Self::QuadletCapabilityDeprecated => &RULES[51],
-            Self::QuadletUnresolvedVariable => &RULES[52],
-            Self::QuadletSourceInvalid => &RULES[54],
-            Self::QuadletModelInvalid => &RULES[55],
-            Self::QuadletInputUnsupported => &RULES[56],
-            Self::QuadletInputApproximation => &RULES[57],
-            Self::QuadletNativeSyntax => &RULES[58],
-            Self::QuadletNativeModel => &RULES[59],
-            Self::QuadletNativeDocumentSet => &RULES[60],
-            Self::QuadletNativeFailure => &RULES[61],
-            Self::QuadletExternalEnvironmentUnverified => &RULES[53],
+            Self::DockerSourceInvalid => &RULES[17],
+            Self::DockerInputUnsupported => &RULES[18],
+            Self::DockerStateReconstructed => &RULES[19],
+            Self::DockerInputApproximation => &RULES[20],
+            Self::DockerTargetInvalid => &RULES[21],
+            Self::DockerOutputUnsupported => &RULES[22],
+            Self::DockerPlanningFailed => &RULES[23],
+            Self::OrchestrationFailed => &RULES[24],
+            Self::InputReadFailed => &RULES[25],
+            Self::ComposeProjectRootInvalid => &RULES[26],
+            Self::PodmanTargetSelectionInvalid => &RULES[27],
+            Self::InterpolationInputInvalid => &RULES[28],
+            Self::ComposeLoadFailed => &RULES[29],
+            Self::ConversionFailed => &RULES[30],
+            Self::QuadletParseFailed => &RULES[31],
+            Self::OutputDirectoryNotEmpty => &RULES[32],
+            Self::OutputPathInvalid => &RULES[33],
+            Self::OutputWriteFailed => &RULES[34],
+            Self::ReportWriteFailed => &RULES[35],
+            Self::SupportBundleWriteFailed => &RULES[36],
+            Self::PodmanSourceInvalid => &RULES[37],
+            Self::PodmanInputUnmodelled => &RULES[38],
+            Self::PodmanPromotionRequired => &RULES[39],
+            Self::PodmanIdentityConflict => &RULES[40],
+            Self::PodmanSecretGrantIncomplete => &RULES[41],
+            Self::PodmanTargetInvalid => &RULES[42],
+            Self::PodmanOutputUnsupported => &RULES[43],
+            Self::PodmanPlanningFailed => &RULES[44],
+            Self::PodmanStateReconstructed => &RULES[45],
+            Self::QuadletTargetInvalid => &RULES[46],
+            Self::QuadletOpenEndedTarget => &RULES[47],
+            Self::QuadletOutputUnsupported => &RULES[48],
+            Self::QuadletValueInvalid => &RULES[49],
+            Self::QuadletGenerationFailed => &RULES[50],
+            Self::QuadletCapabilityUnavailable => &RULES[51],
+            Self::QuadletGroupingApproximation => &RULES[52],
+            Self::QuadletDependencyUnsupported => &RULES[53],
+            Self::QuadletRestartApproximation => &RULES[54],
+            Self::QuadletEnvironmentFileApproximation => &RULES[55],
+            Self::QuadletGroupingInvalid => &RULES[56],
+            Self::QuadletDependencyInvalid => &RULES[57],
+            Self::QuadletCapabilityDeprecated => &RULES[58],
+            Self::QuadletUnresolvedVariable => &RULES[59],
+            Self::QuadletSourceInvalid => &RULES[61],
+            Self::QuadletModelInvalid => &RULES[62],
+            Self::QuadletInputUnsupported => &RULES[63],
+            Self::QuadletInputApproximation => &RULES[64],
+            Self::QuadletNativeSyntax => &RULES[65],
+            Self::QuadletNativeModel => &RULES[66],
+            Self::QuadletNativeDocumentSet => &RULES[67],
+            Self::QuadletExternalEnvironmentUnverified => &RULES[60],
+            Self::QuadletNativeFailure => &RULES[68],
         }
     }
 }
@@ -810,71 +887,77 @@ mod tests {
 
     #[test]
     fn historical_catalogue_relative_order_remains_stable() {
+        // New rules may be inserted into the code-sorted catalogue. Preserve every
+        // historical rule and its relative order while allowing those additions.
+        let expected = [
+            RuleId::ComposeModelInvalid,
+            RuleId::ComposeProfileRequired,
+            RuleId::ComposeProfileMismatch,
+            RuleId::ComposeIntentUnsupported,
+            RuleId::ComposeValueInvalid,
+            RuleId::ComposeTargetInvalid,
+            RuleId::ComposeOutputUnsupported,
+            RuleId::ComposeGenerationFailed,
+            RuleId::ComposeCompatibilityConstraint,
+            RuleId::ComposeUnsetVariable,
+            RuleId::ComposeRequiredVariable,
+            RuleId::ComposeInterpolationInvalid,
+            RuleId::ComposeInterpolationNestingLimit,
+            RuleId::ComposeUnresolvedVariable,
+            RuleId::ComposeNativeError,
+            RuleId::ComposeNativeWarning,
+            RuleId::ComposeNativeNote,
+            RuleId::OrchestrationFailed,
+            RuleId::InputReadFailed,
+            RuleId::ComposeProjectRootInvalid,
+            RuleId::PodmanTargetSelectionInvalid,
+            RuleId::InterpolationInputInvalid,
+            RuleId::ComposeLoadFailed,
+            RuleId::ConversionFailed,
+            RuleId::QuadletParseFailed,
+            RuleId::OutputDirectoryNotEmpty,
+            RuleId::OutputPathInvalid,
+            RuleId::OutputWriteFailed,
+            RuleId::ReportWriteFailed,
+            RuleId::SupportBundleWriteFailed,
+            RuleId::PodmanSourceInvalid,
+            RuleId::PodmanInputUnmodelled,
+            RuleId::PodmanPromotionRequired,
+            RuleId::PodmanIdentityConflict,
+            RuleId::PodmanSecretGrantIncomplete,
+            RuleId::PodmanTargetInvalid,
+            RuleId::PodmanOutputUnsupported,
+            RuleId::PodmanPlanningFailed,
+            RuleId::PodmanStateReconstructed,
+            RuleId::QuadletTargetInvalid,
+            RuleId::QuadletOpenEndedTarget,
+            RuleId::QuadletOutputUnsupported,
+            RuleId::QuadletValueInvalid,
+            RuleId::QuadletGenerationFailed,
+            RuleId::QuadletCapabilityUnavailable,
+            RuleId::QuadletGroupingApproximation,
+            RuleId::QuadletDependencyUnsupported,
+            RuleId::QuadletRestartApproximation,
+            RuleId::QuadletEnvironmentFileApproximation,
+            RuleId::QuadletGroupingInvalid,
+            RuleId::QuadletDependencyInvalid,
+            RuleId::QuadletCapabilityDeprecated,
+            RuleId::QuadletUnresolvedVariable,
+            RuleId::QuadletSourceInvalid,
+            RuleId::QuadletModelInvalid,
+            RuleId::QuadletInputUnsupported,
+            RuleId::QuadletInputApproximation,
+            RuleId::QuadletNativeSyntax,
+            RuleId::QuadletNativeModel,
+            RuleId::QuadletNativeDocumentSet,
+            RuleId::QuadletNativeFailure,
+        ];
         let historical: Vec<_> = RULES
             .iter()
-            .filter(|rule| rule.id() != RuleId::QuadletExternalEnvironmentUnverified)
+            .map(|rule| rule.id())
+            .filter(|id| expected.contains(id))
             .collect();
-        assert_eq!(historical[0].id(), RuleId::ComposeModelInvalid);
-        assert_eq!(historical[1].id(), RuleId::ComposeProfileRequired);
-        assert_eq!(historical[2].id(), RuleId::ComposeProfileMismatch);
-        assert_eq!(historical[3].id(), RuleId::ComposeIntentUnsupported);
-        assert_eq!(historical[4].id(), RuleId::ComposeValueInvalid);
-        assert_eq!(historical[5].id(), RuleId::ComposeTargetInvalid);
-        assert_eq!(historical[6].id(), RuleId::ComposeOutputUnsupported);
-        assert_eq!(historical[7].id(), RuleId::ComposeGenerationFailed);
-        assert_eq!(historical[8].id(), RuleId::ComposeCompatibilityConstraint);
-        assert_eq!(historical[9].id(), RuleId::ComposeUnsetVariable);
-        assert_eq!(historical[10].id(), RuleId::ComposeRequiredVariable);
-        assert_eq!(historical[11].id(), RuleId::ComposeInterpolationInvalid);
-        assert_eq!(historical[12].id(), RuleId::ComposeInterpolationNestingLimit);
-        assert_eq!(historical[13].id(), RuleId::ComposeUnresolvedVariable);
-        assert_eq!(historical[14].id(), RuleId::ComposeNativeError);
-        assert_eq!(historical[15].id(), RuleId::ComposeNativeWarning);
-        assert_eq!(historical[16].id(), RuleId::ComposeNativeNote);
-        assert_eq!(historical[17].id(), RuleId::OrchestrationFailed);
-        assert_eq!(historical[18].id(), RuleId::InputReadFailed);
-        assert_eq!(historical[19].id(), RuleId::ComposeProjectRootInvalid);
-        assert_eq!(historical[20].id(), RuleId::PodmanTargetSelectionInvalid);
-        assert_eq!(historical[21].id(), RuleId::InterpolationInputInvalid);
-        assert_eq!(historical[22].id(), RuleId::ComposeLoadFailed);
-        assert_eq!(historical[23].id(), RuleId::ConversionFailed);
-        assert_eq!(historical[24].id(), RuleId::QuadletParseFailed);
-        assert_eq!(historical[25].id(), RuleId::OutputDirectoryNotEmpty);
-        assert_eq!(historical[26].id(), RuleId::OutputPathInvalid);
-        assert_eq!(historical[27].id(), RuleId::OutputWriteFailed);
-        assert_eq!(historical[28].id(), RuleId::ReportWriteFailed);
-        assert_eq!(historical[29].id(), RuleId::SupportBundleWriteFailed);
-        assert_eq!(historical[30].id(), RuleId::PodmanSourceInvalid);
-        assert_eq!(historical[31].id(), RuleId::PodmanInputUnmodelled);
-        assert_eq!(historical[32].id(), RuleId::PodmanPromotionRequired);
-        assert_eq!(historical[33].id(), RuleId::PodmanIdentityConflict);
-        assert_eq!(historical[34].id(), RuleId::PodmanSecretGrantIncomplete);
-        assert_eq!(historical[35].id(), RuleId::PodmanTargetInvalid);
-        assert_eq!(historical[36].id(), RuleId::PodmanOutputUnsupported);
-        assert_eq!(historical[37].id(), RuleId::PodmanPlanningFailed);
-        assert_eq!(historical[38].id(), RuleId::PodmanStateReconstructed);
-        assert_eq!(historical[39].id(), RuleId::QuadletTargetInvalid);
-        assert_eq!(historical[40].id(), RuleId::QuadletOpenEndedTarget);
-        assert_eq!(historical[41].id(), RuleId::QuadletOutputUnsupported);
-        assert_eq!(historical[42].id(), RuleId::QuadletValueInvalid);
-        assert_eq!(historical[43].id(), RuleId::QuadletGenerationFailed);
-        assert_eq!(historical[44].id(), RuleId::QuadletCapabilityUnavailable);
-        assert_eq!(historical[45].id(), RuleId::QuadletGroupingApproximation);
-        assert_eq!(historical[46].id(), RuleId::QuadletDependencyUnsupported);
-        assert_eq!(historical[47].id(), RuleId::QuadletRestartApproximation);
-        assert_eq!(historical[48].id(), RuleId::QuadletEnvironmentFileApproximation);
-        assert_eq!(historical[49].id(), RuleId::QuadletGroupingInvalid);
-        assert_eq!(historical[50].id(), RuleId::QuadletDependencyInvalid);
-        assert_eq!(historical[51].id(), RuleId::QuadletCapabilityDeprecated);
-        assert_eq!(historical[52].id(), RuleId::QuadletUnresolvedVariable);
-        assert_eq!(historical[53].id(), RuleId::QuadletSourceInvalid);
-        assert_eq!(historical[54].id(), RuleId::QuadletModelInvalid);
-        assert_eq!(historical[55].id(), RuleId::QuadletInputUnsupported);
-        assert_eq!(historical[56].id(), RuleId::QuadletInputApproximation);
-        assert_eq!(historical[57].id(), RuleId::QuadletNativeSyntax);
-        assert_eq!(historical[58].id(), RuleId::QuadletNativeModel);
-        assert_eq!(historical[59].id(), RuleId::QuadletNativeDocumentSet);
-        assert_eq!(historical[60].id(), RuleId::QuadletNativeFailure);
+        assert_eq!(historical, expected);
     }
 
     #[test]
@@ -884,6 +967,68 @@ mod tests {
         assert!(help.contains("keep private alias configuration outside the generated document"));
         assert!(help.contains("Otherwise, use --loss-policy partial only when a candidate exists"));
         assert!(help.contains("omitted intent is acceptable"));
+    }
+
+    #[test]
+    fn docker_catalogue_separates_source_and_target_rules_and_preserves_existing_ids() {
+        let docker: Vec<_> = RULES.iter().filter(|rule| rule.code().starts_with("BFD")).collect();
+        assert_eq!(docker.len(), 7);
+        for (id, code, name, severity, discriminant) in [
+            (
+                RuleId::DockerSourceInvalid,
+                "BFD0001",
+                "docker-source-invalid",
+                crate::Severity::Error,
+                2_000_001,
+            ),
+            (
+                RuleId::DockerInputUnsupported,
+                "BFD0002",
+                "docker-input-unsupported",
+                crate::Severity::Warning,
+                2_000_002,
+            ),
+            (
+                RuleId::DockerStateReconstructed,
+                "BFD0003",
+                "docker-state-reconstructed",
+                crate::Severity::Note,
+                2_000_003,
+            ),
+            (
+                RuleId::DockerInputApproximation,
+                "BFD0004",
+                "docker-input-approximation",
+                crate::Severity::Warning,
+                2_000_004,
+            ),
+        ] {
+            let rule = id.definition();
+            assert_eq!(id as u32, discriminant);
+            assert_eq!(
+                (rule.code(), rule.name(), rule.default_severity()),
+                (code, name, severity)
+            );
+            assert_eq!(rule.owner(), "Docker source adapter");
+            assert_eq!(find_rule(code), Some(rule));
+            assert_eq!(find_rule(name), Some(rule));
+            assert_eq!(
+                rule.diagnostic_code().map(|value| value.as_str().to_owned()),
+                Ok(code.to_owned())
+            );
+        }
+        for (id, code, discriminant) in [
+            (RuleId::DockerTargetInvalid, "BFD0005", 2_000_005),
+            (RuleId::DockerOutputUnsupported, "BFD0006", 2_000_006),
+            (RuleId::DockerPlanningFailed, "BFD0007", 2_000_007),
+        ] {
+            assert_eq!(id.definition().code(), code);
+            assert_eq!(id.definition().owner(), "Docker target adapter");
+            assert_eq!(id as u32, discriminant);
+            assert_eq!(find_rule(code), Some(id.definition()));
+        }
+        assert_eq!(RuleId::OrchestrationFailed as u32, 3_001_000);
+        assert_eq!(RuleId::PodmanStateReconstructed as u32, 4_000_009);
     }
 
     #[test]

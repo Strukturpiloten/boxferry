@@ -301,7 +301,13 @@ fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), 
         }
         assert_artifact_contract(example, temporary.path(), &fixture_directory)?;
 
-        if example.args.first().map(String::as_str) == Some("convert") && example.args.len() >= 3 {
+        if example.args.first().map(String::as_str) == Some("convert")
+            && example.args.len() >= 3
+            && !example
+                .args
+                .iter()
+                .any(|argument| argument == "--help" || argument == "-h")
+        {
             let route = format!("{}->{}", example.args[1], example.args[2]);
             if example.expected_exit == 0 {
                 successful_routes.insert(route);
@@ -311,27 +317,34 @@ fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), 
         }
     }
 
+    assert_documented_route_coverage(&successful_routes, &failing_routes);
+    Ok(())
+}
+
+fn assert_documented_route_coverage(successful_routes: &BTreeSet<String>, failing_routes: &BTreeSet<String>) {
     let expected_routes = BTreeSet::from([
         "compose->compose".to_owned(),
+        "compose->docker".to_owned(),
         "compose->podman".to_owned(),
         "compose->quadlet".to_owned(),
         "quadlet->compose".to_owned(),
+        "quadlet->docker".to_owned(),
         "quadlet->podman".to_owned(),
         "quadlet->quadlet".to_owned(),
         "podman->compose".to_owned(),
         "podman->podman".to_owned(),
         "podman->quadlet".to_owned(),
     ]);
-    assert_eq!(successful_routes, expected_routes);
+    assert_eq!(successful_routes, &expected_routes);
     let expected_failing_routes = BTreeSet::from([
         "compose->compose".to_owned(),
+        "compose->docker".to_owned(),
         "compose->quadlet".to_owned(),
         "podman->compose".to_owned(),
         "quadlet->compose".to_owned(),
         "quadlet->quadlet".to_owned(),
     ]);
-    assert_eq!(failing_routes, expected_failing_routes);
-    Ok(())
+    assert_eq!(failing_routes, &expected_failing_routes);
 }
 
 fn prepare_bundle_fixture(bundle: &PreparedBundle, directory: &Path, fixtures: &Path) -> Result<(), Box<dyn Error>> {

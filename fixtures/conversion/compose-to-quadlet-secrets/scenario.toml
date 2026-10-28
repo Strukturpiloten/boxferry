@@ -1,7 +1,7 @@
 schema = 1
 id = "compose-to-quadlet-secrets"
 source-capabilities = ["compose"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 
 [application]
 name = "ferry-secrets"
@@ -185,4 +185,40 @@ allowed-losses = [
   { rule = "BFP0007", subject = "secrets.api-token.runtime_name", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.config_grants", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.secret_grants", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Standalone Engine create cannot represent Compose config and secret resources or their grants."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = [
+  "BFD0006|configs.settings",
+  "BFD0006|secrets.database-password",
+  "BFD0006|secrets.api-token",
+  "BFD0006|secrets.certificate",
+  "BFD0006|secrets.local-password",
+  "BFD0006|services.web.config_grants",
+  "BFD0006|services.web.secret_grants",
+  "BFD0006|services.web.container",
+]
+allowed-losses = [
+  { rule = "BFD0006", subject = "configs.settings", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "secrets.database-password", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "secrets.api-token", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "secrets.certificate", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "secrets.local-password", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.config_grants", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.secret_grants", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.web.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
 ]

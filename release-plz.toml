@@ -39,6 +39,10 @@ name = "boxferry-compose"
 version_group = "boxferry"
 
 [[package]]
+name = "boxferry-docker"
+version_group = "boxferry"
+
+[[package]]
 name = "boxferry-podman"
 version_group = "boxferry"
 
@@ -50,6 +54,7 @@ version_group = "boxferry"
 name = "boxferry"
 changelog_include = [
   "boxferry-compose",
+  "boxferry-docker",
   "boxferry-engine",
   "boxferry-model",
   "boxferry-podman",

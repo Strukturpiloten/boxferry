@@ -44,6 +44,14 @@ ContainerName=web-runtime
 Restart=no
 ```
 
+The equivalent command with explicit input selection is:
+
+<!-- boxferry-example: compose-to-quadlet-explicit -->
+
+```console
+boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output
+```
+
 ## Interpolate production values
 
 Use this service in `compose-interpolation.yaml`:

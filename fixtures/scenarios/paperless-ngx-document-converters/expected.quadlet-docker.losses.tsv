@@ -1,0 +1,6 @@
+BFD0006	services.gotenberg.command	unsupported	docker@29.8.1..29.8.1	1
+BFD0006	services.gotenberg.container	unsupported	docker@29.8.1..29.8.1	1
+BFD0006	services.webserver.dependencies.0	approximate	docker@29.8.1..29.8.1	1
+BFD0006	services.webserver.dependencies.1	approximate	docker@29.8.1..29.8.1	1
+BFD0006	services.webserver.dependencies.2	approximate	docker@29.8.1..29.8.1	1
+BFD0006	services.webserver.dependencies.3	approximate	docker@29.8.1..29.8.1	1
