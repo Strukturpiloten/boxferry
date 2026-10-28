@@ -31,6 +31,10 @@ with the Unreleased 16-route neutral CLI contract. Native/application and publis
 qualification remain separate. The separately preserved source-daemon-context proposal remains
 unadopted.
 
+[ADR 0086](0086-prepared-docker-forgejo-application-profile.md) permits prepared
+Forgejo test-only source and independently selected hermetic contracts, without
+registering the real runtime profile or changing native/application admission.
+
 | ADR                                                                   | Decision                                                                     |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | [0001](0001-project-boundaries-and-origin.md)                         | Repository boundaries, dependency direction, and from-scratch implementation |
@@ -88,6 +92,7 @@ unadopted.
 | [0083](0083-bounded-docker-target-consumer-preparation.md) | Target-only Docker library and bounded inert prerelease consumer preparation |
 | [0084](0084-bounded-docker-source-adapter.md) | Bounded Docker source library; CLI/default deferrals superseded by 0085 |
 | [0085](0085-docker-cli-neutral-routes.md) | Unreleased 16-route Docker CLI, separate consent and inert artifact publication |
+| [0086](0086-prepared-docker-forgejo-application-profile.md) | Prepared Forgejo runtime source and full-plan-only hermetic contracts; native admission unchanged |
 
 ## Superseded history
 

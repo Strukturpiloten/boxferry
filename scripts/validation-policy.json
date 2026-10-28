@@ -11,7 +11,8 @@
     "semver",
     "coverage",
     "migration-readiness",
-    "lockfile-release-age"
+    "lockfile-release-age",
+    "docker-forgejo-application"
   ],
   "profile_jobs": {
     "prose": ["documentation", "lockfile-release-age"],

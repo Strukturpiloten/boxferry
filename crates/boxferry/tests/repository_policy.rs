@@ -6954,7 +6954,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: Required CI\n    if: always()",
-        "needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n        docker-forgejo-application,\n      ]",
         "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
         "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
@@ -6974,6 +6974,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "coverage",
         "migration_readiness",
         "lockfile_release_age",
+        "docker_forgejo_application",
     ] {
         let output = format!("select_{selector}: ${{{{ steps.plan.outputs.select_{selector} }}}}");
         let condition = format!("if: needs.validation-plan.outputs.select_{selector} == 'true'");
