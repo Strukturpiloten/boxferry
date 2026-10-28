@@ -7217,7 +7217,7 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         ),
         (
             ".github/workflows/release.yml",
-            "bash scripts/validate-release-metadata.sh",
+            "bash scripts/validate-release-metadata.sh --release",
         ),
     ] {
         let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
@@ -7243,19 +7243,6 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         return Err("release workflow must not duplicate shared release metadata validation".to_owned());
     }
 
-    let tests = fs::read_to_string(root.join("scripts/test-release-metadata.sh"))
-        .map_err(|error| format!("failed to read release metadata policy tests: {error}"))?;
-    for required in [
-        "non-empty Unreleased during release preparation",
-        "newest release differs from workspace version",
-        "duplicate current-version release section",
-        "duplicate Unreleased section",
-    ] {
-        if !tests.contains(required) {
-            return Err(format!("release metadata policy tests are missing {required}"));
-        }
-    }
-
     for (path, required) in [
         (
             "docs/releasing.md",
@@ -7270,6 +7257,82 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn release_metadata_policy_tests_cover_structural_and_context_failures() -> Result<(), String> {
+    let root = repository_root();
+    let tests = fs::read_to_string(root.join("scripts/test-release-metadata.sh"))
+        .map_err(|error| format!("failed to read release metadata policy tests: {error}"))?;
+    for required in [
+        "non-empty Unreleased during release preparation",
+        "newest release differs from workspace version",
+        "duplicate current-version release section",
+        "duplicate Unreleased section",
+        "default release mode rejects pending notes for any tag state",
+        "Invalid validator arguments were not rejected",
+        "Empty validator argument was not rejected",
+        "missing Unreleased section",
+        "missing current-version release section",
+        "missing or malformed release date",
+        "empty numbered release notes",
+        "unusable numbered release notes",
+        "missing changelog",
+        "Invalid package metadata was not rejected",
+    ] {
+        if !tests.contains(required) {
+            return Err(format!("release metadata policy tests are missing {required}"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn release_metadata_context_selection_is_explicit() -> Result<(), String> {
+    let root = repository_root();
+    let script = fs::read_to_string(root.join("scripts/validate-release-metadata.sh"))
+        .map_err(|error| format!("failed to read release metadata validator: {error}"))?;
+    for required in [
+        "case \"${1---release}\" in",
+        "--development) validation_mode=development",
+        "--release) validation_mode=release",
+        "if (($# > 1))",
+        "if [[ \"${validation_mode}\" == \"release\" ]]",
+    ] {
+        if !script.contains(required) {
+            return Err(format!(
+                "release metadata validator missing explicit context `{required}`"
+            ));
+        }
+    }
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|error| format!("failed to read CI workflow: {error}"))?;
+    let release_metadata_job = ci
+        .split_once("  release-metadata:\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n  semver-release-type:"))
+        .map(|(job, _)| job)
+        .ok_or_else(|| "CI release-metadata job boundary missing".to_owned())?;
+    for required in [
+        "run: bash scripts/test-release-metadata.sh",
+        "RELEASE_METADATA_MODE: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-plz-') && '--release' || '--development' }}",
+        "run: bash scripts/validate-release-metadata.sh \"${RELEASE_METADATA_MODE}\"",
+    ] {
+        if !release_metadata_job.contains(required) {
+            return Err(format!(
+                "CI release-metadata job missing safe context selection `{required}`"
+            ));
+        }
+    }
+    if script.contains("git describe") || script.contains("latest_tag") {
+        return Err("release metadata context must be explicit rather than inferred from tags".to_owned());
+    }
+    let check_all = fs::read_to_string(root.join("scripts/check-all.sh"))
+        .map_err(|error| format!("failed to read complete gate: {error}"))?;
+    if !check_all.contains("bash scripts/validate-release-metadata.sh --development") {
+        return Err("complete development gate must select development metadata validation".to_owned());
+    }
     Ok(())
 }
 
