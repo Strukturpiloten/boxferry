@@ -3,6 +3,10 @@ name: CI
 
 on:
   workflow_call:
+    outputs:
+      release_binary_artifact:
+        description: Verified CLI archive set for the exact candidate and run.
+        value: ${{ jobs.release-binaries.outputs.release_binary_artifact }}
   push:
     branches:
       - main
@@ -20,6 +24,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-binaries:
+    name: Build and verify release binaries
+    uses: ./.github/workflows/release-binaries.yml
+
   validation-plan:
     name: Validation plan
     runs-on: ubuntu-24.04
@@ -219,6 +227,10 @@ jobs:
         run: bash scripts/check-files.sh --check
       - name: Test validation-plan regressions
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
+      - name: Test release binary archive contracts
+        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-release-binaries.py
+      - name: Test release emulator extraction
+        run: bash scripts/test-release-emulator.sh
       - name: Test application probe contracts
         run: bash scripts/test-application-probes.sh
       - name: Test executable documentation without duplicating the full Rust suite
@@ -428,6 +440,7 @@ jobs:
     if: always()
     needs:
       [
+        release-binaries,
         validation-plan,
         rust,
         msrv,
@@ -463,6 +476,27 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
+          NEEDS_JSON=$(python3 - <<'BINARY_NEEDS_PY'
+          import json
+          import os
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError("duplicate needs key")
+                  result[key] = value
+              return result
+          needs = json.loads(os.environ["NEEDS_JSON"], object_pairs_hook=unique_object)
+          if not isinstance(needs, dict):
+              raise SystemExit("needs must be an object")
+          binary = needs.get("release-binaries")
+          if not isinstance(binary, dict) or binary.get("result") != "success":
+              raise SystemExit("release-binaries must succeed")
+          del needs["release-binaries"]
+          print(json.dumps(needs, separators=(",", ":")))
+          BINARY_NEEDS_PY
+          )
+          export NEEDS_JSON
           if [[ "${EVENT_NAME}" == 'pull_request' &&
                 ( ! -f .validation-base/scripts/validation-plan.py ||
                   ! -f .validation-base/scripts/validation-policy.json ) ]]; then

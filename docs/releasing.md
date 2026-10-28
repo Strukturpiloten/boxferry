@@ -40,36 +40,28 @@ Upstream-rootless requires current-attempt verified-and-removed Box receipts; se
 
 ## Automatic release validation
 
-`Release` owns fresh current-run pre-release evidence. It runs the complete deterministic
-CI workflow and the complete conformance catalogue for the immutable candidate. CI, default-branch,
-and Release validation therefore share one complete Linux task definition, including offline
-documentation links. Ordinary pull requests may use a narrower
-change-aware plan, but every `main` push, manual CI
-dispatch, and `Release` invocation selects all deterministic jobs. A narrow PR result cannot
-authorize publication; the always-running `Required CI` gate rejects unexpected skips and missing results.
-Conformance uses the same reusable definition as
-manual diagnosis; the one-build/four-worker cap, exact-SHA/binary binding, budgets, privacy,
-cleanup, and explicit limitations remain unchanged. Failed, timed-out, cancelled, missing, or
-skipped prerequisites block the always-running release-validation result and publication.
-Historical or focused evidence cannot be substituted for the current Release run. Artifact names
-are stable within that run and replaced per task, so partial and complete retries cannot combine
-another run's evidence or deadlock on an earlier successful worker.
+Release requires fresh complete CI and catalogue evidence for one immutable candidate.
+Main pushes and manual CI also run completely; ordinary PRs may use reviewed change-aware
+selection. Required CI rejects unexpected skips and missing results.
 
-Aggregate deadline accounting uses active worker intervals, so a later retry cannot consume the
-execution budget solely through its inactive wait after retained successful jobs.
-Release evidence records each positive GitHub attempt separately; every attempt must independently
-meet the pre-release admission budget. Attempt intervals are parsed as RFC 3339 instants and must
-remain chronologically non-overlapping.
+The catalogue retains one bound binary, at most four workers, budgets, privacy, cleanup and limitations. Every non-success blocks publication, including failed, timed-out,
+cancelled, missing or skipped prerequisites. Focused or historical diagnostics cannot replace
+current-run evidence. Artifact replacement keeps partial retries within that run.
 
-[Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates common CI/release
-validation and Renovate-aware adoption across all five repositories.
-Keep thresholds and native suites repository-specific. ComposeLens owns provider conformance,
-PodmanLens owns API/replay conformance, and QuadletLens owns generator conformance; BoxFerry owns
-full application migrations. The website keeps its own check/build/deployment gate.
+Each GitHub attempt independently meets admission budgets. Deadline accounting excludes inactive
+retry waits. Attempt intervals use RFC 3339 instants and cannot overlap. See the
+[evidence contract](../fixtures/conformance/migration-readiness/README.md).
 
-Follow the [dependency-policy checklist](dependency-policy.md#workflow-changes-and-renovate-ownership)
-for every shared definition change. Updating or testing release workflows does not authorize an
-actual release or deployment.
+Reviewed PR diagnostics require both actors, exact source/target pairs, before/after rechecks
+and successful persistence ([ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md)).
+Docker consumer diagnostics additionally require staged exact-pair authorization and current-attempt
+verified-and-removed Box receipts ([ADR 0079](decisions/0079-native-test-runtime-selection.md)).
+Infrastructure alone proves neither native acceptance nor readiness
+([ADR 0078](decisions/0078-trusted-docker-consumer-validation.md)).
+
+[Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates shared CI/release
+and Renovate rollout. Preserve each repository's ownership, thresholds and native suites;
+Lens libraries remain independent of BoxFerry. Validate every consumer.
 
 ## Release notes
 
@@ -93,3 +85,18 @@ dependencies must all be available on crates.io before a dependent package is pr
 The publication helper skips package versions already visible on crates.io. After correcting an
 interrupted release, remove only the unpublished release tag and rerun the workflow from the
 corrected default branch. Never move or remove a tag belonging to a published GitHub release.
+
+## CLI binary assets
+
+The binary workflow tests six [targets](platform-support.md) at the exact revision
+and run. 64-bit lanes execute natively; i686 and ARMv7 use explicit QEMU user-mode execution.
+Version, capabilities and Compose → Quadlet → Compose checks precede packaging. Collection and
+current-run verification require every target; missing or failed evidence blocks publication.
+
+Archives contain the executable, LICENSE, README and BUILD-INFO. All archives share SHA256SUMS and attestations. Apple Developer ID signing/notarization is not implemented.
+
+Initial provenance: `docker.io/tonistiigi/binfmt:qemu-v10.2.3-68` at
+`sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0`.
+GPL-licensed QEMU is verification-only, never redistributed. The helper and Renovate own updates;
+this provenance is historical. Lens and website workflows have no CLI-asset
+consumer. Configuration grants no publication authority.

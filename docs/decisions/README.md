@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0086](0086-downloadable-cli-binaries.md) amends ADR 0024 with downloadable Linux and
+macOS client binaries and their evidence boundaries.
+
 [ADR 0082](0082-explicit-service-environment-deferral.md) defines opt-in direct references,
 explicit service execution providers, disclosure and external-unverified prerequisites.
 

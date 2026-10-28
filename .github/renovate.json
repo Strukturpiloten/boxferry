@@ -173,6 +173,16 @@
         "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes-sigs/kustomize)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
       ],
       "extractVersionTemplate": "^kustomize/v(?<version>\\d+\\.\\d+\\.\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the reviewed direct release-emulator image and digest together",
+      "managerFilePatterns": ["/^scripts/lib/release-emulator\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>docker) depName=(?<depName>[^\\s]+)\\nreadonly release_emulator_image='[^']+:(?<currentValue>qemu-v[^@']+)@(?<currentDigest>sha256:[a-f0-9]{64})'"
+      ],
+      "versioningTemplate": "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\nreadonly release_emulator_image='{{{depName}}}:{{{newValue}}}@{{{newDigest}}}'"
     }
   ],
   "packageRules": [
@@ -349,6 +359,15 @@
       "prBodyNotes": [
         "Review both Linux architectures and update their SHA-256 checksums from official release assets. Rebuild the Dev Container and validate every shared consumer; do not change historical compatibility profiles."
       ]
+    },
+    {
+      "description": "Require review of release-emulator version and digest changes",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/tonistiigi/binfmt"],
+      "groupName": "release emulator image",
+      "dependencyDashboardApproval": true,
+      "automerge": false
     }
   ]
 }

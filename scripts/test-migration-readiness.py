@@ -1869,12 +1869,30 @@ class MigrationReadinessTests(unittest.TestCase):
             '--revision "${GITHUB_SHA}"',
             "--require-aggregate",
             "--require-success",
-            "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
             "!inputs.validation_only",
         ):
-            self.assertIn(required, release)
-        self.assertNotIn("gh run list", release)
-        self.assertNotIn("gh run download", release)
+            self.assertTrue(required in release, f"Release is missing required guard: {required}")
+        validation = re.search(
+            r"(?ms)^  release-validation:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)", release
+        )
+        self.assertIsNotNone(validation, "Release must define its aggregate validation job")
+        assert validation is not None
+        validation_job = validation.group(1)
+        dependencies = re.search(r"(?ms)^    needs:\s*\[(.*?)\]", validation_job)
+        self.assertIsNotNone(dependencies, "Release validation must declare its prerequisites")
+        assert dependencies is not None
+        self.assertCountEqual(
+            [job.strip() for job in dependencies.group(1).split(",") if job.strip()],
+            ["deterministic", "release-metadata", "migration-readiness", "migration-readiness-evidence", "release-binary-evidence"],
+        )
+        for required in (
+            "BINARY_RESULT: ${{ needs.release-binary-evidence.result }}",
+            '\"${READINESS_RESULT}\" \"${EVIDENCE_RESULT}\" \"${BINARY_RESULT}\"; do',
+            'if [[ "${result}" != success ]]; then',
+        ):
+            self.assertTrue(required in validation_job, f"Release validation is missing result propagation: {required}")
+        self.assertFalse("gh run list" in release, "Release must not discover evidence from another run")
+        self.assertFalse("gh run download" in release, "Release must use the current-run artifact contract")
         self.assertIn(
             "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}",
             tiers,

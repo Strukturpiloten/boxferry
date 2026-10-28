@@ -9,6 +9,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Add gated, versioned Linux musl and macOS CLI archives with checksums and provenance
+  ([#515](https://github.com/Strukturpiloten/boxferry/issues/515)).
+
 - Embedded Compose callers must mark every applied interpolation overlay with
   `ComposeSource::with_interpolation_applied()`, including empty-provider and escape-only overlays.
 

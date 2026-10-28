@@ -21,7 +21,8 @@ is never a native passthrough. Docker Engine resources and Kubernetes are not ye
 
 ## Quick start
 
-BoxFerry supports Linux. On Windows, run the Linux CLI inside WSL2.
+BoxFerry supports Linux and client-side conversion on macOS. On Windows, run the Linux CLI inside
+WSL2. See [installation](docs/public/getting-started/) for release archives and platform limits.
 
 ```console
 cargo install boxferry --locked
