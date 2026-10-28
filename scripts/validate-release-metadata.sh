@@ -2,6 +2,20 @@
 
 set -Eeuo pipefail
 
+if (($# > 1)); then
+  printf 'Usage: %s [--development|--release]\n' "$0" >&2
+  exit 2
+fi
+case "${1---release}" in
+  --development) validation_mode=development ;;
+  --release) validation_mode=release ;;
+  *)
+    printf 'Usage: %s [--development|--release]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+readonly validation_mode
+
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 readonly repository_root
@@ -11,7 +25,6 @@ cd -- "${repository_root}"
 if [[ "${BOXFERRY_RELEASE_METADATA_TEST_MODE:-0}" == "1" ]]; then
   version="${BOXFERRY_TEST_VERSION:?test version is required}"
   changelog="${BOXFERRY_TEST_CHANGELOG:?test changelog is required}"
-  latest_tag="${BOXFERRY_TEST_LATEST_TAG:-}"
 else
   metadata="$(cargo metadata --locked --no-deps --format-version 1)"
   readonly metadata
@@ -64,9 +77,8 @@ else
   fi
 
   changelog=CHANGELOG.md
-  latest_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2> /dev/null || true)"
 fi
-readonly version changelog latest_tag
+readonly version changelog
 
 if [[ ! -f "${changelog}" ]]; then
   printf 'Changelog does not exist: %s\n' "${changelog}" >&2
@@ -123,7 +135,7 @@ if ! grep --quiet '[[:alnum:]]' <<< "${release_notes}"; then
   exit 1
 fi
 
-if [[ -n "${latest_tag}" && "${latest_tag#v}" != "${version}" ]]; then
+if [[ "${validation_mode}" == "release" ]]; then
   unreleased_notes="$(
     awk '
       $0 == "## [Unreleased]" {
@@ -135,8 +147,8 @@ if [[ -n "${latest_tag}" && "${latest_tag#v}" != "${version}" ]]; then
     ' "${changelog}"
   )"
   if grep --quiet '[[:alnum:]]' <<< "${unreleased_notes}"; then
-    printf 'Unreleased must be empty while preparing BoxFerry %s after %s.\n' \
-      "${version}" "${latest_tag}" >&2
+    printf 'Unreleased must be empty while preparing BoxFerry %s for release.\n' \
+      "${version}" >&2
     printf 'Move every included change into the numbered release section before merging.\n' >&2
     exit 1
   fi

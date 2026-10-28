@@ -50,7 +50,7 @@ jobs:
             echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
             exit 1
           fi
-          bash scripts/validate-release-metadata.sh
+          bash scripts/validate-release-metadata.sh --release
 
   migration-readiness:
     name: Fresh pre-release migration readiness

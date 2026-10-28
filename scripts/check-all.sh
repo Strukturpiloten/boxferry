@@ -188,7 +188,7 @@ run_step "Test migration-readiness contracts" python3 scripts/test-migration-rea
 run_step "Test reviewed application catalogue admission" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-reviewed-application-catalogue.py
 run_step "Run offline migration-readiness tier" python3 scripts/migration-readiness.py run \
   --tier offline --evidence target/migration-readiness/offline-evidence-v2.json
-run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
+run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh --development
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint
 run_step "Audit GitHub Actions security" zizmor .github/workflows
