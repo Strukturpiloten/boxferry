@@ -3368,6 +3368,15 @@ fn validate_immich_live_runner(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+const EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON: &str = r#"  if ! cmp --silent "${current_case}/outputs/apply-source-podman/podman.json" \
+    "${current_case}/outputs/apply-target-podman/podman.json"; then
+    printf '%s\n' 'Apply/reacquire fixed point failed: Podman-to-Podman source/target podman.json bytes.' >&2
+    return 1
+  fi"#;
+const EXTERNAL_APPLY_COMPOSE_COMPARISON: &str = r#"  python3 "${script_directory}/lib/apply-reacquire-contract.py" \
+    "${current_case}/outputs/apply-source-compose/compose.yaml" \
+    "${current_case}/outputs/apply-target-compose/compose.yaml" "${expected_network}" || return $?"#;
+
 fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> {
     let target_start = runner
         .find("start_apply_target() {")
@@ -3399,8 +3408,8 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
         "Generated apply plan did not promote its named network and volume exactly once.",
         "timed_operation 3m 'execute generated plan inside apply target'",
         "activate_outer_runtime \"${runtime_root}/apply-target\"",
-        "cmp --silent \"${current_case}/outputs/apply-source-podman/podman.json\"",
-        "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
+        EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON,
+        EXTERNAL_APPLY_COMPOSE_COMPARISON,
         "engine_operation 'remove applied target container through API' \\\n    --url \"unix://${apply_target_socket}\"",
         "engine_operation 'remove applied target network through API' \\\n    --url \"unix://${apply_target_socket}\" network rm",
         "engine_operation 'remove applied target volume through API' \\\n    --url \"unix://${apply_target_socket}\" volume rm",
@@ -3413,6 +3422,7 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
         }
     }
     for stale in [
+        "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
         "(.external_preconditions | length == 2)",
         "engine_operation 'create apply-target network'",
         "engine_operation 'create apply-target volume'",
@@ -3444,6 +3454,11 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
         return Err("live Podman external apply/reacquire must finish CLI work before API activation".to_owned());
     }
     validate_external_apply_presence_loop(contract)?;
+    require_ordered_contracts(
+        contract,
+        "external apply/reacquire exact artifact comparisons",
+        &[EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON, EXTERNAL_APPLY_COMPOSE_COMPARISON],
+    )?;
     Ok(())
 }
 
@@ -3459,6 +3474,99 @@ fn validate_external_apply_presence_loop(contract: &str) -> Result<(), String> {
             "      return 1\n    fi\n  done\n  release_outer \"${apply_target_outer}\"",
         ],
     )
+}
+
+fn reject_external_apply_comparison_mutations(
+    runner: &str,
+    comparison: &str,
+    mutations: &[(&str, &str)],
+) -> Result<(), String> {
+    for &(original, replacement) in mutations {
+        let altered = comparison.replacen(original, replacement, 1);
+        if altered == comparison {
+            return Err(format!("artifact comparison mutation does not match: {original}"));
+        }
+        let changed = runner.replacen(comparison, &altered, 1);
+        if validate_external_apply_reacquire_runner(&changed).is_ok() {
+            return Err(format!(
+                "apply/reacquire policy accepted unsafe artifact comparison: {original}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn live_external_apply_reacquire_rejects_unsafe_artifact_comparisons() -> Result<(), String> {
+    let runner = fs::read_to_string(repository_root().join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
+    validate_external_apply_reacquire_runner(&runner)?;
+    reject_external_apply_comparison_mutations(
+        &runner,
+        EXTERNAL_APPLY_COMPOSE_COMPARISON,
+        &[
+            (
+                r#"python3 "${script_directory}/lib/apply-reacquire-contract.py""#,
+                "cmp --silent",
+            ),
+            (r#""${current_case}/outputs/apply-source-compose/compose.yaml""#, ""),
+            (
+                r#""${current_case}/outputs/apply-source-compose/compose.yaml""#,
+                r#""${current_case}/outputs/apply-target-compose/compose.yaml""#,
+            ),
+            (r#""${current_case}/outputs/apply-target-compose/compose.yaml""#, ""),
+            (
+                r#""${current_case}/outputs/apply-target-compose/compose.yaml""#,
+                r#""${current_case}/outputs/apply-source-compose/compose.yaml""#,
+            ),
+            (r#""${expected_network}""#, ""),
+            (r#""${expected_network}""#, r#""${expected_volume}""#),
+            ("|| return $?", ""),
+            ("|| return $?", "|| true"),
+            ("|| return $?", "|| return 0"),
+        ],
+    )?;
+    reject_external_apply_comparison_mutations(
+        &runner,
+        EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON,
+        &[
+            ("if ! cmp --silent", "if cmp --silent"),
+            (
+                r#""${current_case}/outputs/apply-source-podman/podman.json""#,
+                r#""${current_case}/outputs/apply-target-podman/podman.json""#,
+            ),
+            (
+                r#""${current_case}/outputs/apply-target-podman/podman.json""#,
+                r#""${current_case}/outputs/apply-source-podman/podman.json""#,
+            ),
+            ("    return 1", "    return 0"),
+            (
+                "'Apply/reacquire fixed point failed: Podman-to-Podman source/target podman.json bytes.'",
+                r#""${current_case}""#,
+            ),
+        ],
+    )?;
+    let old_compose_comparison = r#"  cmp --silent "${current_case}/outputs/apply-source-compose/compose.yaml" \
+    "${current_case}/outputs/apply-target-compose/compose.yaml""#;
+    let substituted = runner.replacen(EXTERNAL_APPLY_COMPOSE_COMPARISON, old_compose_comparison, 1);
+    if validate_external_apply_reacquire_runner(&substituted).is_ok() {
+        return Err("apply/reacquire policy accepted substitution of the old broad Compose comparison".to_owned());
+    }
+    let inserted = runner.replacen(
+        EXTERNAL_APPLY_COMPOSE_COMPARISON,
+        &format!("{EXTERNAL_APPLY_COMPOSE_COMPARISON}\n{old_compose_comparison}"),
+        1,
+    );
+    if validate_external_apply_reacquire_runner(&inserted).is_ok() {
+        return Err("apply/reacquire policy accepted an additional broad Compose byte comparison".to_owned());
+    }
+    let ordered = format!("{EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON}\n{EXTERNAL_APPLY_COMPOSE_COMPARISON}");
+    let reversed = format!("{EXTERNAL_APPLY_COMPOSE_COMPARISON}\n{EXTERNAL_APPLY_PODMAN_BYTE_COMPARISON}");
+    let reordered = runner.replacen(&ordered, &reversed, 1);
+    if reordered == runner || validate_external_apply_reacquire_runner(&reordered).is_ok() {
+        return Err("apply/reacquire policy accepted reordered artifact comparisons".to_owned());
+    }
+    Ok(())
 }
 
 #[test]
@@ -3494,7 +3602,7 @@ fn live_external_apply_reacquire_rejects_stale_prerequisite_contracts() -> Resul
         )?,
         remove_first(
             &runner,
-            "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
+            EXTERNAL_APPLY_COMPOSE_COMPARISON,
         )?,
         remove_first(&runner, "for kind in container network volume; do")?,
         remove_first(

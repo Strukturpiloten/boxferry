@@ -2987,40 +2987,47 @@ supabase_protected_service_alias_inventory() {
   "cli": {
     "auth": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "auth"
       ]
     },
     "db": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "db"
       ]
     },
     "functions": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "functions"
       ]
     },
     "imgproxy": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "imgproxy"
       ]
     },
     "kong": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "meta": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "meta"
       ]
     },
     "realtime": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "realtime-dev.supabase-realtime",
         "realtime"
@@ -3028,30 +3035,35 @@ supabase_protected_service_alias_inventory() {
     },
     "rest": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "rest"
       ]
     },
     "storage": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "storage"
       ]
     },
     "studio": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "studio"
       ]
     },
     "supavisor": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "supavisor"
       ]
     },
     "boundary-peer": {
       "network": "edge",
+      "reference": "edge",
       "aliases": [
         "boundary-peer"
       ]
@@ -3060,6 +3072,7 @@ supabase_protected_service_alias_inventory() {
   "compose": {
     "auth": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "auth"
@@ -3067,6 +3080,7 @@ supabase_protected_service_alias_inventory() {
     },
     "db": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "db"
@@ -3074,6 +3088,7 @@ supabase_protected_service_alias_inventory() {
     },
     "functions": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "functions"
@@ -3081,6 +3096,7 @@ supabase_protected_service_alias_inventory() {
     },
     "imgproxy": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "imgproxy"
@@ -3088,10 +3104,12 @@ supabase_protected_service_alias_inventory() {
     },
     "kong": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "meta": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "meta"
@@ -3099,6 +3117,7 @@ supabase_protected_service_alias_inventory() {
     },
     "realtime": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "realtime",
@@ -3107,6 +3126,7 @@ supabase_protected_service_alias_inventory() {
     },
     "rest": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "rest"
@@ -3114,6 +3134,7 @@ supabase_protected_service_alias_inventory() {
     },
     "storage": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "storage"
@@ -3121,6 +3142,7 @@ supabase_protected_service_alias_inventory() {
     },
     "studio": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "studio"
@@ -3128,6 +3150,7 @@ supabase_protected_service_alias_inventory() {
     },
     "supavisor": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "supavisor"
@@ -3135,6 +3158,7 @@ supabase_protected_service_alias_inventory() {
     },
     "boundary-peer": {
       "network": "edge",
+      "reference": "edge",
       "aliases": [
         "@service",
         "boundary-peer"

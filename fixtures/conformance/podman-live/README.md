@@ -128,6 +128,13 @@ service's finite `on-failure:3` retry policy. Each requires its exact warning
 subject and reason; neither arbitrary aliases nor unrelated differences are
 normalized. Mutation tests protect this narrow comparison boundary.
 
+The separate external apply/reacquire fixture compares Podman plans byte for byte.
+Its generated Compose comparison permits only the controlled ordinary network's
+`{}` versus `internal: false` spelling: legacy CNI omits typed internal evidence,
+while newer runtimes report the effective default. Every other byte remains exact;
+isolation, external ownership, extra properties and additional networks fail.
+The comparator never rewrites the raw artifacts and emits value-free diagnostics.
+
 The upstream-source 5.8 and 6.1 lanes replace superseded patches with 5.8.7 and 6.1.2,
 respectively, in both root modes. Their immutable OCI index digests select the declared
 amd64 platform; the runner still verifies the observed engine version, package and root mode.

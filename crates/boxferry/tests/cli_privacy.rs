@@ -8,6 +8,7 @@ mod podman_cassette;
 
 use std::{
     error::Error,
+    fmt::Write as _,
     fs,
     io::Read,
     path::PathBuf,
@@ -947,6 +948,123 @@ fn invalid_document_cannot_echo_a_neighboring_environment_value() -> Result<(), 
             .any(|window| window == DOCUMENT_SECRET.as_bytes())
     );
     assert!(!destination.exists());
+    Ok(())
+}
+
+fn authored_supabase_alias_topology(mode: &str) -> Result<String, Box<dyn Error>> {
+    let mut document = String::from("---\nname: fixture\nservices:\n");
+    // Independently authored full topology: the gateway has two networks and no
+    // associable aliases; the peer uses only the externally owned edge.
+    let roles: [(&str, &str, &[&str]); 12] = [
+        ("auth", "backend", &["auth"]),
+        ("db", "backend", &["db"]),
+        ("functions", "backend", &["functions"]),
+        ("imgproxy", "backend", &["imgproxy"]),
+        ("kong", "backend", &[]),
+        ("meta", "backend", &["meta"]),
+        ("realtime", "backend", &["realtime-dev.supabase-realtime", "realtime"]),
+        ("rest", "backend", &["rest"]),
+        ("storage", "backend", &["storage"]),
+        ("studio", "backend", &["studio"]),
+        ("supavisor", "backend", &["supavisor"]),
+        ("boundary-peer", "edge", &["boundary-peer"]),
+    ];
+    for (role, network, aliases) in roles {
+        write!(
+            document,
+            "  test-supabase-{role}:\n    image: example.invalid/public-fixture:1\n    networks:\n      test-supabase-{network}:"
+        )?;
+        let aliases: Vec<String> = if mode == "compose" && !aliases.is_empty() {
+            let mut names = vec![format!("test-supabase-{role}")];
+            if role == "realtime" {
+                names.extend(["realtime".to_owned(), "realtime-dev.supabase-realtime".to_owned()]);
+            } else {
+                names.extend(aliases.iter().map(|alias| (*alias).to_owned()));
+            }
+            names
+        } else {
+            aliases.iter().map(|alias| (*alias).to_owned()).collect()
+        };
+        if aliases.is_empty() {
+            document.push_str(" {}\n      test-supabase-edge: {}\n");
+        } else {
+            writeln!(document, "\n        aliases: {}", serde_json::to_string(&aliases)?)?;
+        }
+    }
+    document.push_str("networks:\n  test-supabase-backend: {}\n  test-supabase-edge:\n    external: true\n    name: test-supabase-edge\n");
+    Ok(document)
+}
+
+#[test]
+fn application_alias_inventory_accepts_cli_generated_owned_and_external_references() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new()?;
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for mode in ["cli", "compose"] {
+        let source = scratch.0.join(format!("{mode}.yaml"));
+        let destination = scratch.0.join(format!("{mode}-quadlet"));
+        fs::write(&source, authored_supabase_alias_topology(mode)?)?;
+        let conversion = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args([
+                "convert",
+                "compose",
+                "quadlet",
+                "--loss-policy",
+                "partial",
+                "--input-file",
+            ])
+            .arg(&source)
+            .arg("--output-directory")
+            .arg(&destination)
+            .output()?;
+        assert!(
+            conversion.status.success(),
+            "{}",
+            String::from_utf8_lossy(&conversion.stderr)
+        );
+        assert!(destination.join("test-supabase-backend.network").is_file());
+        assert!(!destination.join("test-supabase-edge.network").exists());
+        let peer = fs::read_to_string(destination.join("test-supabase-boundary-peer.container"))?;
+        assert!(peer.lines().any(|line| line == "Network=test-supabase-edge"));
+        for (include_peer, expected_count) in [
+            (true, if mode == "cli" { 12 } else { 23 }),
+            (false, if mode == "cli" { 11 } else { 21 }),
+        ] {
+            if !include_peer {
+                fs::remove_file(destination.join("test-supabase-boundary-peer.container"))?;
+            }
+            let inventory = Command::new("bash")
+                .args([
+                    "-c",
+                    "source \"$1\"; supabase_protected_service_alias_inventory \"$2\" \"$3\" test",
+                    "cli-inventory",
+                ])
+                .arg(repository.join("scripts/lib/supabase-application.sh"))
+                .arg(mode)
+                .arg(&destination)
+                .output()?;
+            assert!(
+                inventory.status.success(),
+                "{}",
+                String::from_utf8_lossy(&inventory.stderr)
+            );
+            let inventory: serde_json::Value = serde_json::from_slice(&inventory.stdout)?;
+            let subjects = inventory["subjects"].as_array().ok_or("missing alias inventory")?;
+            assert_eq!(subjects.len(), expected_count);
+            assert_eq!(
+                subjects
+                    .iter()
+                    .filter(|subject| subject
+                        .as_str()
+                        .is_some_and(|value| value.contains("boundary-peer.networks.test-supabase-edge.aliases[")))
+                    .count(),
+                if include_peer {
+                    if mode == "cli" { 1 } else { 2 }
+                } else {
+                    0
+                }
+            );
+        }
+    }
     Ok(())
 }
 

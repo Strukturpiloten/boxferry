@@ -188,7 +188,7 @@
         },
         {
           "path": "scripts/lib/nextcloud-application-probes.sh",
-          "sha256": "1ff8976356d8ee4ed2d24a6a5c5a88796cf2ba0576f36af6e0a169bc29be1a4a"
+          "sha256": "22215d4af4e4be5479e39753297905ca8ec6ec872e3ff3836668bca8b5c4cd71"
         }
       ],
       "image_catalogue": "fixtures/conformance/nextcloud-application/images.tsv",
@@ -847,11 +847,11 @@
         },
         {
           "path": "scripts/lib/observability-application.sh",
-          "sha256": "f268ef8350851ac84d2d160935143e600e50b3e7f56d7355f524abe4b3b9fedd"
+          "sha256": "a06ec78ecd049abc6c54e2fdb1bbb161ad29dc07bb8164350f47e0bed33c92c1"
         },
         {
           "path": "scripts/lib/protected-service-alias-contract.py",
-          "sha256": "764fc3aa41a55f9d7241ec8347c1257d83160f624e3876bb8034e3546e51c0d0"
+          "sha256": "1c8e8539069bda0b5994b4bc8e097fbb7f5337386126dcdeee73a7ad4ba1226a"
         },
         {
           "path": "scripts/lib/observability-application-probes.sh",
@@ -1197,11 +1197,11 @@
         },
         {
           "path": "scripts/lib/supabase-application.sh",
-          "sha256": "21e3de059881665b148c75dbb6ffebf35e2e4523aa4286734f081a8793fe5be6"
+          "sha256": "f8b2426e11226fae15ec0eeb9523870288b232dda485341e7e3bc50fb2529b1d"
         },
         {
           "path": "scripts/lib/protected-service-alias-contract.py",
-          "sha256": "764fc3aa41a55f9d7241ec8347c1257d83160f624e3876bb8034e3546e51c0d0"
+          "sha256": "1c8e8539069bda0b5994b4bc8e097fbb7f5337386126dcdeee73a7ad4ba1226a"
         },
         {
           "path": "fixtures/conformance/supabase-application/application.tsv",

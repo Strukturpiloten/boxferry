@@ -1994,10 +1994,14 @@ run_external_apply_reacquire() {
     --podman-resource "container=${expected_container}"
   run_convert compose "${apply_target_socket}" apply-target \
     --podman-resource "container=${expected_container}"
-  cmp --silent "${current_case}/outputs/apply-source-podman/podman.json" \
-    "${current_case}/outputs/apply-target-podman/podman.json"
-  cmp --silent "${current_case}/outputs/apply-source-compose/compose.yaml" \
-    "${current_case}/outputs/apply-target-compose/compose.yaml"
+  if ! cmp --silent "${current_case}/outputs/apply-source-podman/podman.json" \
+    "${current_case}/outputs/apply-target-podman/podman.json"; then
+    printf '%s\n' 'Apply/reacquire fixed point failed: Podman-to-Podman source/target podman.json bytes.' >&2
+    return 1
+  fi
+  python3 "${script_directory}/lib/apply-reacquire-contract.py" \
+    "${current_case}/outputs/apply-source-compose/compose.yaml" \
+    "${current_case}/outputs/apply-target-compose/compose.yaml" "${expected_network}" || return $?
 
   engine_operation 'remove applied target container through API' \
     --url "unix://${apply_target_socket}" \

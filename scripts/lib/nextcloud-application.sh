@@ -433,25 +433,75 @@ nextcloud_provision_compose() {
 }
 
 nextcloud_wait_application() {
-  local socket=$1 prefix=$2
+  local socket=$1 prefix=$2 deadline
   nextcloud_wait_for 600 'Nextcloud application status' nextcloud_remote "${socket}" \
-    exec --user www-data "${prefix}-cloud-app" php occ status
+    exec --user www-data "${prefix}-cloud-app" php occ status || return $?
   nextcloud_wait_for 180 'frontend response' nextcloud_remote "${socket}" \
-    exec "${prefix}-cloud-frontend" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php
+    exec "${prefix}-cloud-frontend" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php || return $?
+  # The final JSON checks share the existing edge-readiness allowance, not a new budget.
+  deadline=$(($(nextcloud_probe_clock) + 180))
   nextcloud_wait_for 180 'edge proxy response' nextcloud_remote "${socket}" \
-    exec "${prefix}-shared-proxy" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php
-  nextcloud_probe_assert_status nextcloud_podman_probe_status "${socket}" "${prefix}"
+    exec "${prefix}-shared-proxy" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php || return $?
+  nextcloud_probe_wait_status nextcloud_podman_probe_status "${socket}" "${prefix}" "${deadline}"
+}
+
+nextcloud_status_remote() {
+  local remaining=$1 socket=$2
+  shift 2
+  # Final-status probes require the explicit acquisition socket; unknown presence must
+  # never turn into a retry or a fallback to another runtime.
+  [[ -S "${socket}" ]] || return 2
+  ((remaining > 0)) || return 1
+  ((remaining <= 90)) || remaining=90
+  timed_operation "${remaining}s" 'nested Podman Nextcloud final status through acquisition socket' \
+    "${engine}" --url "unix://${socket}" "$@"
 }
 
 nextcloud_podman_probe_status() {
-  local socket=$1 prefix=$2 source=$3
+  local socket=$1 prefix=$2 source=$3 remaining=${4:-90} document status=0 request_timeout
+  [[ "${remaining}" =~ ^[0-9]+$ ]] && ((remaining > 0)) || return 1
   if [[ "${source}" == app ]]; then
-    nextcloud_remote "${socket}" exec --user www-data "${prefix}-cloud-app" \
-      php occ status --output=json
+    document="$(nextcloud_status_remote "${remaining}" "${socket}" exec --user www-data "${prefix}-cloud-app" \
+      php occ status --output=json 2> /dev/null)" || status=$?
+    # The app callback has no classified temporary HTTP branch.
+    ((status != 75)) || return 1
+    ((status == 0)) || return "${status}"
+  elif [[ "${source}" == proxy ]]; then
+    request_timeout=${remaining}
+    ((request_timeout <= 30)) || request_timeout=30
+    # shellcheck disable=SC2016 # The literal program expands only inside the proxy container.
+    document="$(nextcloud_status_remote "${remaining}" "${socket}" exec "${prefix}-shared-proxy" \
+      /bin/sh -ceu '
+        umask 077
+        work=$(mktemp -d)
+        trap '\''rm -rf -- "$work"'\'' EXIT
+        # Bound private response/header files as well as request time.
+        ulimit -f 1024
+        status=0
+        wget -T "$1" --server-response --output-document="$work/body" \
+          http://127.0.0.1:8080/status.php 2> "$work/headers" || status=$?
+        if [ "$status" -eq 0 ]; then
+          cat "$work/body"
+        elif [ "$status" -eq 1 ] && awk '\''
+          /^[ \t]*HTTP\/1\.[01] [0-9][0-9][0-9][ \t]/ { count++; code=$2 }
+          END { exit !(count == 1 && (code == 502 || code == 503 || code == 504)) }
+        '\'' "$work/headers"; then
+          printf "%s\n" boxferry-nextcloud-temporary-http
+          exit 75
+        else
+          exit 1
+        fi
+      ' nextcloud-status "${request_timeout}" 2> /dev/null)" || status=$?
+    # Both an explicit classification status and the exact bounded marker are required.
+    if ((status == 75)) && [[ "${document}" == boxferry-nextcloud-temporary-http ]]; then
+      return 75
+    fi
+    ((status != 75)) || return 1
+    ((status == 0)) || return "${status}"
   else
-    nextcloud_remote "${socket}" exec "${prefix}-shared-proxy" \
-      wget -T 30 --quiet --output-document=- http://127.0.0.1:8080/status.php
+    return 2
   fi
+  printf '%s\n' "${document}"
 }
 
 nextcloud_webdav_round_trip() {
