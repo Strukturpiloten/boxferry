@@ -300,8 +300,36 @@ class ValidationPlanTests(unittest.TestCase):
         assert dependencies is not None
         jobs = [name.strip() for name in dependencies[1].split(",") if name.strip()]
         self.assertEqual(len(jobs), len(set(jobs)))
-        self.assertEqual(set(jobs), {"validation-plan", *POLICY["jobs"]})
+        self.assertEqual(set(jobs), {"release-binaries", "validation-plan", *POLICY["jobs"]})
         self.assertIn('python3 "${verifier}" gate --policy-root "${policy_root}"', aggregate)
+
+    def test_binary_gate_projection_is_monotonic_and_fail_closed(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        blocks = re.findall(r"(?ms)^          NEEDS_JSON=\$\(python3 - <<'BINARY_NEEDS_PY'\n(.*?)^          BINARY_NEEDS_PY$", workflow)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(workflow.count("uses: ./.github/workflows/release-binaries.yml"), 1)
+        self.assertNotIn("release-binaries", POLICY["jobs"])
+        code = textwrap.dedent(blocks[0])
+        old = {job: {"result": "success", "outputs": {"evidence": job}} for job in ["validation-plan", *POLICY["jobs"]]}
+        def project(value):
+            raw = value if isinstance(value, str) else json.dumps(value)
+            return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": raw}, capture_output=True, text=True, check=False)
+        valid = {**old, "release-binaries": {"result": "success"}}
+        result = project(valid)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), old)
+        for value in [old, [], None, "{", '{"release-binaries":{"result":"success"},"release-binaries":{"result":"success"}}']:
+            self.assertNotEqual(project(value).returncode, 0)
+        for result in ["skipped", "failure", "cancelled", None, ""]:
+            with self.subTest(result=result):
+                self.assertNotEqual(project({**old, "release-binaries": {"result": result}}).returncode, 0)
+        for invalid in [None, [], "success", {}]:
+            self.assertNotEqual(project({**old, "release-binaries": invalid}).returncode, 0)
+        # Projection preserves old failures, missing keys, and extra keys for the trusted verifier.
+        for changed in [{**old, "rust": {"result": "failure"}}, {key: value for key, value in old.items() if key != "rust"}, {**old, "extra": {"result": "success"}}]:
+            result = project({**changed, "release-binaries": {"result": "success"}})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), changed)
 
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

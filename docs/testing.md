@@ -10,34 +10,19 @@ Run the complete deterministic gate before every pull request:
 ./scripts/check-all.sh
 ```
 
-## Choose a test layer
+## Test layers and independent scenarios
 
-| Layer         | Protects                                                |
-| ------------- | ------------------------------------------------------- |
-| Unit          | Model invariants, mappings, diagnostics, and redaction  |
-| Adapter       | Native-to-neutral and neutral-to-native contracts       |
-| Golden        | Exact artifacts and diagnostic sequences                |
-| CLI           | Arguments, exit status, output safety, and reports      |
-| Documentation | Every displayed command and its expected result         |
-| Conformance   | Reviewed external tools in explicit opt-in environments |
+Unit tests protect model invariants, mappings, diagnostics and redaction; adapter tests protect
+native/neutral contracts. Golden, CLI, documentation and opt-in conformance tests cover artifacts,
+commands, safety and reviewed external tools. Test positive, failure, unsupported, privacy and
+version-boundary cases. See [fast offline CLI testing](public/development/testing/index.md#fast-offline-cli-feedback).
 
-Test positive, failure, unsupported, and version-boundary cases. For focused feedback, see
-[fast offline CLI testing](public/development/testing/index.md#fast-offline-cli-feedback).
-
-## Independent migration scenarios
-
-The [scenario contract](../fixtures/README.md#migration-scenario-contracts) checks
-independent neutral intent, every exporter, exact losses/diagnostics and actual
-reimports.
-[ADR 0039](decisions/0039-independent-migration-scenarios.md) defines evidence
-boundaries and synthetic image identities.
-
-The [live entry point](../scripts/podman-live-conformance.sh) sources
-[scenario](../scripts/lib/scenario-contract.sh) and
-[validator](../scripts/lib/scenario-validators.sh) modules, retaining inner deadlines,
-numbered progress, isolation and cleanup. The
-[`migration-readiness.py`](../scripts/migration-readiness.py) helper owns outer selection,
-budgets, and evidence locally and in GitHub Actions.
+The [scenario contract](../fixtures/README.md#migration-scenario-contracts) independently checks
+expected neutral intent, every exporter, losses, diagnostics and reimports. [ADR 0039](decisions/0039-independent-migration-scenarios.md)
+defines evidence boundaries and synthetic image identities. The [live harness](../scripts/podman-live-conformance.sh)
+uses [scenario](../scripts/lib/scenario-contract.sh) and [validator](../scripts/lib/scenario-validators.sh)
+modules; [`migration-readiness.py`](../scripts/migration-readiness.py) owns outer selection,
+budgets and evidence.
 
 ## Migration-readiness tiers
 
@@ -53,21 +38,14 @@ see the [measurement contract](../fixtures/conformance/migration-readiness/READM
 
 ## Fixture route corpus
 
-Fixtures live under `fixtures/<suite>/<id>/`; their complete contract is in
-[`fixtures/README.md`](../fixtures/). Each positive adapter or conversion scenario declares its
-input and one expectation for every exporter reported by `boxferry capabilities`.
+Fixtures under `fixtures/<suite>/<id>/` follow [their contract](../fixtures/). Positive scenarios
+specify input and expectations for every exporter in `boxferry capabilities`. They check minimum
+and stricter loss policies, diagnostics, bytes, redaction, reimports, chains and fixed points;
+importer and exporter coverage are independent across all nine routes.
 
-The corpus verifies:
-
-- the minimum authorized loss policy and all stricter blocking policies;
-- exact diagnostics, artifact sets, bytes, redaction, and protected-value handling;
-- every applicable re-import, chained-conversion, and fixed-point contract;
-- importer and exporter coverage as independent dimensions across all nine routes.
-
-Compose and Quadlet artifacts can be imported again. Podman output cannot: it is a deployment plan,
-not an observed inventory. Podman assertions instead compare deterministic `podman.json` and
-runnable `podman-commands.sh`, semantic operations, complete findings, and redaction. BoxFerry never
-executes that script.
+Compose and Quadlet output can be reimported. Podman output is a deployment plan, not observed
+inventory; assertions cover deterministic artifacts, semantic operations, findings and redaction.
+BoxFerry never executes `podman-commands.sh`.
 
 ## Podman evidence
 
@@ -197,3 +175,11 @@ checks coverage floors and local links, and validates publishable packages.
 Changelog validation is a dedicated job required by the aggregate gate.
 
 Coverage is a regression ratchet, not proof of semantic correctness.
+
+## Release binary evidence
+
+The binary gate checks archive structure, architecture, static Linux linkage, metadata and
+checksums for the exact six-target revision and run. Before packaging, each binary runs version,
+capability and Compose → Quadlet → Compose smoke tests. Four 64-bit targets run natively; two
+32-bit Linux targets use direct QEMU user-mode emulation. This does not prove native kernel,
+systemd or runtime behavior. Hosted success establishes candidate evidence; see [release guidance](releasing.md).

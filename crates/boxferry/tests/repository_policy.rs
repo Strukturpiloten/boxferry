@@ -687,21 +687,30 @@ fn privileged_migration_readiness_cargo_keeps_the_runner_toolchain() -> Result<(
     Ok(())
 }
 
-#[test]
-fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), String> {
-    let workflow_path = repository_root().join(".github/workflows/ci.yml");
-    let workflow = fs::read_to_string(&workflow_path)
-        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
-    let expected = r"on:
-  workflow_call:
-  push:
-    branches:
-      - main
-  pull_request:
-  workflow_dispatch:";
-    if !workflow.contains(expected) {
+fn validate_ci_event_contract(workflow: &str) -> Result<(), String> {
+    if workflow.matches("\non:\n").count() != 1 {
+        return Err("CI must declare one workflow event mapping".to_owned());
+    }
+    let events = workflow
+        .split_once("\non:\n")
+        .ok_or("CI events missing")?
+        .1
+        .split_once("\npermissions:")
+        .ok_or("CI permissions boundary missing")?
+        .0;
+    let declarations: Vec<_> = events
+        .lines()
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .collect();
+    if declarations != ["  workflow_call:", "  push:", "  pull_request:", "  workflow_dispatch:"]
+        || !events.starts_with("  workflow_call:\n")
+        || !events
+            .trim_end()
+            .ends_with("  push:\n    branches:\n      - main\n  pull_request:\n  workflow_dispatch:")
+    {
         return Err(
-            "CI must run for one pull-request event, main pushes, manual dispatch, and reusable calls".to_owned(),
+            "CI must run for one unrestricted pull-request event, main pushes, manual dispatch, and reusable calls"
+                .to_owned(),
         );
     }
     for forbidden in ["types: [opened", "types: [synchronize", "branches-ignore:"] {
@@ -709,6 +718,32 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
             return Err(format!(
                 "CI trigger must not narrow pull-request updates with `{forbidden}`"
             ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), String> {
+    let workflow_path = repository_root().join(".github/workflows/ci.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
+    validate_ci_event_contract(&workflow)?;
+    for (old, new) in [
+        ("  pull_request:\n", ""),
+        (
+            "  pull_request:\n",
+            "  pull_request:\n    types: [opened, synchronize]\n",
+        ),
+        ("      - main\n", "      - feature\n"),
+        ("  pull_request:\n", "  pull_request:\n  pull_request:\n"),
+        ("  pull_request:\n", "  pull_request_target:\n"),
+        ("  workflow_dispatch:\n", ""),
+        ("  workflow_call:\n", "  schedule:\n"),
+    ] {
+        let changed = workflow.replacen(old, new, 1);
+        if changed == workflow || validate_ci_event_contract(&changed).is_ok() {
+            return Err(format!("CI event contract accepted counterfactual {old}"));
         }
     }
     Ok(())
@@ -6946,7 +6981,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: Required CI\n    if: always()",
-        "needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "needs:\n      [\n        release-binaries,\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
         "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
         "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
@@ -7029,7 +7064,7 @@ fn release_workflow_reuses_the_complete_ci_contract() -> Result<(), String> {
         "  release-metadata:\n    name: Validate release metadata",
         "bash scripts/validate-release-metadata.sh",
         "needs: [deterministic, release-metadata, migration-readiness]",
-        "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
+        "needs:\n      [\n        deterministic,\n        release-metadata,\n        migration-readiness,\n        migration-readiness-evidence,\n        release-binary-evidence,\n      ]",
         "needs: [deterministic, release-metadata, migration-readiness-evidence, release-validation]",
     ] {
         if !release.contains(required) {
@@ -7074,14 +7109,14 @@ fn release_uses_fresh_reusable_readiness_evidence_and_validation_only_mode() -> 
         "--require-aggregate",
         "--require-success",
         "release-validation:",
-        "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
+        "needs:\n      [\n        deterministic,\n        release-metadata,\n        migration-readiness,\n        migration-readiness-evidence,\n        release-binary-evidence,\n      ]",
         "if: always()",
         "permissions: {}",
         "DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}",
         "RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}",
         "READINESS_RESULT: ${{ needs.migration-readiness.result }}",
         "EVIDENCE_RESULT: ${{ needs.migration-readiness-evidence.result }}",
-        "for result in \"${DETERMINISTIC_RESULT}\" \"${RELEASE_METADATA_RESULT}\" \\\n            \"${READINESS_RESULT}\" \"${EVIDENCE_RESULT}\"; do",
+        "for result in \"${DETERMINISTIC_RESULT}\" \"${RELEASE_METADATA_RESULT}\" \\\n            \"${READINESS_RESULT}\" \"${EVIDENCE_RESULT}\" \"${BINARY_RESULT}\"; do",
         "if [[ \"${result}\" != success ]]",
         "needs: [deterministic, release-metadata, migration-readiness-evidence, release-validation]",
         "!inputs.validation_only",
@@ -7352,11 +7387,17 @@ fn platform_support_contract_requires_wsl_for_windows_cli() -> Result<(), String
             return Err(format!("CLI is missing native-Windows guard `{required}`"));
         }
     }
+    let platform_support = platform_support.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
         "The BoxFerry CLI is supported on Linux.",
-        "Windows users must install and run the Linux CLI inside",
-        "Such compilation is incidental unless that platform appears in the supported Linux CI",
-        "no macOS runner",
+        "Windows users must install and run the Linux CLI inside WSL2. Native Windows binaries, Windows containers, and Windows host-path semantics are unsupported.",
+        "Release archives target musl on x86_64, aarch64, i686 and armv7.",
+        "Release archives target x86_64 and aarch64 for client-side conversion.",
+        "Native systemd, Quadlet generator and container-runtime behavior are not claimed.",
+        "The 64-bit Linux and macOS binaries are exercised on their respective native runners;",
+        "the 32-bit Linux binaries use explicit QEMU user-mode execution.",
+        "This client smoke evidence does not establish native runtime or kernel behavior on those targets.",
+        "Component crate compilation elsewhere is incidental.",
     ] {
         if !platform_support.contains(required) {
             return Err(format!("platform documentation is missing contract `{required}`"));
@@ -10031,5 +10072,319 @@ fn linux_gate_modes_and_failure_propagation_are_correct() -> Result<(), Box<dyn 
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+    Ok(())
+}
+fn validate_release_binary_build(binary: &str) -> Result<(), String> {
+    let targets = [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "i686-unknown-linux-musl",
+        "armv7-unknown-linux-musleabihf",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ];
+    if binary.matches("          - target: ").count() != targets.len() {
+        return Err("binary matrix must contain exactly six reviewed targets".to_owned());
+    }
+    for (target, runner) in targets.iter().zip([
+        "ubuntu-24.04",
+        "ubuntu-24.04-arm",
+        "ubuntu-24.04",
+        "ubuntu-24.04",
+        "macos-15-intel",
+        "macos-15",
+    ]) {
+        if !binary.contains(&format!("- target: {target}\n            runs-on: {runner}")) {
+            return Err(format!("missing native runner contract for {target}"));
+        }
+    }
+    for required in [
+        "permissions:\n  contents: read",
+        "ref: ${{ github.sha }}",
+        "fail-fast: false",
+        "max-parallel: 3",
+        "timeout-minutes: 20",
+        "cargo build --locked --release --package boxferry --target",
+        "RUSTFLAGS='-Clink-self-contained=yes'",
+        "/bin/rust-lld",
+        "bash scripts/lib/release-emulator.sh docker",
+        "set -- python3 scripts/release-binaries.py package",
+        "set -- \"$@\" --emulator",
+        "emulator_name=qemu-i386",
+        "emulator_name=qemu-arm",
+        "--emulator \"${RUNNER_TEMP}/release-emulator/${emulator_name}\"",
+        "release-binaries.py package",
+        "release-binaries.py collect",
+        "release-binaries.py verify-set",
+        "--run-id \"${GITHUB_RUN_ID}\"",
+        "boxferry-cli-${{ github.sha }}-${{ github.run_id }}-${{ matrix.target }}",
+        "pattern: boxferry-cli-${{ github.sha }}-${{ github.run_id }}-*",
+        "merge-multiple: false",
+        "overwrite: true",
+        "if-no-files-found: error",
+        "release_binary_artifact: ${{ steps.artifact.outputs.name }}",
+    ] {
+        if !binary.contains(required) {
+            return Err(format!("missing binary workflow guard {required}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_release_binary_projection(ci: &str, release: &str) -> Result<(), String> {
+    if ci.matches("uses: ./.github/workflows/release-binaries.yml").count() != 1
+        || release.contains("uses: ./.github/workflows/release-binaries.yml")
+        || !ci.contains("value: ${{ jobs.release-binaries.outputs.release_binary_artifact }}")
+        || !ci.contains("NEEDS_JSON=$(python3 - <<'BINARY_NEEDS_PY'")
+        || !ci.contains("binary.get(\"result\") != \"success\"")
+        || !ci.contains("del needs[\"release-binaries\"]")
+        || !ci.contains("export NEEDS_JSON")
+    {
+        return Err("CI must build once and project only successful binary evidence".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_release_binary_publication(release: &str) -> Result<(), String> {
+    for required in [
+        "release-binary-evidence:",
+        "BINARY_RESULT: ${{ needs.release-binary-evidence.result }}",
+        "\"${EVIDENCE_RESULT}\" \"${BINARY_RESULT}\"; do",
+        "needs:\n      [\n        deterministic,\n        release-metadata,\n        migration-readiness,\n        migration-readiness-evidence,\n        release-binary-evidence,\n      ]",
+        "--revision \"${GITHUB_SHA}\" --run-id \"${GITHUB_RUN_ID}\"",
+        "--output target/release-artifacts --version \"${VERSION}\"",
+        "archive_names+=(\"${binary_names[@]}\")",
+        "test \"${#archive_names[@]}\" -eq 12",
+        "target/release-artifacts/boxferry*.tar.gz",
+        "upload_asset \"target/release-artifacts/${archive_name}\" \"application/gzip\"",
+    ] {
+        if !release.contains(required) {
+            return Err(format!("missing release binary evidence guard {required}"));
+        }
+    }
+    if release
+        .matches("name: ${{ needs.deterministic.outputs.release_binary_artifact }}")
+        .count()
+        != 2
+    {
+        return Err(
+            "release must reuse the same current-run artifact in both evidence and protected staging".to_owned(),
+        );
+    }
+    let stage = release.find("release-binaries.py stage").ok_or("missing staging")?;
+    for mutation in [
+        "Create or verify annotated release tag",
+        "Create or replace draft GitHub release",
+        "bash .github/scripts/publish-crate.sh",
+    ] {
+        let position = release
+            .find(mutation)
+            .ok_or_else(|| format!("release mutation marker missing: {mutation}"))?;
+        if position < stage {
+            return Err("binary staging must precede all release mutations".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn validate_release_binary_emulator(binary: &str, helper: &str) -> Result<(), String> {
+    for required in [
+        "readonly release_emulator_image='docker.io/tonistiigi/binfmt:qemu-v",
+        "@sha256:",
+        "docker | podman)",
+        "--platform linux/amd64",
+        ":/usr/bin/${executable}",
+        "${output_directory}/${executable}",
+        "--kill-after=5s",
+        " rm -- ",
+        "inspect_owned_id",
+        "--name \"${container_name}\" --label",
+        "Recovery record retained:",
+        "[a-f0-9]{64}",
+        "info.st_size <= 134217728",
+        "header[:6]",
+        "image_version=",
+        "effective_version=",
+    ] {
+        if !helper.contains(required) {
+            return Err(format!("missing bounded emulator extraction guard {required}"));
+        }
+    }
+    for forbidden in ["--privileged", "binfmt_misc", " run --", "apt-get"] {
+        if helper.contains(forbidden) || binary.contains(forbidden) {
+            return Err(format!("unreviewed release runtime operation {forbidden}"));
+        }
+    }
+    let pins: Vec<_> = helper
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("readonly release_emulator_image='")
+                .and_then(|value| value.strip_suffix("'"))
+        })
+        .collect();
+    if pins.len() != 1 {
+        return Err("emulator must have one immutable image definition".to_owned());
+    }
+    let (image, digest) = pins[0].split_once("@sha256:").ok_or("emulator digest missing")?;
+    if !image.starts_with("docker.io/tonistiigi/binfmt:qemu-v")
+        || digest.len() != 64
+        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("emulator image must have an explicit version and SHA-256 digest".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_release_binary_renovate(renovate: &serde_json::Value) -> Result<(), String> {
+    let managers = renovate["customManagers"].as_array().ok_or("missing managers")?;
+    let owners: Vec<_> = managers
+        .iter()
+        .filter(|manager| {
+            manager["managerFilePatterns"]
+                .as_array()
+                .is_some_and(|patterns| patterns.contains(&serde_json::json!("/^scripts/lib/release-emulator\\.sh$/")))
+        })
+        .collect();
+    if owners.len() != 1
+        || owners[0]["autoReplaceStringTemplate"]
+            .as_str()
+            .is_none_or(|template| !template.contains("{{{newValue}}}@{{{newDigest}}}"))
+    {
+        return Err("emulator pin needs one version-and-digest Renovate owner".to_owned());
+    }
+    let extraction = "# renovate: datasource=(?<datasource>docker) depName=(?<depName>[^\\s]+)\\nreadonly release_emulator_image='[^']+:(?<currentValue>qemu-v[^@']+)@(?<currentDigest>sha256:[a-f0-9]{64})'";
+    if owners[0]["matchStrings"] != serde_json::json!([extraction])
+        || owners[0]["versioningTemplate"]
+            != "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$"
+    {
+        return Err("emulator manager must extract the canonical version and digest together".to_owned());
+    }
+    let rules = renovate["packageRules"].as_array().ok_or("missing package rules")?;
+    let approvals: Vec<_> = rules
+        .iter()
+        .filter(|rule| rule["matchPackageNames"] == serde_json::json!(["docker.io/tonistiigi/binfmt"]))
+        .collect();
+    if approvals.len() != 1
+        || approvals[0]["automerge"] != false
+        || approvals[0]["dependencyDashboardApproval"] != true
+        || approvals[0]["groupName"] != "release emulator image"
+    {
+        return Err("emulator updates require a dedicated non-automerge approval group".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_release_binary_delivery(
+    binary: &str,
+    ci: &str,
+    release: &str,
+    helper: &str,
+    renovate: &serde_json::Value,
+) -> Result<(), String> {
+    validate_release_binary_build(binary)?;
+    validate_release_binary_projection(ci, release)?;
+    validate_release_binary_publication(release)?;
+    validate_release_binary_emulator(binary, helper)?;
+    validate_release_binary_renovate(renovate)
+}
+
+#[test]
+fn release_binary_delivery_and_renovate_contracts_reject_counterfactuals() -> Result<(), String> {
+    let root = repository_root();
+    let read = |path| fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"));
+    let binary = read(".github/workflows/release-binaries.yml")?;
+    let ci = read(".github/workflows/ci.yml")?;
+    let release = read(".github/workflows/release.yml")?;
+    let helper = read("scripts/lib/release-emulator.sh")?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&read(".github/renovate.json")?).map_err(|error| error.to_string())?;
+    validate_release_binary_delivery(&binary, &ci, &release, &helper, &renovate)?;
+    for (old, new) in [
+        ("armv7-unknown-linux-musleabihf", "unsupported-target"),
+        ("runs-on: macos-15-intel", "runs-on: macos-15"),
+        ("fail-fast: false", "fail-fast: true"),
+        ("merge-multiple: false", "merge-multiple: true"),
+        ("cargo build --locked", "cargo build"),
+        ("release-binaries.py verify-set", "true # verify-set"),
+        (
+            "bash scripts/lib/release-emulator.sh docker",
+            "bash scripts/lib/release-emulator.sh auto",
+        ),
+    ] {
+        let changed = binary.replace(old, new);
+        if changed == binary || validate_release_binary_delivery(&changed, &ci, &release, &helper, &renovate).is_ok() {
+            return Err(format!("binary contract accepted counterfactual {old}"));
+        }
+    }
+    for old in ["del needs[\"release-binaries\"]", "export NEEDS_JSON"] {
+        if validate_release_binary_delivery(&binary, &ci.replace(old, "true"), &release, &helper, &renovate).is_ok() {
+            return Err(format!("binary gate accepted counterfactual {old}"));
+        }
+    }
+    for old in [
+        "release-binaries.py stage",
+        "target/release-artifacts/boxferry*.tar.gz",
+        "test \"${#archive_names[@]}\" -eq 12",
+    ] {
+        if validate_release_binary_delivery(&binary, &ci, &release.replace(old, "true"), &helper, &renovate).is_ok() {
+            return Err(format!("release accepted counterfactual {old}"));
+        }
+    }
+    let draft_before_stage = release
+        .replacen("Create or replace draft GitHub release", "Draft marker moved", 1)
+        .replacen(
+            "release-binaries.py stage",
+            "Create or replace draft GitHub release\nrelease-binaries.py stage",
+            1,
+        );
+    if validate_release_binary_delivery(&binary, &ci, &draft_before_stage, &helper, &renovate).is_ok() {
+        return Err("release contract accepted draft creation before binary staging".to_owned());
+    }
+    for (old, new) in [
+        ("@sha256:", "@sha512:"),
+        ("--kill-after=5s", "--no-kill-after"),
+        ("--platform linux/amd64", "--platform linux/arm64"),
+    ] {
+        if validate_release_binary_delivery(&binary, &ci, &release, &helper.replace(old, new), &renovate).is_ok() {
+            return Err(format!("emulator accepted counterfactual {old}"));
+        }
+    }
+    let mut docker_versioning = renovate.clone();
+    let managers = docker_versioning["customManagers"]
+        .as_array_mut()
+        .ok_or("missing managers")?;
+    let owner = managers
+        .iter_mut()
+        .find(|manager| {
+            manager["description"] == "Update the reviewed direct release-emulator image and digest together"
+        })
+        .ok_or("missing emulator manager")?;
+    owner["versioningTemplate"] = serde_json::json!("docker");
+    if validate_release_binary_delivery(&binary, &ci, &release, &helper, &docker_versioning).is_ok() {
+        return Err("emulator contract accepted compatibility-suffix versioning".to_owned());
+    }
+    let mut automatic = renovate.clone();
+    let rules = automatic["packageRules"].as_array_mut().ok_or("missing rules")?;
+    let rule = rules
+        .iter_mut()
+        .find(|rule| rule["matchPackageNames"] == serde_json::json!(["docker.io/tonistiigi/binfmt"]))
+        .ok_or("missing emulator rule")?;
+    rule["automerge"] = serde_json::json!(true);
+    if validate_release_binary_delivery(&binary, &ci, &release, &helper, &automatic).is_ok() {
+        return Err("emulator contract accepted automatic updates".to_owned());
+    }
+    let mut duplicate = renovate.clone();
+    let managers = duplicate["customManagers"].as_array_mut().ok_or("missing managers")?;
+    let owner = managers
+        .iter()
+        .find(|manager| {
+            manager["description"] == "Update the reviewed direct release-emulator image and digest together"
+        })
+        .ok_or("missing emulator manager")?
+        .clone();
+    managers.push(owner);
+    if validate_release_binary_delivery(&binary, &ci, &release, &helper, &duplicate).is_ok() {
+        return Err("emulator contract accepted duplicate ownership".to_owned());
+    }
     Ok(())
 }

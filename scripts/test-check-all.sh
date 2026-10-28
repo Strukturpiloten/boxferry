@@ -45,6 +45,9 @@ esac
 if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ]]; then
   exit 17
 fi
+if [[ -n "${CHECK_ALL_TEST_FAIL_ARGUMENT:-}" && "$*" == "${CHECK_ALL_TEST_FAIL_ARGUMENT}" ]]; then
+  exit 17
+fi
 case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
@@ -94,13 +97,19 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/34\]' "${test_root}/default.output")" == 34 ]]
-grep --fixed-strings --quiet -- '[34/34] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 34 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/36\]' "${test_root}/default.output")" == 36 ]]
+grep --fixed-strings --quiet -- '[36/36] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 36 steps.' ]]
 assert_contains default "bash scripts/test-application-probes.sh"
 assert_contains check "bash scripts/test-application-probes.sh"
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
 assert_contains check "python3 scripts/test-reviewed-application-catalogue.py"
+for mode in default fix check; do
+  for command in "python3 scripts/test-release-binaries.py" "bash scripts/test-release-emulator.sh"; do
+    assert_contains "${mode}" "${command}"
+    [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
+  done
+done
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/31\]' "${test_root}/default.output" || true)" == 0 ]]
 [[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 31 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"
@@ -141,6 +150,17 @@ done
 status=0
 run_gate extra --check --fix || status=$?
 [[ "${status}" == 2 && ! -s "${test_root}/extra.commands" ]]
+
+# Each newly registered contract check is dispatched once and is a hard failure boundary.
+for failed_script in scripts/test-release-binaries.py scripts/test-release-emulator.sh; do
+  for mode in fix check; do
+    status=0
+    CHECK_ALL_TEST_FAIL_ARGUMENT="${failed_script}" run_gate binary_failure "--${mode}" || status=$?
+    [[ "${status}" == 17 ]]
+    [[ "$(tail -n 1 "${test_root}/binary_failure.commands")" == *" ${failed_script}" ]]
+    [[ "$(grep --fixed-strings --count -- 'BoxFerry local validation passed' "${test_root}/binary_failure.output" || true)" == 0 ]]
+  done
+done
 
 # A failed check must stop the gate and preserve its exit status in either mode.
 export CHECK_ALL_TEST_FAIL=actionlint

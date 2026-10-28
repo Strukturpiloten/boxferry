@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=34
+readonly total_steps=36
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -177,6 +177,8 @@ else
   run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
 fi
 run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
+run_step "Test release binary archive contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-release-binaries.py
+run_step "Test release emulator extraction" bash scripts/test-release-emulator.sh
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test Podman live outer storage ownership" bash scripts/test-podman-live-outer-storage.sh

@@ -104,9 +104,46 @@ jobs:
           overwrite: true
           retention-days: 90
 
+  release-binary-evidence:
+    name: Exact-run six-target CLI evidence
+    needs: [deterministic, release-metadata]
+    if: >-
+      always() && github.repository == 'Strukturpiloten/boxferry' &&
+      needs.deterministic.result == 'success' && needs.release-metadata.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out exact release revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download current-run CLI evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.deterministic.outputs.release_binary_artifact }}
+          path: target/release-binary-evidence
+      - name: Verify exact-run six-target CLI evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; p=json.load(sys.stdin)["packages"]; print(next(x["version"] for x in p if x["name"]=="boxferry"))')"
+          python3 scripts/release-binaries.py verify-set --input target/release-binary-evidence \
+            --version "${version}" --revision "${GITHUB_SHA}" --run-id "${GITHUB_RUN_ID}"
+
   release-validation:
     name: Release validation result
-    needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]
+    needs:
+      [
+        deterministic,
+        release-metadata,
+        migration-readiness,
+        migration-readiness-evidence,
+        release-binary-evidence,
+      ]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -119,10 +156,11 @@ jobs:
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           READINESS_RESULT: ${{ needs.migration-readiness.result }}
           EVIDENCE_RESULT: ${{ needs.migration-readiness-evidence.result }}
+          BINARY_RESULT: ${{ needs.release-binary-evidence.result }}
         run: |
           set -euo pipefail
           for result in "${DETERMINISTIC_RESULT}" "${RELEASE_METADATA_RESULT}" \
-            "${READINESS_RESULT}" "${EVIDENCE_RESULT}"; do
+            "${READINESS_RESULT}" "${EVIDENCE_RESULT}" "${BINARY_RESULT}"; do
             if [[ "${result}" != success ]]; then
               printf 'Release validation prerequisite did not succeed: %s\n' "${result}" >&2
               exit 1
@@ -192,6 +230,22 @@ jobs:
           echo 'Using the temporary crates.io token for the initial crate publications.'
           echo 'bootstrap=true' >> "${GITHUB_OUTPUT}"
 
+      - name: Download current-run CLI archives for publication
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.deterministic.outputs.release_binary_artifact }}
+          path: target/release-binary-evidence
+      - name: Verify and stage CLI archives before publication mutations
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release-binaries.py verify-set --input target/release-binary-evidence \
+            --version "${VERSION}" --revision "${GITHUB_SHA}" --run-id "${GITHUB_RUN_ID}"
+          python3 scripts/release-binaries.py stage --input target/release-binary-evidence \
+            --output target/release-artifacts --version "${VERSION}" \
+            --revision "${GITHUB_SHA}" --run-id "${GITHUB_RUN_ID}"
       - name: Create or verify annotated release tag
         shell: bash
         env:
@@ -410,13 +464,21 @@ jobs:
               "https://crates.io/api/v1/crates/${package}/${VERSION}/download"
             archive_names+=("${archive_name}")
           done
+          binary_archive_names="$(python3 scripts/release-binaries.py archive-names --version "${VERSION}")"
+          mapfile -t binary_names <<< "${binary_archive_names}"
+          test "${#binary_names[@]}" -eq 6
+          archive_names+=("${binary_names[@]}")
+          test "${#archive_names[@]}" -eq 12
           cd "${artifact_directory}"
           sha256sum "${archive_names[@]}" > SHA256SUMS
 
       - name: Attest release packages
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: target/release-artifacts/boxferry*.crate
+          subject-path: |
+            target/release-artifacts/boxferry*.crate
+            target/release-artifacts/boxferry*.tar.gz
+            target/release-artifacts/SHA256SUMS
 
       - name: Upload draft GitHub release assets
         shell: bash
@@ -479,6 +541,10 @@ jobs:
           for package in boxferry-model boxferry-engine boxferry-compose boxferry-podman boxferry-quadlet boxferry; do
             upload_asset "target/release-artifacts/${package}-${VERSION}.crate" "application/gzip"
           done
+          binary_names="$(python3 scripts/release-binaries.py archive-names --version "${VERSION}")"
+          while IFS= read -r archive_name; do
+            upload_asset "target/release-artifacts/${archive_name}" "application/gzip"
+          done <<< "${binary_names}"
           upload_asset target/release-artifacts/SHA256SUMS text/plain
 
       - name: Publish immutable GitHub release
