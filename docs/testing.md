@@ -91,6 +91,20 @@ validation requirements. All 16 routes supplement the preserved nine-route subse
 application, admission and publication checkpoints; source overrides never qualify normal
 registry/package integration.
 
+### Prepared Forgejo Docker source contracts
+
+Run `bash scripts/test-docker-forgejo-application.sh` for 76 inert-transport
+controls (275.571 seconds locally). It starts no runtime and proves no native
+acceptance.
+
+The complete gate runs it once; full CI plans select its separate ten-minute
+`docker-forgejo-application` job. Documentation plans skip it explicitly; the
+aggregate rejects missing or failed selected work.
+
+[Transport details](../fixtures/conformance/forgejo-application/docker-profile-contract.md)
+and [ADR 0086](decisions/0086-prepared-docker-forgejo-application-profile.md)
+retain choreography, cleanup, privacy and native-admission prerequisites.
+
 ## Podman evidence
 
 Historical input anchors cover 3.0.1, 3.4.4, 4.3.1, 4.9.3, 4.9.4 and reviewed 5.4–6.1
