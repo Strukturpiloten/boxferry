@@ -3663,9 +3663,9 @@ role_units = {
     },
 }
 def authored_unit(role, network, aliases):
-    networks = [f"test-supabase-{network}.network"]
+    networks = [f"test-supabase-{network}" + ("" if network == "edge" else ".network")]
     if role == "kong":
-        networks.append("test-supabase-edge.network")
+        networks.append("test-supabase-edge")
     return ("[Container]\nImage=example.invalid/authored:1\n"
             + "".join(f"Network={value}\n" for value in networks)
             + "".join(f"NetworkAlias={value}\n" for value in aliases))
@@ -3704,6 +3704,12 @@ for mode, without_peer, with_peer in (("cli", 11, 12), ("compose", 21, 23)):
                 path.write_text(authored_unit(role, network, changed_aliases))
                 rejected_inventory(mode, (selection, role, fault))
             if aliases:
+                physical = f"test-supabase-{network}" + ("" if network == "edge" else ".network")
+                wrong_suffix = f"test-supabase-{network}" + (".network" if network == "edge" else "")
+                path.write_text(original.replace(f"Network={physical}\n", f"Network={wrong_suffix}\n"))
+                rejected_inventory(mode, (selection, role, "wrong-reference-kind"))
+                path.write_text(original.replace(f"Network={physical}\n", f"Network={physical}\nNetwork={physical}\n"))
+                rejected_inventory(mode, (selection, role, "duplicate-attachment"))
                 for fault, changed_network in (("wrong-network", "edge" if network == "backend" else "backend"),
                                                 ("unknown-network", "unreviewed")):
                     path.write_text(authored_unit(role, changed_network, aliases))

@@ -72,7 +72,7 @@ def inventory(args):
             raise SystemExit("protected service-alias source differs from independent literal inventory")
         if aliases:
             network = stem + contract["network"]
-            if networks != [network + ".network"]:
+            if networks != [stem + contract["reference"]]:
                 raise SystemExit("protected service aliases have ambiguous network association")
             subjects.extend(f"services.{path.stem}.networks.{network}.aliases[{index}]"
                             for index in range(len(aliases)))

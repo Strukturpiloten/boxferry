@@ -1622,42 +1622,50 @@ observability_protected_service_alias_inventory() {
   "cli": {
     "alloy": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "log-producer": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "loki": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "loki"
       ]
     },
     "metrics-producer": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "metrics-producer"
       ]
     },
     "prometheus": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "prometheus"
       ]
     },
     "grafana": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "boundary-peer": {
       "network": "edge",
+      "reference": "edge",
       "aliases": []
     }
   },
   "compose": {
     "alloy": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "alloy"
@@ -1665,6 +1673,7 @@ observability_protected_service_alias_inventory() {
     },
     "log-producer": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "log-producer"
@@ -1672,6 +1681,7 @@ observability_protected_service_alias_inventory() {
     },
     "loki": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "loki"
@@ -1679,6 +1689,7 @@ observability_protected_service_alias_inventory() {
     },
     "metrics-producer": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "metrics-producer"
@@ -1686,6 +1697,7 @@ observability_protected_service_alias_inventory() {
     },
     "prometheus": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": [
         "@service",
         "prometheus"
@@ -1693,10 +1705,12 @@ observability_protected_service_alias_inventory() {
     },
     "grafana": {
       "network": "backend",
+      "reference": "backend.network",
       "aliases": []
     },
     "boundary-peer": {
       "network": "edge",
+      "reference": "edge",
       "aliases": []
     }
   }
