@@ -52,7 +52,7 @@ jobs:
   lanes:
     name: Isolated ${{ inputs.mode }} / ${{ inputs.lane }}
     if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     outputs:
       artifact_id: ${{ steps.upload-build.outputs.artifact-id }}
