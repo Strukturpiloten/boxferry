@@ -6,6 +6,22 @@ placement, network topology, mounted files, lifecycle, and cleanup. The offline
 `scripts/test-nextcloud-application-probes.sh` checks positive and negative cases;
 this refactor adds no Docker runtime evidence.
 
+The pure `scripts/lib/docker-nextcloud-input-contract.py` helper checks authored
+outcome/selection requests against independently held six-role identities,
+excluded proxy/peer IDs, source/recreated generations, explicit profiles, resource
+decisions, public-label scopes and three separate consents. Run its offline
+controls with `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-docker-nextcloud-input-contract.py`;
+the shared application-probe runner includes them. JSON and in-memory record
+budgets, value-free failures and inert imports are part of this test-only seam.
+It verifies neither physical custody nor native profile compatibility.
+
+[ADR 0087](../../../docs/decisions/0087-pure-nextcloud-input-contract.md) records
+the narrow source recovery. The Redis password in protected command/healthcheck
+fields remains an exporter blocker. Environment-value consents do not authorize
+those fields, and topology-only output cannot establish a complete executable
+Nextcloud plan. No Docker runtime profile, capture integration or admission is
+activated by these offline checks.
+
 Archive image-ID verification and stable-reference restoration remain nested CLI integrity steps
 before API activation. After activation, loaded-image and owned-network presence checks use the
 bounded host client against the explicit owned Unix socket. Only a confirmed absent network permits its original

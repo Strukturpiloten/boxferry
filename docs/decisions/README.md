@@ -93,6 +93,7 @@ registering the real runtime profile or changing native/application admission.
 | [0084](0084-bounded-docker-source-adapter.md) | Bounded Docker source library; CLI/default deferrals superseded by 0085 |
 | [0085](0085-docker-cli-neutral-routes.md) | Unreleased 16-route Docker CLI, separate consent and inert artifact publication |
 | [0086](0086-prepared-docker-forgejo-application-profile.md) | Prepared Forgejo runtime source and full-plan-only hermetic contracts; native admission unchanged |
+| [0087](0087-pure-nextcloud-input-contract.md) | Pure Nextcloud input-request consistency checker; runtime and application admission unchanged |
 
 ## Superseded history
 
