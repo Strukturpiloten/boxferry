@@ -94,6 +94,7 @@ registering the real runtime profile or changing native/application admission.
 | [0085](0085-docker-cli-neutral-routes.md) | Unreleased 16-route Docker CLI, separate consent and inert artifact publication |
 | [0086](0086-prepared-docker-forgejo-application-profile.md) | Prepared Forgejo runtime source and full-plan-only hermetic contracts; native admission unchanged |
 | [0087](0087-pure-nextcloud-input-contract.md) | Pure Nextcloud input-request consistency checker; runtime and application admission unchanged |
+| [0088](0088-offline-core-semantic-projection.md) | Private typed core comparison; current native oracle and volume-only authorization unchanged |
 
 ## Superseded history
 
