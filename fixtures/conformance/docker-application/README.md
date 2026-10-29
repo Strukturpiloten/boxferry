@@ -1,5 +1,14 @@
 # Docker application contracts and runtime prerequisite
 
+The existing core Compose check uses the facade-owned
+`docker-core-semantic-projection` example and independently authored
+`core-semantic-expectations.json`. Its closed typed graph/outcome comparison,
+private source-attested helper profile and offline controls are defined in
+[ADR 0088](../../../docs/decisions/0088-offline-core-semantic-projection.md).
+Core calls additionally require `--core-projection-binary` and
+`--core-projection-receipt`. This pure helper grants no runtime authorization;
+the empty current report oracle still refuses all four real lanes.
+
 ## Bound volume-consumer HTTP prerequisite
 
 Live Engine request profiles require `--unix-http-helper` naming exactly

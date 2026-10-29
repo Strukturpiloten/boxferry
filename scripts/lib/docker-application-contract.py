@@ -177,7 +177,11 @@ def candidate_source_digest(root: pathlib.Path) -> str:
 
 
 def expected_build_command(lens_root: pathlib.Path, profile: str = "core-journey") -> list[str]:
-    require(profile in {"core-journey", "volume-fixtures", "host-metadata"}, "candidate profile is unreviewed")
+    require(profile in {"core-journey", "volume-fixtures", "host-metadata", "core-semantic-projection"}, "candidate profile is unreviewed")
+    if profile == "core-semantic-projection":
+        return ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                "docker-core-semantic-projection", "--no-default-features", "--features", "compose,docker",
+                "--jobs", "2", "--config", f'patch.crates-io.docker-lens.path="{lens_root}"']
     if profile == "host-metadata":
         return ["cargo", "build", "--locked", "--package", "boxferry", "--example",
                 "docker-host-metadata", "--no-default-features", "--features", "docker", "--jobs", "2",
@@ -205,6 +209,8 @@ def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.
             and binary.is_relative_to(root / "target")
             and not binary.is_symlink() and binary.is_file(),
             "BoxFerry binary must be a regular worktree-local target file")
+    require(profile != "core-semantic-projection" or binary.name == "docker-core-semantic-projection",
+            "core semantic build artifact name differs")
     require(root.is_absolute() and not root.is_symlink()
             and all(not parent.is_symlink() for parent in binary.parents if parent.is_relative_to(root)),
             "BoxFerry binary path must have no symlink parent")
@@ -264,7 +270,8 @@ def capture_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib
                       destination: pathlib.Path, *, profile: str = "core-journey") -> dict[str, Any]:
     """Execute only an owner-private snapshot of the attested input bytes."""
     record = verify_candidate(root, binary, receipt, lens_root, lens_revision, profile=profile)
-    snapshot_name = "boxferry-host-metadata" if profile == "host-metadata" else "boxferry-candidate"
+    snapshot_name = ({"host-metadata": "boxferry-host-metadata",
+                      "core-semantic-projection": "boxferry-core-semantic-projection"}.get(profile, "boxferry-candidate"))
     require(destination.is_absolute() and destination.name == snapshot_name
             and not destination.exists() and destination.parent.is_dir()
             and not destination.parent.is_symlink()
@@ -344,65 +351,111 @@ def render_core_source(template: pathlib.Path, destination: pathlib.Path, image:
         output.write(raw.replace(placeholder, image))
 
 
-def core_generated_compose(raw: bytes, image: str) -> None:
-    """Closed check of reviewed image, environment, and external-bridge intent."""
-    require(0 < len(raw) <= 16_384, "reacquired Compose document exceeds core limit")
-    lines = raw.decode("utf-8").splitlines()
-    require(lines[:4] == ["---", f"name: {CONTAINER_NAME}", "services:", f"  {REACQUIRED_SERVICE}:"],
-            "reacquired Compose root or service identity differs")
-    require(lines.count("networks:") == 1, "reacquired Compose network root is missing or repeats")
-    network_root = lines.index("networks:")
-    require(network_root > 4, "reacquired Compose network root is misplaced")
-    def scalar(value: str) -> str:
-        if value.startswith('"'):
-            parsed = json.loads(value)
-            require(isinstance(parsed, str), "reacquired Compose scalar is not a string")
-            return parsed
-        require(bool(re.fullmatch(r"[A-Za-z0-9_./:@; =-]+", value)),
-                "reacquired Compose scalar is outside checked subset")
-        return value
-    fields: dict[str, Any] = {}
-    index = 4
-    while index < network_root:
-        line = lines[index]
-        if line in ("    command:", "    environment:"):
-            key = line.strip().removesuffix(":")
-            require(key not in fields, "reacquired Compose list field repeats")
-            values = []
-            index += 1
-            while index < network_root and lines[index].startswith("      - "):
-                values.append(scalar(lines[index][8:]))
-                index += 1
-            fields[key] = values
-            continue
-        if line == "    networks:":
-            require("networks" not in fields and index + 1 < network_root
-                    and lines[index + 1] == "      docker-network-1: {}",
-                    "reacquired Compose bridge attachment differs")
-            fields["networks"] = ["docker-network-1"]
-            index += 2
-            continue
-        match = re.fullmatch(r"    (image|container_name): (.+)", line)
-        require(match is not None, "reacquired Compose has an unreviewed root or service field")
-        key, value = match.groups()
-        require(key not in fields, "reacquired Compose field repeats")
-        fields[key] = scalar(value)
-        index += 1
-    require(fields == {"image": image, "container_name": CONTAINER_NAME,
-                       "command": CORE_COMMAND, "environment": CORE_BUSYBOX_ENV,
-                       "networks": ["docker-network-1"]},
-            "reacquired Compose core semantics differ")
-    require(lines[network_root + 1:network_root + 2] == ["  docker-network-1:"],
-            "reacquired Compose external bridge identity differs")
-    network_fields: dict[str, str] = {}
-    for line in lines[network_root + 2:]:
-        match = re.fullmatch(r"    (name|external): (.+)", line)
-        require(match is not None, "reacquired Compose network has an unreviewed field")
-        key, value = match.groups()
-        require(key not in network_fields, "reacquired Compose network field repeats")
-        network_fields[key] = scalar(value) if key == "name" else value
-    require(network_fields == {"name": "bridge", "external": "true"},
-            "reacquired Compose external bridge semantics differ")
+def core_semantic_expectations() -> dict[str, Any]:
+    """Authored fixture/image facts only; never current native-lane admission."""
+    path = REPOSITORY_ROOT / "fixtures/conformance/docker-application/core-semantic-expectations.json"
+    value = json.loads(bounded_regular_bytes(path, 65_536), object_pairs_hook=no_duplicate_keys)
+    require(type(value) is dict and set(value) == {
+                "schema_version", "kind", "native_execution", "native_admission", "source", "provenance",
+                "image", "contexts", "compose_template", "compose_import_outcomes", "compose_import_diagnostics",
+                "real_lane_qualification", "excluded_claims"}
+            and type(value.get("schema_version")) is int and value["schema_version"] == 1
+            and value.get("kind") == "boxferry-offline-core-semantic-expectations"
+            and value.get("native_execution") is False and value.get("native_admission") is False
+            and value.get("image", {}).get("reference") == CORE_BUSYBOX_FIXTURE
+            and all(flag is False for flag in value.get("real_lane_qualification", {}).values())
+            and set(value.get("real_lane_qualification", {})) == set(CORE_PRESETS),
+            "offline core semantic expectation identity differs")
+    _, _, authored = core_prerequisite_inputs()
+    require(value["source"] == authored["source"], "core semantic authored-source binding differs")
+    return value
+
+
+def core_projection_arguments(image: str, lane: str, profile: dict[str, Any]) -> list[str]:
+    expected = core_semantic_expectations()
+    require(type(image) is str and image == "registry.invalid/boxferry-core/busybox:1.37.0"
+            and lane in expected["contexts"] and type(profile) is dict,
+            "core semantic image or lane differs")
+    context = expected["contexts"][lane]
+    require(profile.get("engine_release") == context["engine_release"]
+            and profile.get("acquisition_api_version") == context["acquisition_api"]
+            and profile.get("daemon_mode") == context["daemon_mode"],
+            "core semantic source context differs")
+    facts = expected["image"]
+    return ["--image-alias", image, "--lane", lane, "--engine-release", context["engine_release"],
+            "--api-version", context["acquisition_api"], "--daemon-mode", context["daemon_mode"],
+            "--image-index", facts["index_digest"], "--image-manifest", facts["manifest_digest"],
+            "--image-config", facts["config_digest"], "--platform", facts["platform"]]
+
+
+def core_projection_result(raw: bytes) -> None:
+    require(type(raw) is bytes and 0 < len(raw) <= 65_536, "core semantic result exceeds bound")
+    def nonfinite(_value):
+        raise ContractError("core semantic result is invalid")
+    try:
+        result = json.loads(raw, object_pairs_hook=no_duplicate_keys, parse_constant=nonfinite)
+    except (ValueError, UnicodeError, RecursionError):
+        raise ContractError("core semantic result is invalid") from None
+    expected = core_semantic_expectations()
+    wanted = {"schema_version": 1, "kind": "boxferry-private-core-semantic-comparison",
+              "native_execution": False, "native_admission": False, "status": "matched",
+              "compose_import_outcomes": expected["compose_import_outcomes"],
+              "compose_import_diagnostics": expected["compose_import_diagnostics"]}
+    # Canonical JSON equality preserves false/0 and integer/float distinctions.
+    require(json.dumps(result, sort_keys=True, separators=(",", ":"))
+            == json.dumps(wanted, sort_keys=True, separators=(",", ":")),
+            "core semantic graph, outcomes or diagnostics differ")
+
+
+def core_generated_compose(raw: bytes, image: str, *, helper: pathlib.Path,
+                           helper_sha256: str, lane: str, profile: dict[str, Any]) -> None:
+    """Use a source-attested private typed helper; never decode Compose in Python."""
+    require(type(raw) is bytes and 0 < len(raw) <= 16_384, "reacquired Compose exceeds core limit")
+    arguments = core_projection_arguments(image, lane, profile)
+    require(type(helper_sha256) is str and DIGEST_PATTERN.fullmatch(helper_sha256) is not None
+            and helper.is_absolute() and helper.name == "boxferry-core-semantic-projection"
+            and helper.parent.is_dir() and not helper.parent.is_symlink()
+            and helper.parent.stat().st_uid == os.geteuid()
+            and stat.S_IMODE(helper.parent.stat().st_mode) == 0o700,
+            "core semantic helper boundary differs")
+    try:
+        descriptor = os.open(helper, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise ContractError("core semantic helper boundary is unavailable") from None
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid()
+                and stat.S_IMODE(before.st_mode) == 0o500 and before.st_nlink == 1
+                and 0 < before.st_size <= 512 * 1024 * 1024,
+                "core semantic helper is not a private executable")
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
+            digest = hashlib.sha256()
+            copied = 0
+            while chunk := stream.read(1024 * 1024):
+                copied += len(chunk)
+                require(copied <= before.st_size, "core semantic helper exceeded its held size")
+                digest.update(chunk)
+            require(copied == before.st_size and digest.hexdigest() == helper_sha256,
+                    "core semantic helper digest differs")
+        def limit_output():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (65_536, 65_536))
+        with tempfile.TemporaryFile(dir=helper.parent) as output, tempfile.TemporaryFile(dir=helper.parent) as errors:
+            try:
+                completed = subprocess.run([f"/proc/self/fd/{descriptor}", *arguments], input=raw,
+                    stdout=output, stderr=errors, timeout=10, check=False, pass_fds=(descriptor,),
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}, preexec_fn=limit_output)
+            except (OSError, subprocess.SubprocessError):
+                raise ContractError("core semantic helper did not complete") from None
+            require(completed.returncode == 0, "core semantic helper rejected the document")
+            output.seek(0); errors.seek(0)
+            require(errors.read(1) == b"", "core semantic helper emitted diagnostics")
+            core_projection_result(output.read(65_537))
+        after = os.fstat(descriptor)
+        require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                "core semantic helper changed during use")
+    finally:
+        os.close(descriptor)
 
 
 def core_report(raw: bytes, source: str, target: str, lane: str,
@@ -2286,7 +2339,7 @@ def main() -> int:
     candidate.add_argument("--receipt", required=True)
     candidate.add_argument("--docker-lens-root", required=True)
     candidate.add_argument("--docker-lens-revision", required=True)
-    candidate.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata"), default="core-journey")
+    candidate.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata", "core-semantic-projection"), default="core-journey")
     snapshot = commands.add_parser("capture-candidate")
     snapshot.add_argument("--boxferry-root", required=True)
     snapshot.add_argument("--binary", required=True)
@@ -2294,7 +2347,7 @@ def main() -> int:
     snapshot.add_argument("--docker-lens-root", required=True)
     snapshot.add_argument("--docker-lens-revision", required=True)
     snapshot.add_argument("--destination", required=True)
-    snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata"), default="core-journey")
+    snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata", "core-semantic-projection"), default="core-journey")
     for name in ("validate-volume-fixtures", "apply-volume-fixtures", "capture-volume-evidence"):
         volumes = commands.add_parser(name)
         volumes.add_argument("--directory", type=pathlib.Path, required=True)
@@ -2371,6 +2424,12 @@ def main() -> int:
     checked.add_argument("--socket-path")
     checked.add_argument("--lane")
     checked.add_argument("--catalogue-json")
+    checked.add_argument("--projection-binary", type=pathlib.Path)
+    checked.add_argument("--projection-receipt", type=pathlib.Path)
+    checked.add_argument("--projection-receipt-sha256")
+    checked.add_argument("--boxferry-root", type=pathlib.Path)
+    checked.add_argument("--docker-lens-root", type=pathlib.Path)
+    checked.add_argument("--docker-lens-revision")
     artifact = commands.add_parser("validate-artifact")
     artifact.add_argument("--artifact", type=pathlib.Path, required=True)
     artifact.add_argument("--artifact-sha256", required=True,
@@ -2620,7 +2679,17 @@ def main() -> int:
                 require(network_id == args.network_id,
                         "Compose bridge selector differs from validated native endpoint")
                 core_network_inspect(network_raw, network_id, args.container_id, endpoint_id)
-                core_generated_compose(raw, args.image)
+                require(all(value is not None for value in
+                        (args.projection_binary, args.projection_receipt, args.projection_receipt_sha256,
+                         args.boxferry_root, args.docker_lens_root, args.docker_lens_revision,
+                         args.lane, args.catalogue_json)), "core semantic helper evidence is incomplete")
+                proof = verify_candidate(args.boxferry_root, args.projection_binary, args.projection_receipt,
+                    args.docker_lens_root, args.docker_lens_revision, profile="core-semantic-projection",
+                    receipt_sha256=args.projection_receipt_sha256)
+                catalogue = json.loads(args.catalogue_json, object_pairs_hook=no_duplicate_keys)
+                helper = path.parent.parent / "boxferry-core-semantic-projection"
+                core_generated_compose(raw, args.image, helper=helper, helper_sha256=proof["binary_sha256"],
+                                       lane=args.lane, profile=catalogue["profiles"][args.lane])
             elif args.kind == "inspect":
                 network_id, _ = core_inspect(raw, args.container_id, args.image,
                                              args.fixture_image)
