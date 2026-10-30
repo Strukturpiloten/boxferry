@@ -316,7 +316,7 @@ class OuterRuntimeSnapshotTests(unittest.TestCase):
             contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
 
     def test_snapshot_replacement_permissions_and_hardlinks_refuse(self):
-        self.capture()
+        digest = self.capture()
         snapshot = self.destination / "native-presence.py"
         original = snapshot.read_bytes()
         snapshot.write_bytes(original + b"changed")
@@ -327,9 +327,19 @@ class OuterRuntimeSnapshotTests(unittest.TestCase):
         with self.assertRaises(contract.ContractError):
             contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
         snapshot.chmod(0o600)
-        os.link(snapshot, self.source / "linked-snapshot")
-        with self.assertRaises(contract.ContractError):
-            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+        self.assertEqual(snapshot.stat().st_nlink, 1)
+        self.assertEqual(contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure), digest)
+        with tempfile.TemporaryDirectory(dir=self.destination.parent.parent) as link_root:
+            link = pathlib.Path(link_root) / "linked-snapshot"
+            os.link(snapshot, link)
+            try:
+                self.assertEqual(snapshot.stat().st_nlink, 2)
+                with self.assertRaises(contract.ContractError):
+                    contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+            finally:
+                link.unlink()
+        self.assertEqual(snapshot.stat().st_nlink, 1)
+        self.assertEqual(contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure), digest)
 
 
 class CoreJourneyBoundaryTests(unittest.TestCase):
