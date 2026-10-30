@@ -6,9 +6,11 @@ script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -r -- "${test_root}"' EXIT
 cp -- "${script_directory}/test-application-probes.sh" "${test_root}/"
-for application in runner export-privacy forgejo nextcloud paperless immich observability live-cleanup; do
+for application in runner docker-paperless export-privacy forgejo nextcloud paperless immich observability live-cleanup; do
   if [[ "${application}" == runner ]]; then
     stub="${test_root}/test-application-probes-runner.sh"
+  elif [[ "${application}" == docker-paperless ]]; then
+    stub="${test_root}/test-docker-paperless-application.sh"
   elif [[ "${application}" == export-privacy ]]; then
     stub="${test_root}/test-application-export-privacy.sh"
   elif [[ "${application}" == live-cleanup ]]; then
@@ -61,39 +63,44 @@ run_probe_test() {
   PROBE_TEST_LOG="${probe_log}" PROBE_TEST_ROOT="${test_root}" PROBE_FAIL="${1:-}" \
     PYTHONDONTWRITEBYTECODE=0 PATH="${test_root}/bin:${PATH}" bash "${test_root}/test-application-probes.sh"
 }
-readonly existing_order=$'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh'
+readonly existing_order=$'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh'
 run_probe_test
 [[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-readiness-comparison.py\ntest-podman-live-cleanup.sh\ntest-docker-nextcloud-contract.py\ntest-apply-reacquire-contract.py' ]]
 : > "${probe_log}"
 status=0
+run_probe_test test-docker-paperless-application.sh || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh' ]]
+: > "${probe_log}"
+status=0
 run_probe_test test-docker-application-expectations.py || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py' ]]
 : > "${probe_log}"
 status=0
 run_probe_test 'docker-application-expectations.py check-sources' || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-docker-application-schedule.py || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-docker-forgejo-authored-fields.py || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-paperless-application-probes.sh || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-observability-application-probes.sh || status=$?
 [[ "${status}" == 37 ]]
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh' ]]
+[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh' ]]
 
 : > "${probe_log}"
 status=0
