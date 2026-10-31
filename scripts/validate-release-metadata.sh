@@ -47,6 +47,7 @@ else
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
+    "boxferry-docker",
     "boxferry-podman",
     "boxferry-quadlet",
     "boxferry"

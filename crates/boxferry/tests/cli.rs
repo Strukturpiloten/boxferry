@@ -1,6 +1,12 @@
 //! Black-box contracts for the installable command.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "quadlet"))]
+#![cfg(all(
+    feature = "cli",
+    feature = "compose",
+    feature = "docker",
+    feature = "podman",
+    feature = "quadlet"
+))]
 
 use std::fmt::Write as _;
 use std::{
@@ -603,7 +609,7 @@ fn assert_verbose_capabilities_include_concise_summaries() -> Result<(), Box<dyn
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
-    assert_eq!(routes.len(), 9);
+    assert_eq!(routes.len(), 16);
     let podman_inputs = capabilities_json["podman"]["input_capabilities"]
         .as_array()
         .ok_or("Podman input capabilities")?;

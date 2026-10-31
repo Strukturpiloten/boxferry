@@ -2,7 +2,7 @@
 schema = 1
 id = "real-world-compose-immich"
 source-capabilities = ["compose"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = []
 
 [application]
@@ -172,3 +172,60 @@ allowed-losses-file = "expected.podman.losses.tsv"
 native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Pinned upstream source leaves image and database values unresolved, so no complete Engine request can be emitted."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = [
+  "BFD0007|services.immich-server.image",
+  "BFD0007|services.immich-machine-learning.image",
+  "BFC0105|services.immich-server.image",
+  "BFC0105|services.immich-server.volumes[0]",
+  "BFC0105|services.immich-machine-learning.image",
+  "BFC0105|services.database.environment.POSTGRES_PASSWORD",
+  "BFC0105|services.database.environment.POSTGRES_USER",
+  "BFC0105|services.database.environment.POSTGRES_DB",
+  "BFC0105|services.database.volumes[0]",
+  "BFD0006|services.immich-server.environment_files",
+  "BFD0006|services.immich-server.healthcheck.command",
+  "BFD0006|services.immich-machine-learning.environment_files",
+  "BFD0006|services.immich-machine-learning.healthcheck.command",
+  "BFD0006|services.database.environment.POSTGRES_PASSWORD",
+  "BFD0006|services.database.environment.POSTGRES_USER",
+  "BFD0006|services.database.environment.POSTGRES_DB",
+  "BFD0006|services.database.environment.POSTGRES_INITDB_ARGS",
+  "BFD0006|services.database.healthcheck.command",
+  "BFD0006|services.database.container",
+  "BFD0006|services.immich-server.dependencies.0",
+  "BFD0006|services.immich-server.dependencies.1",
+]
+allowed-losses = [
+  { rule = "BFC0105", subject = "services.immich-server.volumes[0]", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFC0105", subject = "services.database.volumes[0]", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.immich-server.image", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.immich-machine-learning.image", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-server.environment_files", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-server.healthcheck.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-machine-learning.environment_files", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-machine-learning.healthcheck.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.environment.POSTGRES_PASSWORD", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.environment.POSTGRES_USER", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.environment.POSTGRES_DB", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.environment.POSTGRES_INITDB_ARGS", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.healthcheck.command", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.database.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-server.dependencies.0", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.immich-server.dependencies.1", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+]

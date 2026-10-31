@@ -85,25 +85,11 @@ published dependency. The scenario runner always checks that declared protected
 values stay out of reports and console output, including when artifact inclusion
 is authorized.
 
-For reviewed authored Podman-to-Podman routes, the native library expectation
-retains the included-value acquisition contract while the CLI exercises its
-default withheld-value contract. `cli-withheld-diagnostics-delta-file` names the
-small exact diagnostic difference: `-BFP0003|services.<service>.environment`
-removes the richer observation summary and
-`+BFP0002|services.<service>.environment.<name>` asserts a required value by
-name. The validator requires one addition for every independently required
-environment assignment and one removal per affected service; all other
-diagnostics remain exactly as reviewed in `diagnostics-file`. This delta does
-not authorize protected values in a Podman output artifact.
-
-`cli-withheld-losses-delta-file` records the corresponding independently
-reviewed loss changes for those Podman routes. Each tab-separated row prefixes
-the rule with `+` or `-`, followed by subject, decision, version scope, and
-count; additions and removals are checked against `allowed-losses-file`.
-The runner replays redacted acquisition to verify the exact loss tuples and
-checks the CLI report's aggregate fidelity counts and policy. CLI JSON does not
-expose per-subject loss tuples, so the replay and exact diagnostics provide
-that evidence without claiming direct tuple visibility in the report.
+Reviewed Podman-to-Podman routes keep included-value library expectations and withheld CLI
+defaults. Exact diagnostic/loss delta files and redacted acquisition replay distinguish them
+without authorizing protected Podman artifacts or claiming per-subject loss visibility in CLI
+JSON. See [withheld-value fixture contracts](../docs/public/development/testing/index.md#podman-withheld-value-fixture-contracts)
+for the required delta grammar and comparisons.
 
 Every capability-derived importer/exporter pair has an independent outcome
 (`migration-success`, `expected-rejection`, `unsupported-environment`, or
@@ -148,3 +134,9 @@ and reimport or deterministic output; expected artifacts never become native
 input. `real-world/corpus.toml` is the opt-in pinned upstream Compose contract.
 See [testing](../docs/testing.md) and the
 [application test map](../crates/boxferry/tests/README.md).
+
+Docker expectations describe inert plans and separately bound dependency sidecars, never
+observed inventories or execution. The
+[Docker fixture contract](../docs/public/development/testing/index.md#docker-fixture-expectations)
+retains exact target selection, SHA-256 binding, independent consents, refusal subjects and the
+simplified-versus-vendored Supabase distinction.

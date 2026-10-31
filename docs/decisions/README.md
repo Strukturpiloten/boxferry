@@ -27,6 +27,17 @@ separately from native qualification.
 [ADR 0077](0077-workspace-rust198-baseline.md) raises the workspace Rust baseline and updates
 the diagnostic ZIP dependency without changing its privacy or writer-only boundaries.
 
+[ADR 0083](0083-bounded-docker-target-consumer-preparation.md) records the historical target-only
+checkpoint; [ADR 0084](0084-bounded-docker-source-adapter.md) extends it with the optional source
+library. [ADR 0085](0085-docker-cli-neutral-routes.md) supersedes only their CLI/default deferrals
+with the Unreleased 16-route neutral CLI contract. Native/application and published-dependency
+qualification remain separate. The separately preserved source-daemon-context proposal remains
+unadopted.
+
+[ADR 0087](0087-prepared-docker-forgejo-application-profile.md) permits prepared
+Forgejo test-only source and independently selected hermetic contracts, without
+registering the real runtime profile or changing native/application admission.
+
 | ADR                                                                   | Decision                                                                     |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | [0001](0001-project-boundaries-and-origin.md)                         | Repository boundaries, dependency direction, and from-scratch implementation |
@@ -81,6 +92,12 @@ the diagnostic ZIP dependency without changing its privacy or writer-only bounda
 | [0067](0067-run-owned-host-archive-aliases.md) | Run-owned host archive aliases and unchanged nested fixture references |
 | [0073](0073-compose-alias-sensitivity-and-export-refusal.md) | Scalar-specific Compose alias sensitivity and whole-candidate protected-alias export refusal |
 | [0078](0078-trusted-docker-consumer-validation.md) | Proposed trusted exact-pair Docker volume-consumer diagnostic; production authorization pending |
+| [0083](0083-bounded-docker-target-consumer-preparation.md) | Target-only Docker library and bounded inert prerelease consumer preparation |
+| [0084](0084-bounded-docker-source-adapter.md) | Bounded Docker source library; CLI/default deferrals superseded by 0085 |
+| [0085](0085-docker-cli-neutral-routes.md) | Unreleased 16-route Docker CLI, separate consent and inert artifact publication |
+| [0087](0087-prepared-docker-forgejo-application-profile.md) | Prepared Forgejo runtime source and full-plan-only hermetic contracts; native admission unchanged |
+| [0088](0088-pure-nextcloud-input-contract.md) | Pure Nextcloud input-request consistency checker; runtime and application admission unchanged |
+| [0089](0089-offline-core-semantic-projection.md) | Private typed core comparison; current native oracle and volume-only authorization unchanged |
 
 ## Superseded history
 

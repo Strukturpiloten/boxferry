@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -73,12 +74,14 @@ class ValidationPlanTests(unittest.TestCase):
         head = self.commit()
         plan = self.plan(self.base, head)
         self.assertEqual(plan["profile"], "prose")
+        self.assertFalse(plan["jobs"]["docker-forgejo-application"])
         self.assertEqual({name for name, selected in plan["jobs"].items() if selected}, set(POLICY["profile_jobs"]["prose"]))
 
     def test_executable_docs_and_new_code_fences_select_focused_suite(self) -> None:
         write(self.root, "docs/public/getting-started/index.md", "# Start\n\nUpdated example.\n")
         head = self.commit()
         self.assertEqual(self.plan(self.base, head)["profile"], "executable-docs")
+        self.assertFalse(self.plan(self.base, head)["jobs"]["docker-forgejo-application"])
         write(self.root, "docs/public/concepts/index.md", "# Concepts\n\n```console\n$ boxferry --version\n```\n")
         next_head = self.commit("new example")
         self.assertEqual(self.plan(head, next_head)["profile"], "executable-docs")
@@ -164,12 +167,14 @@ class ValidationPlanTests(unittest.TestCase):
                 write(self.root, path, "changed\n")
                 head = self.commit(path)
                 self.assertEqual(self.plan(self.base, head)["profile"], "full")
+                self.assertTrue(self.plan(self.base, head)["jobs"]["docker-forgejo-application"])
                 git(self.root, "revert", "--no-edit", head)
                 self.base = git(self.root, "rev-parse", "HEAD")
         write(self.root, "docs/public/concepts/index.md", "# Concepts\n\nNew prose.\n")
         write(self.root, "src/main.rs", "fn main() { println!(\"x\"); }\n")
         head = self.commit("mixed")
         self.assertEqual(self.plan(self.base, head)["profile"], "full")
+        self.assertTrue(self.plan(self.base, head)["jobs"]["docker-forgejo-application"])
 
     def test_add_delete_rename_and_special_path_bytes(self) -> None:
         write(self.root, "docs/public/new page ü.md", "# New\n")
@@ -189,8 +194,9 @@ class ValidationPlanTests(unittest.TestCase):
         self.assertEqual(self.plan(newline, moved_to_code)["profile"], "full")
 
     def test_missing_comparison_and_empty_comparison_fall_back_to_full(self) -> None:
-        self.assertEqual(self.plan(self.base, self.base)["profile"], "full")
-        self.assertEqual(self.plan("0" * 40, self.base)["profile"], "full")
+        for plan in (self.plan(self.base, self.base), self.plan("0" * 40, self.base)):
+            self.assertEqual(plan["profile"], "full")
+            self.assertTrue(plan["jobs"]["docker-forgejo-application"])
         with self.assertRaises(planner.PlanError):
             planner.parse_diff(b"R100\0old\0")
         with self.assertRaises(planner.PlanError):
@@ -243,6 +249,52 @@ class ValidationPlanTests(unittest.TestCase):
                 plan = planner.make_plan(arguments(self.root, event), POLICY)
                 self.assertEqual(plan["profile"], "full")
                 self.assertTrue(all(plan["jobs"].values()))
+                self.assertTrue(plan["jobs"]["docker-forgejo-application"])
+
+    def test_forgejo_source_contract_job_is_independent_and_full_only(self) -> None:
+        name = "docker-forgejo-application"
+        self.assertIn(name, POLICY["jobs"])
+        for profile in ("prose", "executable-docs"):
+            self.assertNotIn(name, POLICY["profile_jobs"][profile])
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text()
+        declaration = re.search(r"(?ms)^  docker-forgejo-application:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow)
+        self.assertIsNotNone(declaration)
+        job = declaration[1]
+        self.assertIn("    needs: validation-plan\n", job)
+        self.assertIn("    if: needs.validation-plan.outputs.select_docker_forgejo_application == 'true'\n", job)
+        self.assertIn("    runs-on: ubuntu-24.04\n", job)
+        self.assertIn("    timeout-minutes: 10\n", job)
+        self.assertIn("      - *checkout\n", job)
+        command = "run: bash scripts/test-docker-forgejo-application.sh"
+        self.assertEqual(workflow.count(command), 1)
+        self.assertIn(command, job)
+        self.assertEqual(job.count("        run:"), 1)
+        self.assertNotIn("secrets.", job)
+        self.assertNotIn("sudo", job)
+        self.assertIn("select_docker_forgejo_application: ${{ steps.plan.outputs.select_docker_forgejo_application }}", workflow)
+        self.assertNotIn("test-docker-forgejo-application.sh", (SOURCE_ROOT / "scripts/test-application-probes.sh").read_text())
+
+    def test_forgejo_source_job_selected_failure_or_missing_needs_blocks_gate(self) -> None:
+        plan = planner.make_plan(arguments(self.root, "push"), POLICY)
+        needs = {job: {"result": "success"} for job in POLICY["jobs"]}
+        needs["validation-plan"] = {"result": "success"}
+        args = arguments(self.root, "push")
+        planner.verify_gate(plan, needs, POLICY, args)
+        for result in ("skipped", "failure", "cancelled", "timed_out", None):
+            with self.subTest(result=result):
+                changed = copy.deepcopy(needs)
+                changed["docker-forgejo-application"]["result"] = result
+                with self.assertRaises(planner.PlanError):
+                    planner.verify_gate(plan, changed, POLICY, args)
+        for change in ("missing", "extra"):
+            with self.subTest(needs=change):
+                changed = copy.deepcopy(needs)
+                if change == "missing":
+                    del changed["docker-forgejo-application"]
+                else:
+                    changed["unexpected-job"] = {"result": "success"}
+                with self.assertRaises(planner.PlanError):
+                    planner.verify_gate(plan, changed, POLICY, args)
 
     def test_gate_rejects_missing_skipped_failed_and_cancelled_required_jobs(self) -> None:
         write(self.root, "docs/public/concepts/index.md", "# Concepts\n\nNew prose.\n")
@@ -251,6 +303,7 @@ class ValidationPlanTests(unittest.TestCase):
         needs = {job: {"result": "success" if plan["jobs"][job] else "skipped"} for job in POLICY["jobs"]}
         needs["validation-plan"] = {"result": "success"}
         args = arguments(self.root, "pull_request", self.base, head)
+        self.assertEqual(needs["docker-forgejo-application"]["result"], "skipped")
         self.assertEqual(len(planner.verify_gate(plan, needs, POLICY, args)), len(POLICY["jobs"]))
         for result in ("skipped", "failure", "cancelled", "timed_out", None):
             with self.subTest(result=result):
@@ -331,6 +384,89 @@ class ValidationPlanTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), changed)
 
+    def test_reviewed_legacy_base_rollout_uses_only_exact_two_file_cohort(self) -> None:
+        policy_digest = "2c2b99cc7e5e1baf3ad00a6f1ab27a2f9e3036e0fa8a19a90d4cf7271a7806b7"
+        classifier_digest = "df2f7fa2adfc0002bd3984c91e72ba8e1412ced36e7f3acd7003960242412417"
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text()
+        for name, digest in (("POLICY", policy_digest), ("CLASSIFIER", classifier_digest)):
+            self.assertIn(f"  FORGEJO_LEGACY_BASE_{name}_SHA256: {digest}\n", workflow)
+        self.assertEqual(workflow.count("known_legacy_base() {"), 2)
+        self.assertEqual(workflow.count("sha256sum --check --status"), 2)
+
+        def shell_block(job: str) -> str:
+            section = re.search(rf"(?ms)^  {job}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow)[1]
+            return textwrap.dedent(re.search(r"(?ms)^        run: \|\n(.*)", section)[1])
+
+        select_shell, gate_shell = shell_block("validation-plan"), shell_block("pr-gate")
+        classifier = (SOURCE_ROOT / "scripts/validation-plan.py").read_bytes()
+        self.assertEqual(hashlib.sha256(classifier).hexdigest(), classifier_digest)
+        current_policy = (SOURCE_ROOT / "scripts/validation-policy.json").read_bytes()
+        replacement = b'    "lockfile-release-age",\n    "docker-forgejo-application"\n'
+        self.assertEqual(current_policy.count(replacement), 1)
+        legacy_policy = current_policy.replace(replacement, b'    "lockfile-release-age"\n')
+        self.assertEqual(hashlib.sha256(legacy_policy).hexdigest(), policy_digest)
+        base_directory = self.root / ".validation-base/scripts"
+        base_directory.mkdir(parents=True)
+        output = self.root / "github-output"
+        environment = {
+            **os.environ, "EVENT_NAME": "pull_request", "BASE_SHA": self.base,
+            "HEAD_SHA": self.base, "GITHUB_SHA": self.base, "GITHUB_WORKSPACE": str(self.root),
+            "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
+            "FORGEJO_LEGACY_BASE_POLICY_SHA256": policy_digest,
+            "FORGEJO_LEGACY_BASE_CLASSIFIER_SHA256": classifier_digest,
+        }
+        expected_needs = {job: {"result": "success"} for job in POLICY["jobs"]}
+        expected_needs["validation-plan"] = {"result": "success"}
+        expected_needs["release-binaries"] = {"result": "success"}
+
+        def run(script: str, extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+            return subprocess.run(["bash", "--noprofile", "--norc", "-c", script], cwd=self.root,
+                                  env={**environment, **(extra or {})}, capture_output=True, text=True)
+
+        for cohort in ("exact", "policy-byte-drift", "classifier-byte-drift", "next-main", "absent"):
+            with self.subTest(cohort=cohort):
+                policy_bytes = current_policy if cohort == "next-main" else legacy_policy
+                (base_directory / "validation-policy.json").write_bytes(policy_bytes + (b"\n" if cohort == "policy-byte-drift" else b""))
+                (base_directory / "validation-plan.py").write_bytes(classifier + (b"\n" if cohort == "classifier-byte-drift" else b""))
+                if cohort == "absent":
+                    (base_directory / "validation-policy.json").unlink()
+                    (base_directory / "validation-plan.py").unlink()
+                output.unlink(missing_ok=True)
+                selected = run(select_shell)
+                self.assertEqual(selected.returncode, 0, selected.stderr)
+                fields = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                plan = json.loads(fields["plan"])
+                extra = {"PLAN_JSON": fields["plan"], "NEEDS_JSON": json.dumps(expected_needs)}
+                verified = run(gate_shell, extra)
+                if cohort.endswith("byte-drift"):
+                    self.assertNotIn("docker-forgejo-application", plan["jobs"])
+                    self.assertNotEqual(verified.returncode, 0)
+                    self.assertNotIn("First-rollout complete validation", verified.stdout)
+                    continue
+                self.assertEqual(plan["profile"], "full")
+                self.assertEqual(plan["jobs"], {job: True for job in POLICY["jobs"]})
+                self.assertEqual(fields["select_docker_forgejo_application"], "true")
+                self.assertEqual(verified.returncode, 0, verified.stderr)
+                if cohort == "next-main":
+                    self.assertNotIn("First-rollout complete validation", verified.stdout)
+                    continue
+                self.assertIn("First-rollout complete validation", verified.stdout)
+                for broken in ("new-skipped", "old-failed", "binary-failed", "missing-new", "missing-old", "missing-plan", "missing-binary", "extra"):
+                    with self.subTest(cohort=cohort, needs=broken):
+                        needs = copy.deepcopy(expected_needs)
+                        if broken == "new-skipped":
+                            needs["docker-forgejo-application"]["result"] = "skipped"
+                        elif broken == "old-failed":
+                            needs["rust"]["result"] = "failure"
+                        elif broken == "binary-failed":
+                            needs["release-binaries"]["result"] = "failure"
+                        elif broken.startswith("missing"):
+                            del needs[{"missing-new": "docker-forgejo-application", "missing-old": "rust", "missing-plan": "validation-plan", "missing-binary": "release-binaries"}[broken]]
+                        else:
+                            needs["unexpected"] = {"result": "success"}
+                        refused = run(gate_shell, {**extra, "NEEDS_JSON": json.dumps(needs)})
+                        self.assertNotEqual(refused.returncode, 0)
+
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("run: bash scripts/test-application-probes.sh", workflow)
@@ -381,6 +517,17 @@ class ValidationPlanTests(unittest.TestCase):
                 capture_output=True, text=True, check=False,
             )
             self.assertNotEqual(rejected.returncode, 0)
+            for result in ("skipped", "failure", "cancelled", None):
+                with self.subTest(bootstrap_forgejo_result=result):
+                    changed = {job: {"result": "success"} for job in POLICY["jobs"]}
+                    changed["validation-plan"] = {"result": "success"}
+                    changed["docker-forgejo-application"]["result"] = result
+                    environment["NEEDS_JSON"] = json.dumps(changed)
+                    rejected = subprocess.run(
+                        [sys.executable, "-c", gate_code], env=environment,
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertNotEqual(rejected.returncode, 0)
 
 
 if __name__ == "__main__":

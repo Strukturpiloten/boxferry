@@ -41,7 +41,7 @@ MAX_TAR = MAX_ARCHIVE + 1024 * 1024
 MAX_TEXT = 1024 * 1024
 MAX_OUTPUT = 1024 * 1024
 COMMAND_TIMEOUT = 30
-SMOKE_TESTS = ["version", "capabilities-nine-routes", "compose-quadlet-compose"]
+SMOKE_TESTS = ["version", "capabilities-sixteen-routes", "compose-quadlet-compose"]
 MEMBERS = {"boxferry": 0o755, "LICENSE": 0o644, "README.md": 0o644, "BUILD-INFO.json": 0o644}
 
 
@@ -280,9 +280,9 @@ def smoke(binary: Path, target: str, version: str, emulator: Path | None) -> dic
         capabilities = parse_json(run_bounded(command + ["capabilities", "--console-format", "json"], work))
         require(isinstance(capabilities, dict) and type(capabilities.get("schema_version")) is int and capabilities["schema_version"] == 1, "invalid binary capability schema")
         routes = capabilities.get("routes")
-        require(isinstance(routes, list) and len(routes) == 9 and all(isinstance(route, dict) for route in routes), "binary must expose all nine default-feature routes")
+        require(isinstance(routes, list) and len(routes) == 16 and all(isinstance(route, dict) for route in routes), "binary must expose all sixteen default-feature routes")
         require(all(isinstance(route.get(key), str) for route in routes for key in ("input_type", "output_type")), "invalid binary route metadata")
-        require({(route.get("input_type"), route.get("output_type")) for route in routes} == {(a, b) for a in ("compose", "quadlet", "podman") for b in ("compose", "quadlet", "podman")}, "binary route catalogue is incomplete")
+        require({(route.get("input_type"), route.get("output_type")) for route in routes} == {(a, b) for a in ("compose", "quadlet", "podman", "docker") for b in ("compose", "quadlet", "podman", "docker")}, "binary route catalogue is incomplete")
         source = work / "compose.yaml"
         source.write_text("---\nname: release-smoke\nservices:\n  web:\n    image: docker.io/library/alpine:3.21\n", encoding="utf-8")
         quadlet, compose = work / "quadlet", work / "compose"

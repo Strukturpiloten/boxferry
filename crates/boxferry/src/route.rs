@@ -34,18 +34,20 @@ macro_rules! format_axis {
 }
 
 format_axis! {
-    /// Native input formats accepted by the document conversion CLI.
+    /// Native input formats accepted by the conversion CLI.
     pub(crate) enum InputType {
         Compose => "compose",
+        Docker => "docker",
         Podman => "podman",
         Quadlet => "quadlet",
     }
 }
 
 format_axis! {
-    /// Native output formats accepted by the document conversion CLI.
+    /// Native output formats accepted by the conversion CLI.
     pub(crate) enum OutputType {
         Compose => "compose",
+        Docker => "docker",
         Podman => "podman",
         Quadlet => "quadlet",
     }
@@ -54,6 +56,7 @@ format_axis! {
 /// Target-version selection family required by one output format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TargetSelector {
+    DockerExactProfile,
     PodmanRange,
     PodmanMaximum,
     ComposeSpecification,
@@ -63,6 +66,7 @@ impl OutputType {
     pub(crate) const fn target_selector(self) -> TargetSelector {
         match self {
             Self::Compose => TargetSelector::ComposeSpecification,
+            Self::Docker => TargetSelector::DockerExactProfile,
             Self::Quadlet => TargetSelector::PodmanRange,
             Self::Podman => TargetSelector::PodmanMaximum,
         }
@@ -112,6 +116,11 @@ const fn fidelity_boundaries(
             &[],
             &["unsupported-fields"],
         ),
+        (InputType::Compose, OutputType::Docker) => (
+            "supported-compose-docker-standalone-intersection",
+            &[],
+            &["unsupported-fields", "withheld-environment-values"],
+        ),
         (InputType::Compose, OutputType::Quadlet) => (
             "supported-compose-quadlet-intersection",
             &["pod-grouping"],
@@ -126,6 +135,11 @@ const fn fidelity_boundaries(
             "supported-quadlet-compose-specification-intersection",
             &["environment-file-reconstruction"],
             &["unsupported-fields"],
+        ),
+        (InputType::Quadlet, OutputType::Docker) => (
+            "supported-quadlet-docker-standalone-intersection",
+            &["environment-file-reconstruction", "systemd-runtime-semantics"],
+            &["unsupported-fields", "withheld-environment-values"],
         ),
         (InputType::Quadlet, OutputType::Quadlet) => (
             "supported-quadlet-canonical-subset",
@@ -142,6 +156,11 @@ const fn fidelity_boundaries(
             &["effective-state-promotion"],
             &["unmodelled-fields", "incomplete-secret-grants"],
         ),
+        (InputType::Podman, OutputType::Docker) => (
+            "supported-podman-docker-standalone-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "withheld-environment-values"],
+        ),
         (InputType::Podman, OutputType::Quadlet) => (
             "supported-podman-quadlet-intersection",
             &["effective-state-promotion"],
@@ -151,6 +170,26 @@ const fn fidelity_boundaries(
             "supported-podman-observation-deployment-intersection",
             &["effective-state-promotion"],
             &["unmodelled-fields", "incomplete-secret-grants"],
+        ),
+        (InputType::Docker, OutputType::Compose) => (
+            "supported-docker-compose-specification-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-native-evidence"],
+        ),
+        (InputType::Docker, OutputType::Docker) => (
+            "supported-docker-observation-standalone-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "withheld-environment-values"],
+        ),
+        (InputType::Docker, OutputType::Podman) => (
+            "supported-docker-podman-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-native-evidence"],
+        ),
+        (InputType::Docker, OutputType::Quadlet) => (
+            "supported-docker-quadlet-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-native-evidence"],
         ),
     }
 }
@@ -188,6 +227,9 @@ mod tests {
             .collect::<BTreeSet<_>>();
 
         assert_eq!(registered, expected);
+        assert_eq!(InputType::ALL.len(), 4);
+        assert_eq!(OutputType::ALL.len(), 4);
+        assert_eq!(registered.len(), 16);
         assert_eq!(registered.len(), InputType::ALL.len() * OutputType::ALL.len());
         for (input, output) in expected {
             assert_eq!((find(input, output).input, find(input, output).output), (input, output));

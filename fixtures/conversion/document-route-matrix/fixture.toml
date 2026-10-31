@@ -1,7 +1,7 @@
 schema = 1
 id = "document-route-matrix"
 suite = "conversion"
-description = "Defines the deterministic two-input, three-output Compose, Quadlet, and terminal Podman neutral-model route boundary."
+description = "Defines deterministic Compose/Quadlet document inputs through four exporters, with terminal Podman and inert Docker artifacts."
 secrets_reviewed = true
 files = [
   "compose-interpolation.yaml",
@@ -27,13 +27,14 @@ files = [
   "expected-podman-commands.sh",
   "expected-lossy-podman.json",
   "expected-lossy-podman-commands.sh",
+  "expected-docker-plan.json",
 ]
 
 [provenance]
 source = "authored"
 license = "MPL-2.0"
 redistribution = "allowed"
-modifications = "none"
+modifications = "Added independently authored inert Docker target expectations; existing non-Docker expectations are unchanged."
 
 [environment]
 description = "No host environment, project directory, runtime, or external process input is used."
@@ -60,6 +61,10 @@ expected = "expected-podman-commands.sh"
 artifact = "podman.json"
 expected = "expected-podman.json"
 
+[[extensions.matrix.inputs.compose.exports.docker]]
+artifact = "docker-plan.json"
+expected = "expected-docker-plan.json"
+
 [extensions.matrix.inputs.quadlet]
 sources = ["web.container"]
 application-name = "route-matrix"
@@ -79,6 +84,10 @@ expected = "expected-podman-commands.sh"
 [[extensions.matrix.inputs.quadlet.exports.podman]]
 artifact = "podman.json"
 expected = "expected-podman.json"
+
+[[extensions.matrix.inputs.quadlet.exports.docker]]
+artifact = "docker-plan.json"
+expected = "expected-docker-plan.json"
 
 [[extensions.scenarios]]
 id = "normal-compose"
@@ -112,6 +121,13 @@ expected = "expected-podman-commands.sh"
 artifact = "podman.json"
 expected = "expected-podman.json"
 
+[extensions.scenarios.exports.docker]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.docker.artifacts]]
+artifact = "docker-plan.json"
+expected = "expected-docker-plan.json"
+
 [[extensions.scenarios]]
 id = "normal-quadlet"
 input = "quadlet"
@@ -144,6 +160,13 @@ expected = "expected-podman-commands.sh"
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman.json"
 expected = "expected-podman.json"
+
+[extensions.scenarios.exports.docker]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.docker.artifacts]]
+artifact = "docker-plan.json"
+expected = "expected-docker-plan.json"
 
 [[extensions.scenarios]]
 id = "lossy-compose"
@@ -185,6 +208,12 @@ expected = "expected-lossy-podman-commands.sh"
 artifact = "podman.json"
 expected = "expected-lossy-podman.json"
 
+[extensions.scenarios.exports.docker]
+loss-policy = "partial"
+blocked = true
+diagnostic-codes = ["BFD0006", "BFD0006", "BFD0006"]
+diagnostic-subjects = ["services.web.annotations", "services.web.logging", "services.web.container"]
+
 [[extensions.scenarios]]
 id = "tmpfs-compose"
 input = "compose"
@@ -217,3 +246,9 @@ expected = "expected-tmpfs-podman-commands.sh"
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman.json"
 expected = "expected-tmpfs-podman.json"
+
+[extensions.scenarios.exports.docker]
+loss-policy = "partial"
+blocked = true
+diagnostic-codes = ["BFD0006", "BFD0006"]
+diagnostic-subjects = ["services.worker.tmpfs", "services.worker.container"]

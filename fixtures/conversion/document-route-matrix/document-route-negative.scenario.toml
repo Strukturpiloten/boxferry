@@ -2,7 +2,7 @@ schema = 1
 id = "document-route-negative"
 components = []
 source-capabilities = ["compose", "quadlet"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 
 [application]
 name = "route-matrix-rejection"
@@ -123,6 +123,39 @@ target-maximum = "6.1.0"
 loss-policy = "partial"
 outcome = "expected-rejection"
 reason = "Quadlet input is syntactically invalid."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFQ1102|<global>"]
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "compose-required"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required interpolation variable is absent before any exporter runs."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0102|<global>"]
+
+[[evidence]]
+input = "quadlet-invalid"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Syntactically invalid Quadlet source is rejected before any exporter runs."
 artifacts = []
 native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }

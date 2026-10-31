@@ -18,22 +18,28 @@ Canonical manifests, lockfiles, workflows and installers own dependency versions
 ## Review rules
 
 - Prefer the standard library and focused, actively maintained crates.
-- Use explicit compatible Cargo requirements; wildcard requirements are denied.
-- Use crates.io releases unless an accepted decision records another source.
+- Require explicit compatible Cargo requirements; deny wildcards.
+- Use crates.io releases unless an accepted ADR permits otherwise.
 - Enable only understood, necessary default features.
 - Justify duplicate crate roles.
 - Record architectural, representation and public-API dependencies in an ADR.
-- Commit the lock file and use locked resolution in CI.
+- Commit lockfiles; require locked CI resolution.
 
 `deny.toml` allows only Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Additional licenses require reviewed
 dependencies and understood obligations. This policy is project intent, not legal advice.
 
-Exceptions must be narrow, versioned and explained beside their configuration.
-Passing CI alone never justifies one.
+Exceptions require narrow, versioned justification beside configuration; passing CI is insufficient.
 
 ## Architectural dependencies
 
 - Clap supplies the optional `cli` feature; embedded callers can disable defaults.
+- DockerLens owns Docker acquisition/decoding, native evidence, planning and serialization;
+  `boxferry-docker` owns semantic mapping. [ADR 0085](decisions/0085-docker-cli-neutral-routes.md)
+  requires compatible publication before normal integration; source overrides cannot enter main
+  or published manifests.
+- [ADR 0085](decisions/0085-docker-cli-neutral-routes.md#dependency-review-obligations) retains
+  CLI-only `sha2` reuse and native Cargo Renovate ownership. Verify features, licenses, extraction,
+  grouping, approvals, lock integrity and packages; source inspection alone is insufficient.
 - PodmanLens owns Podman acquisition, observations, evidence, planning, and rendering.
   `boxferry-podman` owns only semantic mapping.
 - ZIP and Jiff stay CLI-only for diagnostic archives and local filenames, excluded from no-default
@@ -47,24 +53,22 @@ Passing CI alone never justifies one.
   compatibility.
 - ComposeLens and QuadletLens own their native document semantics.
 
-Review the relevant manifest and ADR for exact features and constraints.
+Manifests and ADRs define exact features and constraints.
 
 ## Automation
 
-Every operational pin has exactly one Renovate owner. The `github-runners` regex manager owns
-fixed `ubuntu-*`, `macos-*`, and `windows-*` labels, including numeric architecture/size suffixes.
-These reserved hosted labels must be unquoted, unanchored scalars; dynamic matrices and self-hosted
-forms stay distinct. Runner groups never auto-merge: review release notes and every affected
-workflow. Native managers own Cargo, npm, Rust toolchains, Dev Container features, and Actions.
-Regex managers own downloaded tools, atomic Dev Container image version/digest pairs,
-checksum-pinned Compose providers, active application images, and live probe images.
-Workflows call the canonical version/checksum installer `scripts/lib/compose-provider.sh`;
-never duplicate its release URLs.
+Every operational pin needs one Renovate owner. The `github-runners` regex manager owns fixed
+`ubuntu-*`, `macos-*`, `windows-*` labels and numeric architecture/size suffixes. Keep these hosted
+labels unquoted, unanchored scalars; distinguish dynamic matrices and self-hosted forms. Never
+auto-merge runner updates; review release notes and affected workflows. Native managers own Cargo,
+npm, Rust toolchains, Dev Container features and Actions. Regex managers own downloaded tools,
+atomic Dev Container image version/digest pairs, checksum-pinned Compose providers, active
+application and live probe images. Workflows reuse the `scripts/lib/compose-provider.sh`
+version/checksum installer; never duplicate release URLs.
 
-The Dockerfile's regex manager owns atomic release/digest updates. Compose and Quadlet documents are
-fixtures. Their native managers stay disabled, preventing duplicate Dev Container proposals and
-updates to intentionally invalid fixture registries. Curated application `images.tsv` catalogues
-retain explicit management.
+The Dockerfile's regex manager owns atomic release/digest updates. Compose and Quadlet native
+managers stay disabled: these documents are fixtures, including intentionally invalid registries.
+Avoid duplicate Dev Container proposals. Application `images.tsv` catalogues retain explicit management.
 
 Lens conformance release refs use approval-gated `github-tags` extraction.
 Checksum-bearing provider and live-image proposals require Dependency Dashboard approval, never
@@ -72,23 +76,17 @@ auto-merge. Review release assets/platform digests, provenance, license, resourc
 behavior before catalogue updates. Policy tests may assert Action identity and immutable-pin shape,
 never Renovate-owned revisions.
 
-The application dispatcher's canonical `ADMISSION_REVISION` pins DockerLens #42's reviewed merge
-commit: unreleased infrastructure, not a package release. No helper tag or downloadable checksum
-exists; invent neither. One `github-digest` manager owns this pin; a later rule requires Dashboard
-approval and disables automerge. Review producer/consumer together: both actors' permissions,
-exact-head admission, privacy, and fail-closed cases.
-
-The [consumer runtime](decisions/0079-native-test-runtime-selection.md#runner-prerequisites-and-renovate) reuses this pin, manager and approval rule.
-Its `.github/workflows/reviewed-docker-consumer-validation.yml` adds no image pins.
-Exact-pair execution authorization needs renewed source/closure review, never
-automatic dependency updates or generated receipts. Other Lens products and
-the website are nonconsumers.
+The Docker admission pin requires one `github-digest` owner, Dashboard approval, manual review and
+consumer boundaries:
+[ADR 0085](decisions/0085-docker-cli-neutral-routes.md#dependency-review-obligations) and the
+[consumer runtime](decisions/0079-native-test-runtime-selection.md#runner-prerequisites-and-renovate).
+Exact-pair execution requires renewed source/closure review, never automatic updates or receipts.
 
 Captured cassettes, generated expectations, historical observations, and the Podman compatibility
 matrix remain evidence; version changes require owning evidence/version-boundary revalidation.
 API contract dates and fixed support targets are reviewed compatibility decisions, outside updates.
 
-Renovate's global three-day direct-update age has one exact-name Cargo/crate exception: six BoxFerry
+Renovate's global three-day direct-update age has one exact-name Cargo/crate exception: seven BoxFerry
 workspace packages plus `compose-lens`, `podman-lens`, `quadlet-lens`, and `docker-lens`. Prefixes,
 wildcards, other managers, and same-name npm packages remain excluded.
 
@@ -98,14 +96,12 @@ canonical crates.io Cargo packages waive the guard's age threshold, after succes
 lookup. Missing, malformed, or future publication timestamps fail closed. Other versions, including
 third-party and transitive dependencies, retain 72 hours. Only age changes: immutable pins, Cargo
 checksums, lockfile integrity, audits, required checks, and manual approvals remain mandatory. The
-existing shared-policy manager owns the guard's immutable commit; no new manager or extraction path
-is added. Checksum, image, runner, provider, and Dev Container updates remain manual. Actions stay
+shared-policy manager retains the guard's immutable commit; add no manager or extraction path. Checksum, image, runner, provider, and Dev Container updates remain manual. Actions stay
 SHA-pinned, release tools version/checksum-pinned, and release-plz only prepares. Formatting tools
 cannot change the published graph or MSRV.
 
-Run `cargo deny check` and the complete repository gate after dependency changes. Local link
-checks are deterministic and offline; external URL checks run separately on a schedule or by
-manual request.
+Dependency changes require `cargo deny check` and the complete repository gate. Local links are
+checked deterministically offline; external URLs separately on schedule or manual request.
 
 ### Workflow changes and Renovate ownership
 

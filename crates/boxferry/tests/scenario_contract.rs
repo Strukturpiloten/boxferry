@@ -1,9 +1,17 @@
 //! Offline acceptance: authored intent, every exporter, separate executed evidence.
-#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
+#![cfg(all(
+    feature = "cli",
+    feature = "compose",
+    feature = "docker",
+    feature = "podman",
+    feature = "quadlet"
+))]
 
 #[allow(dead_code, unused_imports)]
 mod support;
 
+#[cfg(feature = "docker")]
+use std::collections::BTreeMap;
 use std::{
     collections::BTreeSet,
     error::Error,
@@ -25,11 +33,16 @@ use boxferry::podman::podman_lens::{
     ResourceKind as PodmanResourceKind, ResourceSelector, TransportLimits, UnixConnection,
 };
 use boxferry::{
-    ComposeExporter, ComposeImporter, ComposeSource, ConversionKind, ConversionResult, Identifier, ImportAdapter,
-    ImportResult, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, QuadletDocumentInput, QuadletExporter,
-    QuadletGroupingPolicy, QuadletImporter, QuadletSource, SourceId, acquire_podman_source, convert_imported,
+    ComposeExporter, ComposeImporter, ComposeSource, ConversionKind, ConversionResult, ExportAdapter, Identifier,
+    ImportAdapter, ImportResult, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, QuadletDocumentInput,
+    QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource, SourceId, acquire_podman_source,
+    convert_imported,
 };
+#[cfg(feature = "docker")]
+use boxferry::{DockerEnvironmentPolicy, DockerExporter};
 use serde::Deserialize;
+#[cfg(feature = "docker")]
+use sha2::{Digest, Sha256};
 use support::{
     Dimension, DimensionState, NativeInput, Outcome, PodmanCassette, PodmanCassetteServer, RouteExpectation,
     RouteObservation, ScenarioManifest, diagnostic_facts, load_loss_expectations, load_string_expectations,
@@ -39,7 +52,35 @@ use support::{
 
 const OFFLINE: &str = "Offline authored fixture; no runtime operation is claimed.";
 const NO_PODMAN_REIMPORT: &str = "Deployment plans are not observed Podman inventories.";
+#[cfg(feature = "docker")]
+const NO_DOCKER_REIMPORT: &str = "Inert Docker create requests are desired intent, not observed Docker inventory.";
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "docker")]
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(*byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_dependency_explicitness_deserializes_authored_booleans() -> Result<(), Box<dyn Error>> {
+    assert_eq!(
+        serde_json::from_value::<support::DockerDependencyExplicitness>(serde_json::json!(true))?,
+        support::DockerDependencyExplicitness::Explicit
+    );
+    assert_eq!(
+        serde_json::from_value::<support::DockerDependencyExplicitness>(serde_json::json!(false))?,
+        support::DockerDependencyExplicitness::Default
+    );
+    assert!(serde_json::from_value::<support::DockerDependencyExplicitness>(serde_json::json!(1)).is_err());
+    Ok(())
+}
 
 const SCENARIO_CATALOGUE: &str = "fixtures/scenarios/catalogue.toml";
 const APPROVED_SCENARIO_ROOTS: &[&str] = &[
@@ -346,7 +387,13 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
         if manifest.id != registration.id {
             return Err("scenario catalogue id differs from manifest id".into());
         }
-        validate_manifest(&manifest, &registration.manifest)?;
+        validate_manifest(&manifest, &registration.manifest).map_err(|error| {
+            format!(
+                "scenario {} manifest {}: {error}",
+                manifest.id,
+                registration.manifest.display()
+            )
+        })?;
         validate_exporter_coverage(&manifest, &capability_routes()?)?;
         for input in &manifest.native_inputs {
             let sources = input.files.iter().map(|file| fixture.join(file)).collect::<Vec<_>>();
@@ -854,6 +901,12 @@ fn run_route(
         return Ok(validate_evidence(route, &unavailable_observation())?);
     }
     let target = route.target()?;
+    // Retain only the neutral application needed for independent target mount order.
+    let source_application = if route.exporter == "docker" {
+        imported.application().cloned()
+    } else {
+        None
+    };
     let cli_imported = imported.clone();
     match route.exporter.as_str() {
         "compose" => validate_result(
@@ -871,6 +924,18 @@ fn run_route(
             fixture,
             &convert_imported(imported, &PodmanExporter::new()?, &target, route.policy()?)?,
         )?,
+        #[cfg(feature = "docker")]
+        "docker" => {
+            let mut exporter = DockerExporter::new(route.docker_profile()?)?;
+            if route.includes_environment_values() {
+                exporter = exporter.with_environment_policy(DockerEnvironmentPolicy::IncludeLiteral);
+            }
+            validate_result(
+                route,
+                fixture,
+                &convert_imported(imported, &exporter, &target, route.policy()?)?,
+            )?;
+        }
         _ => return Err("registered exporter has no scenario runner".into()),
     }
     if route.cli_withheld_diagnostics_delta_file.is_some() {
@@ -883,18 +948,7 @@ fn run_route(
     if route.cli_withheld_losses_delta_file.is_some() {
         validate_cli_loss_aggregate(&expected_losses, route, &report)?;
     }
-    let mut artifacts = fs::read_dir(output.path())?
-        .map(|entry| {
-            entry?
-                .file_name()
-                .into_string()
-                .map_err(|_| std::io::Error::other("non-UTF-8 artifact"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    artifacts.sort();
-    let mut expected = expected_artifacts;
-    expected.sort();
-    assert_eq!(artifacts, expected, "artifact inventory changed");
+    let artifacts = assert_route_artifact_inventory(output.path(), expected_artifacts)?;
     if report["status"] != "success" {
         if route.outcome != Outcome::ExpectedRejection {
             return Err("CLI failure is not an expected rejection".into());
@@ -902,7 +956,14 @@ fn run_route(
         return Ok(validate_evidence(route, &rejected_observation())?);
     }
 
-    let (semantics_match, reimport) = observe_native_output(manifest, route, &artifacts, output.path(), fixture)?;
+    let (semantics_match, reimport) = observe_native_output(
+        manifest,
+        route,
+        &artifacts,
+        output.path(),
+        fixture,
+        source_application.as_ref(),
+    )?;
     let observation = RouteObservation {
         blocked: report["status"] != "success",
         semantics_match,
@@ -912,6 +973,21 @@ fn run_route(
     };
     validate_evidence(route, &observation)?;
     Ok(())
+}
+
+fn assert_route_artifact_inventory(output: &Path, mut expected: Vec<String>) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut artifacts = fs::read_dir(output)?
+        .map(|entry| {
+            entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| std::io::Error::other("non-UTF-8 artifact"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    artifacts.sort();
+    expected.sort();
+    assert_eq!(artifacts, expected, "artifact inventory changed");
+    Ok(artifacts)
 }
 
 fn validate_cli_policy_losses(
@@ -2211,7 +2287,10 @@ fn observe_native_output(
     artifacts: &[String],
     output: &Path,
     fixture: &Path,
+    source_application: Option<&boxferry::Application>,
 ) -> Result<(bool, Dimension), Box<dyn Error>> {
+    #[cfg(not(feature = "docker"))]
+    let _ = source_application;
     let expected_reimport_diagnostics = load_string_expectations(
         &route.reimport_diagnostics,
         route.reimport_diagnostics_file.as_deref(),
@@ -2344,8 +2423,2222 @@ fn observe_native_output(
             validate_diagnostics(&route.semantic_gaps, &observed_gaps)?;
             (observed_gaps.is_empty(), Dimension::not_applicable(NO_PODMAN_REIMPORT))
         }
+        #[cfg(feature = "docker")]
+        "docker" => {
+            let observed_gaps = docker_semantics(
+                manifest,
+                route,
+                output,
+                source_application.ok_or("Docker source application missing")?,
+            )?;
+            validate_diagnostics(&route.semantic_gaps, &observed_gaps)?;
+            (observed_gaps.is_empty(), Dimension::not_applicable(NO_DOCKER_REIMPORT))
+        }
         _ => return Err("missing native validator".into()),
     })
+}
+
+#[cfg(feature = "docker")]
+struct DockerPlanInputs<'a> {
+    requests: &'a [serde_json::Value],
+    api_prefix: String,
+    prerequisite_identities: BTreeSet<(&'a str, &'a str)>,
+    bind_prerequisites: BTreeMap<(&'a str, usize), DockerBindPrerequisite<'a>>,
+    network_internal: BTreeMap<&'a str, bool>,
+}
+
+#[cfg(feature = "docker")]
+struct DockerBindPrerequisite<'a> {
+    identity: &'a str,
+    mount_index: usize,
+    source: &'a str,
+    target: &'a str,
+    read_only: bool,
+    relabel: &'a str,
+}
+
+#[cfg(feature = "docker")]
+struct DockerPrerequisites<'a> {
+    identities: BTreeSet<(&'a str, &'a str)>,
+    binds: BTreeMap<(&'a str, usize), DockerBindPrerequisite<'a>>,
+    network_internal: BTreeMap<&'a str, bool>,
+}
+
+#[cfg(feature = "docker")]
+fn docker_closed_fields(value: &serde_json::Value, expected: &[&str]) -> bool {
+    value.as_object().is_some_and(|fields| {
+        fields.keys().map(String::as_str).collect::<BTreeSet<_>>() == expected.iter().copied().collect()
+    })
+}
+
+/// Independently authored test row; it does not come from native rendering or capability evidence.
+#[cfg(feature = "docker")]
+fn authored_docker_bind_row(
+    identity: &str,
+    mount_index: usize,
+    source: &str,
+    target: &str,
+    read_only: bool,
+    relabel: &str,
+    reference: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "kind":"bind_source", "identity":identity, "mount_index":mount_index.to_string(), "reference":reference,
+        "source":source, "target":target, "read_only":read_only, "relabel":relabel,
+        "source_conditions":["exists","type_reviewed","contents_reviewed","ownership_reviewed","permissions_reviewed"],
+        "selinux_effect":"unverified",
+        "selinux_conditions":["daemon_selinux_enabled","container_mount_label_present","policy_filesystem_support","relabel_authority"]
+    })
+}
+
+#[cfg(feature = "docker")]
+fn validate_authored_docker_bind_plan(
+    manifest: &ScenarioManifest,
+    application: &boxferry::Application,
+    plan: &serde_json::Value,
+) -> Result<(), Box<dyn Error>> {
+    // This pure seam checks bind association and explicit external expectations, not native admission or an application run.
+    let parsed = parse_docker_prerequisites(plan)?;
+    validate_docker_external_internal_expectations(manifest, &parsed.network_internal)?;
+    let inputs = DockerPlanInputs {
+        requests: plan["requests"].as_array().ok_or("authored bind requests missing")?,
+        api_prefix: "/v1.56/".into(),
+        prerequisite_identities: parsed.identities,
+        bind_prerequisites: parsed.binds,
+        network_internal: parsed.network_internal,
+    };
+    let index = index_docker_requests(inputs.requests, &inputs.api_prefix)?;
+    validate_docker_bind_mounts(&expected_docker_bind_mounts(manifest, application)?, &inputs, &index)
+}
+
+#[cfg(feature = "docker")]
+fn synthetic_docker_bind_contract(
+    read_only: bool,
+    relabel: &str,
+    literal: &str,
+) -> Result<(ScenarioManifest, boxferry::Application, serde_json::Value), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let mut manifest = read_manifest_file(&fixture.join("scenario.toml"))?;
+    manifest.semantics.required_bind_mounts = serde_json::from_value(serde_json::json!([{
+        "service": "app",
+        "source": "/fake/private-source-canary",
+        "target": "/data",
+        "read-only": read_only,
+        "selinux-relabel": relabel,
+    }]))?;
+    manifest.semantics.required_runtime_names = vec!["app:native-app".into()];
+    let mut application = boxferry::Application::new(Identifier::new("authored-bind-control")?);
+    let mut service = boxferry::Service::new(Identifier::new("app")?);
+    service.add_mount(boxferry::Sourced::generated(boxferry::Mount::new(
+        boxferry::MountSource::Volume(Identifier::new("state")?),
+        "/state",
+        false,
+    )?));
+    let mut bind = boxferry::Mount::new(
+        boxferry::MountSource::HostPath("/fake/private-source-canary".into()),
+        "/data",
+        read_only,
+    )?;
+    bind.set_selinux_relabel(match relabel {
+        "shared" => boxferry::SelinuxRelabel::Shared,
+        "private" => boxferry::SelinuxRelabel::Private,
+        _ => return Err("unreviewed authored relabel control".into()),
+    });
+    service.add_mount(boxferry::Sourced::generated(bind));
+    application.add_service(boxferry::Sourced::generated(service))?;
+    let plan = serde_json::json!({
+        "schema_version":2, "context":{},
+        "requests":[{"method":"POST","path":"/v1.56/containers/create?name=native-app","body":{
+            "HostConfig":{"Binds":[literal],"Mounts":[{"Type":"volume","Source":"state","Target":"/state","ReadOnly":false}]}
+        }}],
+        "prerequisites":[authored_docker_bind_row("native-app", 1, "/fake/private-source-canary", "/data", read_only, relabel, "7")]
+    });
+    Ok((manifest, application, plan))
+}
+
+#[cfg(feature = "docker")]
+fn assert_docker_context_rejected(
+    profile: &boxferry::docker::docker_lens::version::TargetProfile,
+    plan: &serde_json::Value,
+) -> Result<(), Box<dyn Error>> {
+    let error = validate_docker_plan_inputs(profile, plan)
+        .err()
+        .ok_or("changed native context was accepted")?;
+    assert!(!error.to_string().contains("canary"));
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_schema2_bind_contract_preserves_independent_access_and_relabel_literals() -> Result<(), Box<dyn Error>> {
+    for (read_only, relabel, literal) in [
+        (true, "shared", "/fake/private-source-canary:/data:ro,z"),
+        (false, "shared", "/fake/private-source-canary:/data:rw,z"),
+        (true, "private", "/fake/private-source-canary:/data:ro,Z"),
+        (false, "private", "/fake/private-source-canary:/data:rw,Z"),
+    ] {
+        let (manifest, application, plan) = synthetic_docker_bind_contract(read_only, relabel, literal)?;
+        validate_authored_docker_bind_plan(&manifest, &application, &plan)?;
+        let expected = expected_docker_bind_mounts(&manifest, &application)?;
+        assert_eq!(expected[0].mount_index, 1, "named-volume sibling precedes the bind");
+        for reference in ["0", "18446744073709551615", "42"] {
+            let mut renamed = plan.clone();
+            renamed["prerequisites"][0]["reference"] = serde_json::json!(reference);
+            validate_authored_docker_bind_plan(&manifest, &application, &renamed)?;
+        }
+        for (field, replacement) in [
+            ("source", serde_json::json!("/fake/other-private-canary")),
+            ("target", serde_json::json!("/other-private-canary")),
+            ("read_only", serde_json::json!(!read_only)),
+            (
+                "relabel",
+                serde_json::json!(if relabel == "shared" { "private" } else { "shared" }),
+            ),
+        ] {
+            let mut changed = plan.clone();
+            changed["prerequisites"][0][field] = replacement;
+            let error = validate_authored_docker_bind_plan(&manifest, &application, &changed)
+                .err()
+                .ok_or("contradictory Docker bind intent was accepted")?;
+            assert!(!error.to_string().contains("canary"));
+        }
+        let mut changed = plan.clone();
+        changed["requests"][0]["body"]["HostConfig"]["Binds"] =
+            serde_json::json!(["/fake/private-source-canary:/data:ro"]);
+        let error = validate_authored_docker_bind_plan(&manifest, &application, &changed)
+            .err()
+            .ok_or("stripped relabel literal was accepted")?;
+        assert!(!error.to_string().contains("canary"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_prerequisite_schema_and_opaque_reference_groups_are_closed() -> Result<(), Box<dyn Error>> {
+    let (_, _, mut plan) = synthetic_docker_bind_contract(true, "private", "/fake/private-source-canary:/data:ro,Z")?;
+    plan["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+        .extend([
+            authored_docker_bind_row("native-app", 2, "/fake/extra", "/extra", false, "shared", "7"),
+            serde_json::json!({"kind":"network","reference":"17","identity":"edge","expected_driver":"bridge"}),
+            serde_json::json!({"kind":"volume","reference":"18","identity":"external-data"}),
+        ]);
+    assert_eq!(parse_docker_prerequisites(&plan)?.binds.len(), 2);
+    let mut renamed = plan.clone();
+    for row in renamed["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+    {
+        if row["kind"] == "bind_source" {
+            row["reference"] = serde_json::json!("18446744073709551615");
+        }
+    }
+    parse_docker_prerequisites(&renamed)?;
+    let mut overlap = plan.clone();
+    for row in overlap["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+    {
+        if row["kind"] == "bind_source" {
+            row["reference"] = serde_json::json!("17");
+        }
+    }
+    let error = parse_docker_prerequisites(&overlap)
+        .err()
+        .ok_or("bind references overlapped an external reference")?;
+    assert!(error.to_string().contains("overlap"));
+    let mut schema_one = plan.clone();
+    schema_one["schema_version"] = serde_json::json!(1);
+    schema_one["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+        .retain(|row| row["kind"] != "bind_source");
+    let parsed = parse_docker_prerequisites(&schema_one)?;
+    assert!(parsed.binds.is_empty());
+    assert_eq!(
+        parsed.identities,
+        BTreeSet::from([("network", "edge"), ("volume", "external-data")])
+    );
+    for (case, replacement) in [
+        ("split-group", serde_json::json!("8")),
+        ("external-overlap", serde_json::json!("17")),
+        ("numeric", serde_json::json!(7)),
+        ("boolean", serde_json::json!(true)),
+        ("leading-zero", serde_json::json!("07")),
+        ("signed", serde_json::json!("-1")),
+        ("overflow", serde_json::json!("18446744073709551616")),
+    ] {
+        let mut changed = plan.clone();
+        changed["prerequisites"][1]["reference"] = replacement;
+        let error = parse_docker_prerequisites(&changed)
+            .err()
+            .ok_or("invalid reference group was accepted")?;
+        assert!(!error.to_string().contains("canary"), "{case}");
+    }
+    let mut collision = plan.clone();
+    collision["prerequisites"][1]["identity"] = serde_json::json!("other-private-canary");
+    let error = parse_docker_prerequisites(&collision)
+        .err()
+        .ok_or("different identities shared a reference")?;
+    assert!(!error.to_string().contains("canary"));
+    for (source, version) in [
+        (&plan, serde_json::json!(1)),
+        (&schema_one, serde_json::json!(2)),
+        (&plan, serde_json::json!(true)),
+        (&schema_one, serde_json::json!(3)),
+        (&plan, serde_json::json!(2.0)),
+        (&plan, serde_json::json!("2")),
+    ] {
+        let mut changed = source.clone();
+        changed["schema_version"] = version;
+        assert!(parse_docker_prerequisites(&changed).is_err());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_bind_association_obligations_and_literals_fail_without_value_disclosure() -> Result<(), Box<dyn Error>> {
+    let (manifest, application, plan) =
+        synthetic_docker_bind_contract(true, "private", "/fake/private-source-canary:/data:ro,Z")?;
+    for (field, replacement) in [
+        ("kind", serde_json::json!("unknown-private-canary")),
+        ("identity", serde_json::json!("other-private-canary")),
+        ("mount_index", serde_json::json!("0")),
+        ("mount_index", serde_json::json!(1)),
+        ("mount_index", serde_json::json!("01")),
+        ("mount_index", serde_json::json!("18446744073709551616")),
+        ("read_only", serde_json::json!(1)),
+        ("selinux_effect", serde_json::json!("verified")),
+        ("source_conditions_satisfied", serde_json::json!(true)),
+        ("relabel_authority", serde_json::json!(true)),
+        ("source_conditions", serde_json::json!(["exists"])),
+        ("selinux_conditions", serde_json::json!(["daemon_selinux_enabled"])),
+    ] {
+        let mut changed = plan.clone();
+        changed["prerequisites"][0][field] = replacement;
+        let error = validate_authored_docker_bind_plan(&manifest, &application, &changed)
+            .err()
+            .ok_or("invalid Docker bind metadata was accepted")?;
+        assert!(!error.to_string().contains("canary"));
+    }
+    for field in ["source_conditions", "selinux_conditions"] {
+        let original = plan["prerequisites"][0][field]
+            .as_array()
+            .ok_or("authored conditions missing")?;
+        for ordinal in 0..original.len() {
+            let mut conditions = original.clone();
+            conditions.remove(ordinal);
+            let mut changed = plan.clone();
+            changed["prerequisites"][0][field] = serde_json::json!(conditions);
+            assert!(validate_authored_docker_bind_plan(&manifest, &application, &changed).is_err());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_bind_bijection_and_native_literals_fail_closed() -> Result<(), Box<dyn Error>> {
+    let (manifest, application, plan) =
+        synthetic_docker_bind_contract(true, "private", "/fake/private-source-canary:/data:ro,Z")?;
+    let mut missing = plan.clone();
+    missing["prerequisites"] = serde_json::json!([]);
+    missing["schema_version"] = serde_json::json!(1);
+    assert!(validate_authored_docker_bind_plan(&manifest, &application, &missing).is_err());
+    let mut duplicate = plan.clone();
+    duplicate["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+        .push(plan["prerequisites"][0].clone());
+    assert!(validate_authored_docker_bind_plan(&manifest, &application, &duplicate).is_err());
+    let mut extra = plan.clone();
+    extra["prerequisites"]
+        .as_array_mut()
+        .ok_or("authored prerequisites missing")?
+        .push(authored_docker_bind_row(
+            "native-app",
+            2,
+            "/fake/extra",
+            "/extra",
+            true,
+            "private",
+            "7",
+        ));
+    assert!(validate_authored_docker_bind_plan(&manifest, &application, &extra).is_err());
+    for literals in [
+        serde_json::json!([]),
+        serde_json::json!(["/fake/private-source-canary:/data:ro,z"]),
+        serde_json::json!(["/fake/private-source-canary:/data:rw,Z"]),
+        serde_json::json!(["/fake/private-source-canary:/data:ro,Z,rshared"]),
+        serde_json::json!([
+            "/fake/private-source-canary:/data:ro,Z",
+            "/fake/private-source-canary:/data:ro,Z"
+        ]),
+    ] {
+        let mut changed = plan.clone();
+        changed["requests"][0]["body"]["HostConfig"]["Binds"] = literals;
+        let error = validate_authored_docker_bind_plan(&manifest, &application, &changed)
+            .err()
+            .ok_or("invalid Docker bind literals were accepted")?;
+        assert!(!error.to_string().contains("canary"));
+    }
+    let mut duplicate = plan.clone();
+    duplicate["requests"][0]["body"]["HostConfig"]["Mounts"]
+        .as_array_mut()
+        .ok_or("authored mounts missing")?
+        .push(
+            serde_json::json!({"Type":"bind","Source":"/fake/private-source-canary","Target":"/data","ReadOnly":true}),
+        );
+    assert!(validate_authored_docker_bind_plan(&manifest, &application, &duplicate).is_err());
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_request_index_rejects_private_malformed_requests_without_panics_or_disclosure() -> Result<(), Box<dyn Error>>
+{
+    let (manifest, application, plan) =
+        synthetic_docker_bind_contract(true, "private", "/fake/private-source-canary:/data:ro,Z")?;
+    for (field, replacement) in [
+        (
+            "path",
+            serde_json::json!("/v1.56/private-operation-canary?token=private-path-canary"),
+        ),
+        ("method", serde_json::json!("PRIVATE-METHOD-CANARY")),
+        ("method", serde_json::json!({"private-method-canary":true})),
+        ("path", serde_json::json!("/v99.99/private-version-canary")),
+        ("body", serde_json::json!("private-body-canary")),
+    ] {
+        let mut changed = plan.clone();
+        changed["requests"][0][field] = replacement;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            validate_authored_docker_bind_plan(&manifest, &application, &changed)
+        }))
+        .map_err(|_| "fallible Docker request indexing panicked")?;
+        let error = outcome.err().ok_or("malformed Docker request was accepted")?;
+        let message = error.to_string();
+        assert!(!message.to_ascii_lowercase().contains("canary"));
+        assert!(!message.contains("/v1.56/") && !message.contains("/v99.99/") && !message.contains("token="));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_bind_order_corroboration_does_not_replace_manifest_semantics() -> Result<(), Box<dyn Error>> {
+    for field in ["source", "target", "access", "relabel"] {
+        let (mut manifest, application, _) =
+            synthetic_docker_bind_contract(true, "private", "/fake/private-source-canary:/data:ro,Z")?;
+        let required = &mut manifest.semantics.required_bind_mounts[0];
+        match field {
+            "source" => required.source = "/fake/changed-private-canary".into(),
+            "target" => required.target = "/changed-private-canary".into(),
+            "access" => required.read_only = false,
+            "relabel" => required.selinux_relabel = "shared".into(),
+            _ => return Err("unknown authored mismatch control".into()),
+        }
+        let error = expected_docker_bind_mounts(&manifest, &application)
+            .err()
+            .ok_or("imported values replaced independent bind expectations")?;
+        assert!(!error.to_string().contains("canary"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+#[test]
+fn docker_schema1_context_matches_actual_native_upstream_and_debian_serialization() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::{DaemonMode, EngineBuild, TargetCapabilityCatalog};
+    let catalogue = TargetCapabilityCatalog::reviewed();
+    for profile in catalogue.profiles() {
+        let debian = matches!(profile.identity().build(), EngineBuild::DebianPackage(_));
+        let opposite_mode = match profile.identity().mode() {
+            DaemonMode::Rootful => "rootless",
+            DaemonMode::Rootless => "rootful",
+            DaemonMode::Unknown => return Err("native context control requires a reviewed root mode".into()),
+        };
+        let version: boxferry::PlatformVersion = profile
+            .release()
+            .as_str()
+            .split('+')
+            .next()
+            .ok_or("native numeric release missing")?
+            .parse()?;
+        let target = boxferry::TargetProfile::new("docker", version, Some(version))?;
+        let mut application = boxferry::Application::new(Identifier::new("native-context-control")?);
+        let mut service = boxferry::Service::new(Identifier::new("probe")?);
+        service.set_image(boxferry::Sourced::generated(boxferry::ImageReference::parse(
+            "fixture:1",
+        )?));
+        application.add_service(boxferry::Sourced::generated(service))?;
+        // Only the existing plain-container native slice is planned; no relabel capability is invented.
+        let planned = DockerExporter::new(profile.clone())?.plan(&application, &target)?;
+        let raw = planned
+            .candidate()
+            .ok_or("plain native context candidate missing")?
+            .complete_bytes()
+            .map_err(|error| format!("{error:?}"))?;
+        let plan: serde_json::Value = serde_json::from_slice(&raw)?;
+        let inputs = validate_docker_plan_inputs(profile, &plan)?;
+        assert!(inputs.bind_prerequisites.is_empty());
+        assert_eq!(plan["schema_version"], 1);
+        assert_eq!(
+            plan["context"]["build"]["kind"],
+            if debian { "debian_package" } else { "upstream" }
+        );
+        for (field, replacement) in [
+            ("kind", serde_json::json!("observed")),
+            ("engine_release", serde_json::json!("0.0.0")),
+            ("advertised_api_version", serde_json::json!("1.99")),
+            ("acquisition_api_version", serde_json::json!(true)),
+            ("rendering_api_version", serde_json::json!("1.00")),
+            ("daemon_mode", serde_json::json!(opposite_mode)),
+            ("evidence_sha256", serde_json::json!("0".repeat(64))),
+            ("extra", serde_json::json!("private-context-canary")),
+        ] {
+            assert_ne!(
+                plan["context"][field], replacement,
+                "context mutation must change the selected profile"
+            );
+            let mut changed = plan.clone();
+            changed["context"][field] = replacement;
+            assert_docker_context_rejected(profile, &changed)?;
+        }
+        let mut extra = plan.clone();
+        extra["context"]["build"]["extra"] = serde_json::json!("private-build-canary");
+        assert_docker_context_rejected(profile, &extra)?;
+        if debian {
+            assert_ne!(plan["context"]["build"]["revision"], "wrong-private-canary");
+            let mut changed = plan.clone();
+            changed["context"]["build"]["revision"] = serde_json::json!("wrong-private-canary");
+            assert_docker_context_rejected(profile, &changed)?;
+            changed = plan.clone();
+            changed["context"]["build"]
+                .as_object_mut()
+                .ok_or("native build object missing")?
+                .remove("revision");
+            assert_docker_context_rejected(profile, &changed)?;
+            changed = plan.clone();
+            changed["context"]["build"]["kind"] = serde_json::json!("debian-package");
+            assert_docker_context_rejected(profile, &changed)?;
+        } else {
+            let mut changed = plan.clone();
+            changed["context"]["build"]["revision"] = serde_json::json!("unreviewed-private-canary");
+            assert_docker_context_rejected(profile, &changed)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn docker_canonical_decimal(value: &serde_json::Value) -> Result<u64, Box<dyn Error>> {
+    let text = value.as_str().ok_or("Docker prerequisite decimal must be a string")?;
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) || text.len() > 1 && text.starts_with('0') {
+        return Err("Docker prerequisite decimal is not canonical".into());
+    }
+    text.parse()
+        .map_err(|_| "Docker prerequisite decimal exceeds u64".into())
+}
+
+#[cfg(feature = "docker")]
+fn parse_docker_bind_prerequisite(
+    value: &serde_json::Value,
+) -> Result<(u64, DockerBindPrerequisite<'_>), Box<dyn Error>> {
+    if !docker_closed_fields(
+        value,
+        &[
+            "kind",
+            "reference",
+            "identity",
+            "mount_index",
+            "source",
+            "target",
+            "read_only",
+            "relabel",
+            "source_conditions",
+            "selinux_effect",
+            "selinux_conditions",
+        ],
+    ) || value["kind"] != "bind_source"
+    {
+        return Err("Docker bind prerequisite has unreviewed fields".into());
+    }
+    let identity = value["identity"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .ok_or("Docker bind prerequisite identity missing")?;
+    let source = value["source"]
+        .as_str()
+        .ok_or("Docker bind prerequisite source missing")?;
+    let target = value["target"]
+        .as_str()
+        .ok_or("Docker bind prerequisite target missing")?;
+    if [source, target]
+        .iter()
+        .any(|path| !path.starts_with('/') || path.contains(':') || path.contains('\0'))
+    {
+        return Err("Docker relabel bind requires closed absolute paths".into());
+    }
+    let relabel = value["relabel"]
+        .as_str()
+        .filter(|value| matches!(*value, "shared" | "private"))
+        .ok_or("Docker bind prerequisite relabel is unreviewed")?;
+    if value["source_conditions"]
+        != serde_json::json!([
+            "exists",
+            "type_reviewed",
+            "contents_reviewed",
+            "ownership_reviewed",
+            "permissions_reviewed",
+        ])
+        || value["selinux_conditions"]
+            != serde_json::json!([
+                "daemon_selinux_enabled",
+                "container_mount_label_present",
+                "policy_filesystem_support",
+                "relabel_authority",
+            ])
+        || value["selinux_effect"] != "unverified"
+    {
+        return Err("Docker bind prerequisite obligations or unverified effect differ".into());
+    }
+    Ok((
+        docker_canonical_decimal(&value["reference"])?,
+        DockerBindPrerequisite {
+            identity,
+            mount_index: usize::try_from(docker_canonical_decimal(&value["mount_index"])?)
+                .map_err(|_| "Docker bind prerequisite mount index exceeds usize")?,
+            source,
+            target,
+            read_only: value["read_only"]
+                .as_bool()
+                .ok_or("Docker bind prerequisite access missing")?,
+            relabel,
+        },
+    ))
+}
+
+#[cfg(feature = "docker")]
+fn parse_docker_prerequisites(plan: &serde_json::Value) -> Result<DockerPrerequisites<'_>, Box<dyn Error>> {
+    if !docker_closed_fields(plan, &["schema_version", "context", "requests", "prerequisites"]) {
+        return Err("Docker complete artifact fields differ".into());
+    }
+    let rows = plan["prerequisites"]
+        .as_array()
+        .ok_or("Docker prerequisites must be explicit")?;
+    let mut identities = BTreeSet::new();
+    let mut external_references = BTreeSet::new();
+    let mut binds = BTreeMap::new();
+    let mut bind_references = BTreeMap::new();
+    let mut reference_owners = BTreeMap::new();
+    let mut network_internal = BTreeMap::new();
+    for row in rows {
+        let kind = row["kind"].as_str().ok_or("Docker prerequisite kind missing")?;
+        if kind == "bind_source" {
+            let (reference, bind) = parse_docker_bind_prerequisite(row)?;
+            if bind_references
+                .get(bind.identity)
+                .is_some_and(|previous| *previous != reference)
+                || reference_owners
+                    .get(&reference)
+                    .is_some_and(|previous| *previous != bind.identity)
+            {
+                return Err("Docker bind prerequisite reference groups disagree".into());
+            }
+            bind_references.insert(bind.identity, reference);
+            reference_owners.insert(reference, bind.identity);
+            if binds.insert((bind.identity, bind.mount_index), bind).is_some() {
+                return Err("Docker bind prerequisite identity and mount index repeat".into());
+            }
+            continue;
+        }
+        let fields: &[&str] = match kind {
+            "network" if row.get("expected_internal").is_some() => {
+                &["kind", "reference", "identity", "expected_driver", "expected_internal"]
+            }
+            "network" => &["kind", "reference", "identity", "expected_driver"],
+            "volume" => &["kind", "reference", "identity"],
+            _ => return Err("Docker prerequisite kind is unreviewed".into()),
+        };
+        if !docker_closed_fields(row, fields) || kind == "network" && row["expected_driver"] != "bridge" {
+            return Err("Docker external prerequisite fields or driver differ".into());
+        }
+        let identity = row["identity"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or("Docker prerequisite identity missing")?;
+        if kind == "network"
+            && let Some(internal) = row.get("expected_internal")
+        {
+            network_internal.insert(
+                identity,
+                internal
+                    .as_bool()
+                    .ok_or("Docker external isolation expectation must be a boolean")?,
+            );
+        }
+        if !external_references.insert(docker_canonical_decimal(&row["reference"])?)
+            || !identities.insert((kind, identity))
+        {
+            return Err("Docker external prerequisite reference or identity repeats".into());
+        }
+    }
+    if external_references
+        .iter()
+        .any(|reference| reference_owners.contains_key(reference))
+    {
+        return Err("Docker bind and external prerequisite references overlap".into());
+    }
+    if plan["schema_version"].as_u64()
+        != Some(if !network_internal.is_empty() {
+            3
+        } else if binds.is_empty() {
+            1
+        } else {
+            2
+        })
+    {
+        return Err("Docker complete artifact schema differs from its prerequisite kinds".into());
+    }
+    Ok(DockerPrerequisites {
+        identities,
+        binds,
+        network_internal,
+    })
+}
+
+#[cfg(feature = "docker")]
+struct DockerRequestIndex<'a> {
+    creates: BTreeMap<String, &'a serde_json::Value>,
+    created_networks: BTreeSet<&'a str>,
+    created_volumes: BTreeSet<&'a str>,
+    network_connections: BTreeSet<(String, String)>,
+}
+
+#[cfg(feature = "docker")]
+fn expected_docker_plan_context(
+    profile: &boxferry::docker::docker_lens::version::TargetProfile,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let identity = profile.identity();
+    let build = match identity.build() {
+        boxferry::docker::docker_lens::version::EngineBuild::Upstream => serde_json::json!({"kind":"upstream"}),
+        boxferry::docker::docker_lens::version::EngineBuild::DebianPackage(revision) => {
+            serde_json::json!({"kind":"debian_package","revision":revision.as_str()})
+        }
+    };
+    let mode = match identity.mode() {
+        boxferry::docker::docker_lens::version::DaemonMode::Rootful => "rootful",
+        boxferry::docker::docker_lens::version::DaemonMode::Rootless => "rootless",
+        boxferry::docker::docker_lens::version::DaemonMode::Unknown => {
+            return Err("unreviewed Docker target mode".into());
+        }
+    };
+    let api =
+        |version: boxferry::docker::docker_lens::version::ApiVersion| format!("{}.{}", version.major, version.minor);
+    Ok(serde_json::json!({
+        "kind":"target", "build":build, "engine_release":identity.release().as_str(),
+        "advertised_api_version":api(identity.advertised_api_version()),
+        "acquisition_api_version":api(identity.acquisition_api_version()),
+        "rendering_api_version":api(identity.rendering_api_version()), "daemon_mode":mode,
+        "evidence_sha256":lowercase_hex(profile.evidence_key().as_sha256_bytes())
+    }))
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_plan_inputs<'a>(
+    profile: &boxferry::docker::docker_lens::version::TargetProfile,
+    plan: &'a serde_json::Value,
+) -> Result<DockerPlanInputs<'a>, Box<dyn Error>> {
+    let identity = profile.identity();
+    let prerequisites = parse_docker_prerequisites(plan)?;
+    if plan["context"] != expected_docker_plan_context(profile)? {
+        return Err("Docker complete artifact context differs from the independently selected target".into());
+    }
+    let requests = plan["requests"].as_array().ok_or("Docker native requests missing")?;
+    assert!(
+        !requests.is_empty(),
+        "a successful Docker route needs native create intent"
+    );
+    let api_prefix = format!(
+        "/v{}.{}/",
+        identity.rendering_api_version().major,
+        identity.rendering_api_version().minor
+    );
+    Ok(DockerPlanInputs {
+        requests,
+        api_prefix,
+        prerequisite_identities: prerequisites.identities,
+        bind_prerequisites: prerequisites.binds,
+        network_internal: prerequisites.network_internal,
+    })
+}
+
+#[cfg(feature = "docker")]
+fn index_docker_requests<'a>(
+    requests: &'a [serde_json::Value],
+    api_prefix: &str,
+) -> Result<DockerRequestIndex<'a>, Box<dyn Error>> {
+    let mut creates = BTreeMap::new();
+    let mut created_networks = BTreeSet::new();
+    let mut created_volumes = BTreeSet::new();
+    let mut network_connections = BTreeSet::new();
+    for request in requests {
+        if request["method"] != "POST" {
+            return Err("Docker native request method is unreviewed".into());
+        }
+        let path = request["path"].as_str().ok_or("Docker native request path")?;
+        if !path.starts_with(api_prefix) {
+            return Err("Docker request uses the wrong reviewed rendering API".into());
+        }
+        if !request["body"].is_object() {
+            return Err("Docker native request body must be an object".into());
+        }
+        if !request["body"]["DependsOn"].is_null() {
+            return Err("Engine create has no dependency choreography".into());
+        }
+        if let Some(name) = path.strip_prefix(&format!("{api_prefix}containers/create?name=")) {
+            if name.is_empty() || creates.insert(name.to_owned(), &request["body"]).is_some() {
+                return Err("Docker container create identity is empty or repeated".into());
+            }
+        } else if path == format!("{api_prefix}networks/create") {
+            let name = request["body"]["Name"]
+                .as_str()
+                .ok_or("Docker network create identity missing")?;
+            if name.is_empty() || !created_networks.insert(name) {
+                return Err("Docker network create identity is empty or repeated".into());
+            }
+        } else if path == format!("{api_prefix}volumes/create") {
+            let name = request["body"]["Name"]
+                .as_str()
+                .ok_or("Docker volume create identity missing")?;
+            if name.is_empty() || !created_volumes.insert(name) {
+                return Err("Docker volume create identity is empty or repeated".into());
+            }
+        } else if let Some(network) = path
+            .strip_prefix(&format!("{api_prefix}networks/"))
+            .and_then(|suffix| suffix.strip_suffix("/connect"))
+        {
+            let container = request["body"]["Container"]
+                .as_str()
+                .ok_or("Docker network connect lacks container identity")?;
+            if network.is_empty() || container.is_empty() {
+                return Err("Docker network connect lacks a target identity".into());
+            }
+            if !network_connections.insert((container.to_owned(), network.to_owned())) {
+                return Err("Docker network connect is repeated".into());
+            }
+        } else {
+            return Err("Docker plan contains an unreviewed operation path".into());
+        }
+    }
+    Ok(DockerRequestIndex {
+        creates,
+        created_networks,
+        created_volumes,
+        network_connections,
+    })
+}
+
+/// Docker output is an offline target request, never an observed source snapshot.
+#[cfg(feature = "docker")]
+fn docker_semantics(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    output: &Path,
+    source_application: &boxferry::Application,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let profile = route.docker_profile()?;
+    let plan_path = output.join("docker-plan.json");
+    let bytes = fs::read(&plan_path)?;
+    let plan: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let inputs = validate_docker_plan_inputs(&profile, &plan)?;
+    let index = index_docker_requests(inputs.requests, &inputs.api_prefix)?;
+    validate_docker_volume_labels(route, &inputs, &index)?;
+    validate_docker_networks(manifest, Some(route), &inputs, &index)?;
+    let logical_creates = index_docker_components(manifest, &index)?;
+    let mut gaps = Vec::new();
+    validate_docker_network_memberships(manifest, &inputs, &index, &logical_creates)?;
+    validate_docker_environment_and_ports(manifest, route, &logical_creates, &mut gaps)?;
+    validate_docker_mounts(manifest, &inputs, &index, &logical_creates)?;
+    let bind_expectations = expected_docker_bind_mounts(manifest, source_application)?;
+    validate_docker_bind_mounts(&bind_expectations, &inputs, &index)?;
+    if route.docker_exact_native_inventory {
+        validate_exact_docker_inventory_for_route(manifest, Some(route), &plan, &bind_expectations)?;
+    }
+    validate_docker_process_semantics(manifest, &logical_creates)?;
+    validate_docker_restart_policies(manifest, &logical_creates)?;
+    assert_eq!(fs::metadata(output)?.permissions().mode() & 0o777, 0o700);
+    assert_eq!(fs::metadata(&plan_path)?.permissions().mode() & 0o777, 0o600);
+    if !route.includes_environment_values() {
+        assert_no_protected_environment_values(manifest, &String::from_utf8_lossy(&bytes), "Docker native plan")?;
+    }
+    validate_docker_dependency_sidecar(manifest, route, output, &bytes, &index)?;
+    gaps.extend(
+        route
+            .docker_dependencies
+            .iter()
+            .map(|edge| format!("dependency:{}:{}", edge.service, edge.dependency)),
+    );
+    Ok(gaps)
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_volume_labels(
+    route: &RouteExpectation,
+    inputs: &DockerPlanInputs<'_>,
+    _index: &DockerRequestIndex<'_>,
+) -> Result<(), Box<dyn Error>> {
+    for volume in &route.docker_empty_volume_labels {
+        let create = inputs
+            .requests
+            .iter()
+            .find(|request| {
+                request["path"] == format!("{}volumes/create", inputs.api_prefix)
+                    && request["body"]["Name"].as_str() == Some(volume.as_str())
+            })
+            .ok_or("Docker volume-label assertion lacks a create request")?;
+        let labels = &create["body"]["Labels"];
+        assert!(
+            labels.is_null() || labels.as_object().is_some_and(serde_json::Map::is_empty),
+            "Docker volume create invented labels absent from the authored scenario"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_networks(
+    manifest: &ScenarioManifest,
+    route: Option<&RouteExpectation>,
+    inputs: &DockerPlanInputs<'_>,
+    index: &DockerRequestIndex<'_>,
+) -> Result<(), Box<dyn Error>> {
+    validate_docker_external_internal_for_route(manifest, route, &inputs.network_internal)?;
+    let external_internal = expected_docker_external_internal(manifest, route)?;
+    for expected in &manifest.semantics.required_networks {
+        match expected.ownership.as_str() {
+            "application" => {
+                assert!(
+                    index.created_networks.contains(expected.name.as_str()),
+                    "Docker plan lost an owned network create"
+                );
+                assert!(
+                    !inputs
+                        .prerequisite_identities
+                        .contains(&("network", expected.name.as_str())),
+                    "owned Docker network became an external prerequisite"
+                );
+                if let Some(internal) = expected.internal {
+                    let create = inputs
+                        .requests
+                        .iter()
+                        .find(|request| {
+                            request["path"] == format!("{}networks/create", inputs.api_prefix)
+                                && request["body"]["Name"].as_str() == Some(expected.name.as_str())
+                        })
+                        .ok_or("required Docker network create is missing")?;
+                    validate_created_docker_bridge_internal(&create["body"], internal)?;
+                }
+            }
+            "external" => {
+                if inputs.network_internal.get(expected.name.as_str()).copied()
+                    != external_internal.get(expected.name.as_str()).copied()
+                {
+                    return Err("Docker external prerequisite changed authored isolation expectation".into());
+                }
+                assert!(
+                    inputs
+                        .prerequisite_identities
+                        .contains(&("network", expected.name.as_str())),
+                    "Docker plan lost an external network prerequisite"
+                );
+                assert!(
+                    !index.created_networks.contains(expected.name.as_str()),
+                    "external Docker network was created"
+                );
+            }
+            _ => return Err("successful Docker route has unowned network intent".into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_external_internal_expectations(
+    manifest: &ScenarioManifest,
+    actual: &BTreeMap<&str, bool>,
+) -> Result<(), Box<dyn Error>> {
+    validate_docker_external_internal_for_route(manifest, None, actual)
+}
+
+#[cfg(feature = "docker")]
+fn expected_docker_external_internal<'a>(
+    manifest: &'a ScenarioManifest,
+    route: Option<&'a RouteExpectation>,
+) -> Result<BTreeMap<&'a str, bool>, Box<dyn Error>> {
+    let mut expected = manifest
+        .semantics
+        .required_networks
+        .iter()
+        .filter(|network| network.ownership == "external")
+        .filter_map(|network| network.internal.map(|internal| (network.name.as_str(), internal)))
+        .collect::<BTreeMap<_, _>>();
+    if let Some(route) = route {
+        route.validate_docker_external_network_internal(manifest)?;
+        for (name, internal) in &route.docker_external_network_internal {
+            expected.insert(name.as_str(), *internal);
+        }
+    }
+    Ok(expected)
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_external_internal_for_route(
+    manifest: &ScenarioManifest,
+    route: Option<&RouteExpectation>,
+    actual: &BTreeMap<&str, bool>,
+) -> Result<(), Box<dyn Error>> {
+    let expected = expected_docker_external_internal(manifest, route)?;
+    if *actual != expected {
+        return Err("Docker external prerequisite changed authored isolation expectations".into());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_created_docker_bridge_internal(body: &serde_json::Value, expected: bool) -> Result<(), Box<dyn Error>> {
+    match body.get("Internal") {
+        Some(serde_json::Value::Bool(actual)) if *actual == expected => Ok(()),
+        None if !expected && body.get("Driver").and_then(serde_json::Value::as_str) == Some("bridge") => Ok(()),
+        _ => Err("created Docker bridge changed authored isolation".into()),
+    }
+}
+
+#[cfg(feature = "docker")]
+fn index_docker_components<'m, 'r>(
+    manifest: &'m ScenarioManifest,
+    index: &DockerRequestIndex<'r>,
+) -> Result<BTreeMap<&'m str, &'r serde_json::Value>, Box<dyn Error>> {
+    let mut logical_creates = BTreeMap::new();
+    for component in &manifest.components {
+        let name = manifest
+            .semantics
+            .required_runtime_names
+            .iter()
+            .find_map(|value| {
+                value
+                    .split_once(':')
+                    .filter(|(service, _)| *service == component.name)
+                    .map(|(_, runtime)| runtime)
+            })
+            .unwrap_or(&component.name);
+        let body = index
+            .creates
+            .get(name)
+            .ok_or_else(|| format!("missing Docker create for {name}"))?;
+        logical_creates.insert(component.name.as_str(), *body);
+        let digest_reference = component
+            .image
+            .as_ref()
+            .zip(component.digest.as_ref())
+            .map(|(image, digest)| format!("{image}@{digest}"));
+        let expected_image = component.configured_image.as_deref().or(digest_reference.as_deref());
+        if expected_image.is_some_and(|expected_image| body["Image"] != expected_image) {
+            return Err("Docker create image differs from authored component".into());
+        }
+    }
+    if index.creates.len() != logical_creates.len() {
+        return Err("Docker plan contains an undeclared container create".into());
+    }
+    Ok(logical_creates)
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_network_memberships(
+    manifest: &ScenarioManifest,
+    inputs: &DockerPlanInputs<'_>,
+    index: &DockerRequestIndex<'_>,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for requirement in &manifest.semantics.exact_network_memberships {
+        let (service, names) = requirement
+            .split_once(':')
+            .ok_or("invalid network membership expectation")?;
+        let body = logical_creates
+            .get(service)
+            .ok_or("network membership service lacks Docker create")?;
+        let runtime_name = manifest
+            .semantics
+            .required_runtime_names
+            .iter()
+            .find_map(|value| {
+                value
+                    .split_once(':')
+                    .filter(|(logical, _)| *logical == service)
+                    .map(|(_, native)| native)
+            })
+            .unwrap_or(service);
+        let endpoints = body["NetworkingConfig"]["EndpointsConfig"]
+            .as_object()
+            .ok_or("Docker create lacks required network attachments")?;
+        let expected = names.split(',').collect::<BTreeSet<_>>();
+        let actual = endpoints
+            .keys()
+            .map(String::as_str)
+            .chain(
+                index
+                    .network_connections
+                    .iter()
+                    .filter_map(|(container, network)| (container == runtime_name).then_some(network.as_str())),
+            )
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "Docker plan changed authored network memberships");
+    }
+    for (container, network) in &index.network_connections {
+        assert!(
+            index.creates.contains_key(container),
+            "Docker network connect references an undeclared container"
+        );
+        assert!(
+            index.created_networks.contains(network.as_str())
+                || inputs.prerequisite_identities.contains(&("network", network.as_str())),
+            "Docker network connect references an undeclared network"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_environment_and_ports(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+    gaps: &mut Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    for requirement in &manifest.semantics.required_environment {
+        let (service, assignment) = requirement.split_once(':').ok_or("invalid environment expectation")?;
+        let (name, _) = assignment.split_once('=').ok_or("invalid environment assignment")?;
+        let body = logical_creates
+            .get(service)
+            .ok_or("environment service lacks Docker create")?;
+        let retained = body["Env"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == assignment));
+        if route.includes_environment_values() {
+            assert!(retained, "required Docker environment assignment was lost");
+        } else {
+            assert!(!retained, "withheld environment assignment entered Docker plan");
+            gaps.push(format!("environment:{service}:{name}"));
+        }
+    }
+    for requirement in &manifest.semantics.required_ports {
+        let (service, rest) = requirement.split_once(':').ok_or("invalid published port")?;
+        let (host, container_protocol) = rest.split_once(':').ok_or("invalid published port")?;
+        let body = logical_creates
+            .get(service)
+            .ok_or("publication service lacks Docker create")?;
+        assert!(
+            body["ExposedPorts"][container_protocol].is_object(),
+            "Docker plan lost exposed container port"
+        );
+        assert!(
+            body["HostConfig"]["PortBindings"][container_protocol]
+                .as_array()
+                .is_some_and(|bindings| { bindings.iter().any(|binding| binding["HostPort"] == host) }),
+            "Docker plan lost host publication"
+        );
+    }
+    validate_docker_port_bindings(manifest, logical_creates)?;
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_port_bindings(
+    manifest: &ScenarioManifest,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for required in &manifest.semantics.required_port_bindings {
+        let body = logical_creates
+            .get(required.service.as_str())
+            .ok_or("port-binding service lacks Docker create")?;
+        let key = format!("{}/{}", required.container, required.protocol);
+        let expected_port = required.published.map_or_else(String::new, |port| port.to_string());
+        assert!(
+            body["HostConfig"]["PortBindings"][&key]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings.iter().any(|binding| {
+                        binding["HostPort"].as_str() == Some(expected_port.as_str())
+                            && required
+                                .host_address
+                                .as_ref()
+                                .is_none_or(|address| binding["HostIp"].as_str() == Some(address.as_str()))
+                    })
+                }),
+            "Docker plan changed an authored host-IP/port binding"
+        );
+    }
+    for service in &manifest.semantics.unpublished_services {
+        let body = logical_creates
+            .get(service.as_str())
+            .ok_or("unpublished service lacks Docker create")?;
+        let bindings = &body["HostConfig"]["PortBindings"];
+        assert!(
+            bindings.is_null() || bindings.as_object().is_some_and(serde_json::Map::is_empty),
+            "Docker plan published an authored private service"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+struct DockerBindExpectation {
+    identity: String,
+    mount_index: usize,
+    source: String,
+    target: String,
+    read_only: bool,
+    relabel: &'static str,
+}
+
+/// The manifest owns semantics; the imported neutral application contributes only
+/// corroboration and original target-intent mount order. No candidate or host path is read.
+#[cfg(feature = "docker")]
+fn expected_docker_bind_mounts(
+    manifest: &ScenarioManifest,
+    application: &boxferry::Application,
+) -> Result<Vec<DockerBindExpectation>, Box<dyn Error>> {
+    let mut expected = Vec::new();
+    for required in &manifest.semantics.required_bind_mounts {
+        let service = application
+            .services()
+            .iter()
+            .find(|service| service.value().name().as_str() == required.service)
+            .ok_or("Docker bind expectation lacks a source service")?
+            .value();
+        let mut positions = service
+            .mounts()
+            .iter()
+            .enumerate()
+            .filter(|(_, mount)| mount.value().target() == required.target);
+        let (mount_index, neutral) = positions
+            .next()
+            .ok_or("Docker bind expectation lacks original mount order")?;
+        if positions.next().is_some() {
+            return Err("Docker bind source target is ambiguous".into());
+        }
+        let (relabel, neutral_relabel) = match required.selinux_relabel.as_str() {
+            "shared" => ("shared", boxferry::SelinuxRelabel::Shared),
+            "private" => ("private", boxferry::SelinuxRelabel::Private),
+            _ => return Err("Docker bind expectation relabel is unreviewed".into()),
+        };
+        if !matches!(neutral.value().source(), boxferry::MountSource::HostPath(source) if source == &required.source)
+            || neutral.value().read_only() != required.read_only
+            || neutral.value().selinux_relabel() != Some(neutral_relabel)
+            || [&required.source, &required.target]
+                .iter()
+                .any(|path| !path.starts_with('/') || path.contains(':') || path.contains('\0'))
+        {
+            return Err("Docker neutral bind disagrees with independently authored semantics".into());
+        }
+        let identity = manifest
+            .semantics
+            .required_runtime_names
+            .iter()
+            .find_map(|name| {
+                name.split_once(':')
+                    .filter(|(service, _)| *service == required.service)
+                    .map(|(_, native)| native)
+            })
+            .unwrap_or(&required.service);
+        expected.push(DockerBindExpectation {
+            identity: identity.to_owned(),
+            mount_index,
+            source: required.source.clone(),
+            target: required.target.clone(),
+            read_only: required.read_only,
+            relabel,
+        });
+    }
+    Ok(expected)
+}
+
+/// Configured literals and retained obligations do not establish `SELinux` effects.
+#[cfg(feature = "docker")]
+fn validate_docker_bind_mounts(
+    expected: &[DockerBindExpectation],
+    inputs: &DockerPlanInputs<'_>,
+    index: &DockerRequestIndex<'_>,
+) -> Result<(), Box<dyn Error>> {
+    let mut expected_keys = BTreeSet::new();
+    let mut groups: BTreeMap<&str, Vec<&DockerBindExpectation>> = BTreeMap::new();
+    for required in expected {
+        let key = (required.identity.as_str(), required.mount_index);
+        if !expected_keys.insert(key) {
+            return Err("Docker bind expectations repeat an identity and mount index".into());
+        }
+        let observed = inputs
+            .bind_prerequisites
+            .get(&key)
+            .ok_or("Docker required bind prerequisite missing")?;
+        if observed.source != required.source
+            || observed.target != required.target
+            || observed.read_only != required.read_only
+            || observed.relabel != required.relabel
+        {
+            return Err("Docker bind prerequisite differs from independently authored intent".into());
+        }
+        groups.entry(required.identity.as_str()).or_default().push(required);
+    }
+    if expected_keys != inputs.bind_prerequisites.keys().copied().collect() {
+        return Err("Docker bind prerequisite inventory differs".into());
+    }
+    for (identity, requirements) in &mut groups {
+        requirements.sort_by_key(|required| required.mount_index);
+        let body = index
+            .creates
+            .get(*identity)
+            .ok_or("Docker required bind lacks a container create")?;
+        let literals = requirements
+            .iter()
+            .map(|required| {
+                let access = if required.read_only { "ro" } else { "rw" };
+                let relabel = if required.relabel == "shared" { "z" } else { "Z" };
+                format!("{}:{}:{access},{relabel}", required.source, required.target)
+            })
+            .collect::<Vec<_>>();
+        // Literal equality is independent of Docker's native mode parser.
+        if body["HostConfig"]["Binds"] != serde_json::json!(literals) {
+            return Err("Docker bind literals differ from independently authored intent".into());
+        }
+        if body["HostConfig"]["Mounts"].as_array().is_some_and(|mounts| {
+            mounts.iter().any(|mount| {
+                requirements
+                    .iter()
+                    .any(|required| mount["Target"].as_str() == Some(required.target.as_str()))
+            })
+        }) {
+            return Err("Docker relabelled bind is duplicated by a structured mount".into());
+        }
+    }
+    for (identity, body) in &index.creates {
+        if body["HostConfig"].get("Binds").is_some() && !groups.contains_key(identity.as_str()) {
+            return Err("Docker plan contains undeclared bind literals".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_mounts(
+    manifest: &ScenarioManifest,
+    inputs: &DockerPlanInputs<'_>,
+    index: &DockerRequestIndex<'_>,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for requirement in &manifest.semantics.required_mounts {
+        let (service, rest) = requirement.split_once(':').ok_or("invalid named mount")?;
+        let (volume, target) = rest.split_once(':').ok_or("invalid named mount")?;
+        let body = logical_creates
+            .get(service)
+            .ok_or("mount service lacks Docker create")?;
+        assert!(
+            body["HostConfig"]["Mounts"].as_array().is_some_and(|mounts| mounts
+                .iter()
+                .any(|mount| { mount["Type"] == "volume" && mount["Source"] == volume && mount["Target"] == target })),
+            "Docker plan lost named volume mount"
+        );
+        assert!(
+            index.created_volumes.contains(volume) || inputs.prerequisite_identities.contains(&("volume", volume)),
+            "Docker named mount lacks a create request or external prerequisite"
+        );
+    }
+    for required in &manifest.semantics.required_volume_mounts {
+        let body = logical_creates
+            .get(required.service.as_str())
+            .ok_or("volume mount service lacks Docker create")?;
+        assert!(
+            body["HostConfig"]["Mounts"]
+                .as_array()
+                .is_some_and(|mounts| mounts.iter().any(|mount| {
+                    mount["Type"] == "volume"
+                        && mount["Source"] == required.source
+                        && mount["Target"] == required.target
+                        && mount["ReadOnly"] == required.read_only
+                })),
+            "Docker plan changed a reviewed volume mount"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_process_semantics(
+    manifest: &ScenarioManifest,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for required in &manifest.semantics.required_commands {
+        let body = logical_creates
+            .get(required.service.as_str())
+            .ok_or("command service lacks Docker create")?;
+        if required.kind == "exec" {
+            assert_eq!(
+                body["Cmd"],
+                serde_json::json!(required.values),
+                "Docker plan changed an authored exec command"
+            );
+        } else if required.kind == "absent" {
+            assert!(body["Cmd"].is_null(), "Docker plan invented a command override");
+        }
+    }
+    for required in &manifest.semantics.required_entrypoints {
+        let body = logical_creates
+            .get(required.service.as_str())
+            .ok_or("entrypoint service lacks Docker create")?;
+        if required.kind == "exec" {
+            assert_eq!(
+                body["Entrypoint"],
+                serde_json::json!(required.values),
+                "Docker plan changed an authored exec entrypoint"
+            );
+        } else if required.kind == "absent" {
+            assert!(
+                body["Entrypoint"].is_null(),
+                "Docker plan invented an entrypoint override"
+            );
+        }
+    }
+    validate_docker_healthchecks(manifest, logical_creates)
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_healthchecks(
+    manifest: &ScenarioManifest,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for required in &manifest.semantics.required_healthchecks {
+        let body = logical_creates
+            .get(required.service.as_str())
+            .ok_or("healthcheck service lacks Docker create")?;
+        let prefix = match required.command_kind.as_str() {
+            "exec" => "CMD",
+            "shell" => "CMD-SHELL",
+            _ => return Err("unreviewed Docker healthcheck expectation".into()),
+        };
+        let expected = std::iter::once(prefix.to_owned())
+            .chain(required.command.iter().cloned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            body["Healthcheck"]["Test"],
+            serde_json::json!(expected),
+            "Docker plan changed an authored healthcheck"
+        );
+    }
+    for component in &manifest.components {
+        if !manifest
+            .semantics
+            .required_healthchecks
+            .iter()
+            .any(|health| health.service == component.name)
+        {
+            let body = logical_creates
+                .get(component.name.as_str())
+                .ok_or("healthcheck service lacks Docker create")?;
+            assert!(
+                body["Healthcheck"].is_null(),
+                "Docker plan invented a healthcheck override"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_restart_policies(
+    manifest: &ScenarioManifest,
+    logical_creates: &BTreeMap<&str, &serde_json::Value>,
+) -> Result<(), Box<dyn Error>> {
+    for requirement in &manifest.semantics.required_restart {
+        let (service, policy) = requirement.split_once(':').ok_or("invalid restart expectation")?;
+        let body = logical_creates
+            .get(service)
+            .ok_or("restart service lacks Docker create")?;
+        let actual = &body["HostConfig"]["RestartPolicy"];
+        match policy {
+            "absent" => assert!(actual.is_null(), "Docker plan invented a restart policy"),
+            "never" => assert_eq!(actual["Name"], "no"),
+            "always" | "unless-stopped" | "on-failure" => assert_eq!(actual["Name"], policy),
+            _ => return Err("unreviewed Docker restart expectation".into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_dependency_sidecar(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    output: &Path,
+    bytes: &[u8],
+    index: &DockerRequestIndex<'_>,
+) -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let dependency_path = output.join("docker-dependencies.json");
+    if dependency_path.exists() == route.docker_dependencies.is_empty() {
+        return Err("Docker dependency sidecar presence changed".into());
+    }
+    if dependency_path.exists() {
+        let sidecar_bytes = fs::read(&dependency_path)?;
+        let sidecar: serde_json::Value = serde_json::from_slice(&sidecar_bytes)?;
+        validate_docker_dependency_document(manifest, route, &sidecar, bytes, index)?;
+        assert_eq!(fs::metadata(&dependency_path)?.permissions().mode() & 0o777, 0o600);
+        assert_no_protected_environment_values(
+            manifest,
+            &String::from_utf8_lossy(&sidecar_bytes),
+            "Docker dependency sidecar",
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn authored_docker_runtime_name(manifest: &ScenarioManifest, service: &str) -> Result<String, Box<dyn Error>> {
+    if !manifest.components.iter().any(|component| component.name == service) {
+        return Err("Docker dependency names an unauthored service".into());
+    }
+    Ok(manifest
+        .semantics
+        .required_runtime_names
+        .iter()
+        .find_map(|name| {
+            name.split_once(':')
+                .filter(|(logical, _)| *logical == service)
+                .map(|(_, native)| native)
+        })
+        .unwrap_or(service)
+        .to_owned())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_dependency_document(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    sidecar: &serde_json::Value,
+    plan_bytes: &[u8],
+    index: &DockerRequestIndex<'_>,
+) -> Result<(), Box<dyn Error>> {
+    if !docker_closed_fields(
+        sidecar,
+        &[
+            "schema_version",
+            "kind",
+            "native_execution",
+            "docker_plan_sha256",
+            "decisions",
+        ],
+    ) || sidecar["schema_version"] != 1
+        || sidecar["kind"] != "boxferry-docker-dependency-decisions"
+        || sidecar["native_execution"] != false
+        || sidecar["docker_plan_sha256"] != lowercase_hex(&Sha256::digest(plan_bytes))
+    {
+        return Err("Docker dependency sidecar envelope or exact plan binding differs".into());
+    }
+    let actual = sidecar["decisions"]
+        .as_array()
+        .ok_or("Docker dependency decisions missing")?;
+    if actual.len() != route.docker_dependencies.len() {
+        return Err("Docker dependency decision inventory differs".into());
+    }
+    let mut edges = BTreeSet::new();
+    for decision in actual {
+        let service = decision["service"]
+            .as_str()
+            .ok_or("Docker dependency service missing")?;
+        let dependency = decision["dependency"]
+            .as_str()
+            .ok_or("Docker dependency target missing")?;
+        if !edges.insert((service, dependency)) {
+            return Err("Docker dependency decisions repeat an edge".into());
+        }
+        validate_docker_dependency_decision(manifest, route, decision, index, service, dependency)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_dependency_decision(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    decision: &serde_json::Value,
+    index: &DockerRequestIndex<'_>,
+    service: &str,
+    dependency: &str,
+) -> Result<(), Box<dyn Error>> {
+    if !docker_closed_fields(
+        decision,
+        &[
+            "service",
+            "service_runtime_name",
+            "dependency",
+            "dependency_runtime_name",
+            "condition",
+            "condition_explicit",
+            "required",
+            "required_explicit",
+            "restart",
+            "restart_explicit",
+            "fidelity",
+            "native_engine_field",
+            "provenance",
+        ],
+    ) {
+        return Err("Docker dependency decision fields differ".into());
+    }
+    let expected = route
+        .docker_dependencies
+        .iter()
+        .find(|edge| edge.service == service && edge.dependency == dependency)
+        .ok_or("Docker dependency edge differs from authored source")?;
+    for (key, value) in [
+        ("condition", serde_json::json!(expected.condition)),
+        (
+            "condition_explicit",
+            serde_json::json!(expected.condition_explicit.is_explicit()),
+        ),
+        ("required", serde_json::json!(expected.required)),
+        (
+            "required_explicit",
+            serde_json::json!(expected.required_explicit.is_explicit()),
+        ),
+        ("restart", serde_json::json!(expected.restart)),
+        (
+            "restart_explicit",
+            serde_json::json!(expected.restart_explicit.is_explicit()),
+        ),
+        ("fidelity", serde_json::json!("approximate")),
+        ("native_engine_field", serde_json::json!(false)),
+    ] {
+        if decision[key] != value {
+            return Err("Docker dependency choices differ from authored source".into());
+        }
+    }
+    for (key, logical) in [
+        ("service_runtime_name", service),
+        ("dependency_runtime_name", dependency),
+    ] {
+        let name = authored_docker_runtime_name(manifest, logical)?;
+        if decision[key] != name || !index.creates.contains_key(&name) {
+            return Err("Docker dependency runtime identity differs from authored service".into());
+        }
+    }
+    validate_docker_dependency_provenance(&decision["provenance"])?;
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_docker_dependency_provenance(provenance: &serde_json::Value) -> Result<(), Box<dyn Error>> {
+    if !docker_closed_fields(provenance, &["reference", "condition", "required", "restart"]) {
+        return Err("Docker dependency provenance fields differ".into());
+    }
+    for key in ["reference", "condition", "required", "restart"] {
+        let values = provenance[key]
+            .as_array()
+            .ok_or("Docker dependency provenance categories missing")?;
+        if values.len() > 32
+            || values.iter().any(|value| {
+                !value.as_str().is_some_and(|value| {
+                    matches!(
+                        value,
+                        "source_document"
+                            | "runtime_observation"
+                            | "user_override"
+                            | "implementation_default"
+                            | "conversion_decision"
+                    )
+                })
+            })
+        {
+            return Err("Docker dependency provenance includes unreviewed categories".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "docker")]
+fn validate_exact_docker_bind_inventory(
+    plan: &serde_json::Value,
+    expected: &[DockerBindExpectation],
+) -> Result<(), Box<dyn Error>> {
+    let parsed = parse_docker_prerequisites(plan)?;
+    let requests = plan["requests"]
+        .as_array()
+        .ok_or("Docker exact inventory lacks requests")?;
+    let api = plan["context"]["rendering_api_version"]
+        .as_str()
+        .ok_or("Docker exact bind inventory lacks API context")?;
+    let inputs = DockerPlanInputs {
+        requests,
+        api_prefix: format!("/v{api}/"),
+        prerequisite_identities: parsed.identities,
+        bind_prerequisites: parsed.binds,
+        network_internal: parsed.network_internal,
+    };
+    let index = index_docker_requests(requests, &inputs.api_prefix)?;
+    validate_docker_bind_mounts(expected, &inputs, &index)
+}
+
+#[cfg(feature = "docker")]
+fn expected_exact_docker_health(
+    manifest: &ScenarioManifest,
+    service: &str,
+) -> Result<Option<serde_json::Value>, Box<dyn Error>> {
+    let Some(health) = manifest
+        .semantics
+        .required_healthchecks
+        .iter()
+        .find(|health| health.service == service)
+    else {
+        return Ok(None);
+    };
+    // The six independently authored Nextcloud overlay tests all specify 10s, 3s and 12.
+    // Other timing contracts need their own source evidence before exact inventory admission.
+    if manifest.id != "nextcloud-application" || health.command_kind != "exec" {
+        return Err("Docker exact health timing contract is not independently reviewed".into());
+    }
+    let test = std::iter::once("CMD")
+        .chain(health.command.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    Ok(Some(
+        serde_json::json!({"Test":test,"Interval":10_000_000_000_u64,"Timeout":3_000_000_000_u64,"Retries":12}),
+    ))
+}
+
+#[cfg(feature = "docker")]
+fn expected_exact_docker_restart(
+    manifest: &ScenarioManifest,
+    service: &str,
+) -> Result<Option<serde_json::Value>, Box<dyn Error>> {
+    let policy = manifest.semantics.required_restart.iter().find_map(|value| {
+        value
+            .split_once(':')
+            .filter(|(name, _)| *name == service)
+            .map(|(_, policy)| policy)
+    });
+    let name = match policy {
+        None | Some("absent") => return Ok(None),
+        Some("never") => "no",
+        Some("always") => "always",
+        Some("unless-stopped") => "unless-stopped",
+        _ => return Err("Docker exact restart contract lacks independently reviewed retry choices".into()),
+    };
+    Ok(Some(serde_json::json!({"Name":name,"MaximumRetryCount":0})))
+}
+
+#[cfg(feature = "docker")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exact native inventory checks one authored route contract as a unit"
+)]
+fn validate_exact_docker_inventory_for_route(
+    manifest: &ScenarioManifest,
+    route: Option<&RouteExpectation>,
+    plan: &serde_json::Value,
+    bind_expectations: &[DockerBindExpectation],
+) -> Result<(), Box<dyn Error>> {
+    let parsed = parse_docker_prerequisites(plan)?;
+    validate_docker_external_internal_for_route(manifest, route, &parsed.network_internal)?;
+    if bind_expectations.len() != manifest.semantics.required_bind_mounts.len() {
+        return Err("Docker exact inventory lacks source-corroborated bind expectations".into());
+    }
+    if !bind_expectations.is_empty() {
+        validate_exact_docker_bind_inventory(plan, bind_expectations)?;
+    }
+    let requests = plan["requests"]
+        .as_array()
+        .ok_or("Docker exact inventory lacks requests")?;
+    let mut actual_networks = BTreeSet::new();
+    let mut actual_volumes = BTreeSet::new();
+    let mut containers = BTreeMap::new();
+    let mut connections = BTreeMap::new();
+    for request in requests {
+        let path = request["path"]
+            .as_str()
+            .ok_or("Docker exact inventory request lacks path")?;
+        if path.ends_with("/networks/create") {
+            let name = request["body"]["Name"]
+                .as_str()
+                .ok_or("Docker network create lacks name")?;
+            if !actual_networks.insert(name) {
+                return Err("Docker exact inventory repeats a network create".into());
+            }
+            let expected = manifest
+                .semantics
+                .required_networks
+                .iter()
+                .find(|network| network.name == name && network.ownership == "application")
+                .ok_or("Docker exact inventory has an undeclared network create")?;
+            if request["body"]["Driver"] != "bridge" {
+                return Err("Docker exact inventory changed the network driver".into());
+            }
+            if expected.internal == Some(true) && request["body"]["Internal"] != true {
+                return Err("Docker exact inventory changed network isolation".into());
+            }
+            let mut expected_fields = BTreeSet::from(["Name", "Driver"]);
+            if expected.internal == Some(true) {
+                expected_fields.insert("Internal");
+            }
+            if request["body"]
+                .as_object()
+                .is_none_or(|body| body.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected_fields)
+            {
+                return Err("Docker exact inventory invented network create fields".into());
+            }
+        } else if path.ends_with("/volumes/create") {
+            let name = request["body"]["Name"]
+                .as_str()
+                .ok_or("Docker volume create lacks name")?;
+            if !actual_volumes.insert(name) {
+                return Err("Docker exact inventory repeats a volume create".into());
+            }
+            if request["body"]
+                .as_object()
+                .is_none_or(|body| body.keys().map(String::as_str).collect::<BTreeSet<_>>() != BTreeSet::from(["Name"]))
+            {
+                return Err("Docker exact inventory invented volume create fields".into());
+            }
+        } else if let Some((_, name)) = path.split_once("/containers/create?name=") {
+            if name.is_empty() || containers.insert(name, &request["body"]).is_some() {
+                return Err("Docker exact inventory repeats a container create".into());
+            }
+        } else if let Some(network) = path
+            .split_once("/networks/")
+            .and_then(|(_, suffix)| suffix.strip_suffix("/connect"))
+        {
+            let container = request["body"]["Container"]
+                .as_str()
+                .ok_or("Docker network connect lacks container identity")?;
+            if network.is_empty()
+                || container.is_empty()
+                || connections.insert((container, network), &request["body"]).is_some()
+            {
+                return Err("Docker exact inventory repeats a network connect".into());
+            }
+            let endpoint = &request["body"]["EndpointConfig"];
+            if !endpoint.is_null() && !endpoint.as_object().is_some_and(serde_json::Map::is_empty) {
+                return Err("Docker exact inventory invented network endpoint options".into());
+            }
+            if request["body"].as_object().is_none_or(|body| {
+                body.keys().map(String::as_str).collect::<BTreeSet<_>>()
+                    != BTreeSet::from(["Container", "EndpointConfig"])
+            }) {
+                return Err("Docker exact inventory invented network connect fields".into());
+            }
+        } else {
+            return Err("Docker exact inventory contains an undeclared operation".into());
+        }
+    }
+    let expected_networks = manifest
+        .semantics
+        .required_networks
+        .iter()
+        .filter(|network| network.ownership == "application")
+        .map(|network| network.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if actual_networks != expected_networks {
+        return Err("Docker exact inventory changed the owned network create set".into());
+    }
+    let expected_volumes = manifest
+        .semantics
+        .ownership_boundaries
+        .iter()
+        .filter_map(|boundary| {
+            boundary
+                .strip_prefix("volume:")
+                .and_then(|value| value.rsplit_once(':'))
+        })
+        .filter_map(|(name, ownership)| (ownership == "application").then_some(name))
+        .collect::<BTreeSet<_>>();
+    if actual_volumes != expected_volumes {
+        return Err("Docker exact inventory changed the owned volume create set".into());
+    }
+    let expected_prerequisites = manifest
+        .semantics
+        .required_networks
+        .iter()
+        .filter(|network| network.ownership == "external")
+        .map(|network| ("network", network.name.as_str()))
+        .chain(
+            manifest
+                .semantics
+                .ownership_boundaries
+                .iter()
+                .filter_map(|boundary| {
+                    boundary
+                        .strip_prefix("volume:")
+                        .and_then(|value| value.rsplit_once(':'))
+                })
+                .filter_map(|(name, ownership)| (ownership == "external").then_some(("volume", name))),
+        )
+        .collect::<BTreeSet<_>>();
+    let mut actual_prerequisites = BTreeSet::new();
+    for prerequisite in plan["prerequisites"]
+        .as_array()
+        .ok_or("Docker exact inventory lacks prerequisites")?
+    {
+        let kind = prerequisite["kind"].as_str().ok_or("Docker prerequisite lacks kind")?;
+        if kind == "bind_source" && !bind_expectations.is_empty() {
+            // Complete obligations, association and exact bind inventory were checked above.
+            continue;
+        }
+        let name = prerequisite["identity"]
+            .as_str()
+            .ok_or("Docker prerequisite lacks identity")?;
+        if !actual_prerequisites.insert((kind, name)) {
+            return Err("Docker exact inventory repeats a prerequisite".into());
+        }
+    }
+    if actual_prerequisites != expected_prerequisites {
+        return Err("Docker exact inventory changed the external prerequisite set".into());
+    }
+    for component in &manifest.components {
+        let runtime_name = manifest
+            .semantics
+            .required_runtime_names
+            .iter()
+            .find_map(|name| {
+                name.split_once(':')
+                    .filter(|(service, _)| *service == component.name)
+                    .map(|(_, native)| native)
+            })
+            .unwrap_or(&component.name);
+        let body = containers
+            .get(runtime_name)
+            .ok_or("Docker exact inventory lacks an authored container")?;
+        let expected_user = manifest.semantics.required_users.iter().find_map(|user| {
+            user.split_once(':')
+                .filter(|(service, _)| *service == component.name)
+                .map(|(_, value)| value)
+        });
+        if body["User"].as_str() != expected_user {
+            return Err("Docker exact inventory changed the container user".into());
+        }
+        let expected_command = manifest
+            .semantics
+            .required_commands
+            .iter()
+            .find(|command| command.service == component.name);
+        let mut expected_container_fields = BTreeSet::from(["Image", "HostConfig", "NetworkingConfig"]);
+        match expected_command {
+            Some(command) if command.kind == "exec" => {
+                if body["Cmd"] != serde_json::json!(command.values) {
+                    return Err("Docker exact inventory changed the container command".into());
+                }
+                expected_container_fields.insert("Cmd");
+            }
+            Some(command) if command.kind == "absent" => {
+                if !body["Cmd"].is_null() {
+                    return Err("Docker exact inventory invented a container command".into());
+                }
+            }
+            None => {
+                if !body["Cmd"].is_null() {
+                    return Err("Docker exact inventory invented a container command".into());
+                }
+            }
+            Some(_) => return Err("Docker exact inventory has an unsupported authored command kind".into()),
+        }
+        if manifest.semantics.required_environment.iter().any(|assignment| {
+            assignment
+                .split_once(':')
+                .is_some_and(|(service, _)| service == component.name)
+        }) {
+            expected_container_fields.insert("Env");
+        }
+        if expected_user.is_some() {
+            expected_container_fields.insert("User");
+        }
+        let expected_health = expected_exact_docker_health(manifest, &component.name)?;
+        if expected_health
+            .as_ref()
+            .is_some_and(|health| body["Healthcheck"] != *health)
+            || expected_health.is_none() && !body["Healthcheck"].is_null()
+        {
+            return Err("Docker exact inventory changed authored healthcheck fields".into());
+        }
+        if expected_health.is_some() {
+            expected_container_fields.insert("Healthcheck");
+        }
+        if manifest
+            .semantics
+            .required_port_bindings
+            .iter()
+            .any(|port| port.service == component.name)
+        {
+            expected_container_fields.insert("ExposedPorts");
+        }
+        if body.as_object().is_none_or(|fields| {
+            fields.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected_container_fields
+        }) {
+            return Err("Docker exact inventory invented container create fields".into());
+        }
+        let authored_networks = manifest
+            .semantics
+            .exact_network_memberships
+            .iter()
+            .find_map(|membership| {
+                membership
+                    .split_once(':')
+                    .filter(|(service, _)| *service == component.name)
+                    .map(|(_, names)| names.split(',').collect::<Vec<_>>())
+            })
+            .ok_or("Docker exact inventory lacks authored network memberships")?;
+        let primary_network = *authored_networks
+            .first()
+            .ok_or("Docker exact inventory lacks an authored primary network")?;
+        let expected_networks = authored_networks.into_iter().collect::<BTreeSet<_>>();
+        let endpoints = &body["NetworkingConfig"]["EndpointsConfig"];
+        let primary_networks = endpoints
+            .as_object()
+            .ok_or("Docker exact inventory lacks network attachments")?
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if primary_networks != BTreeSet::from([primary_network]) {
+            return Err("Docker exact inventory changed the primary network attachment".into());
+        }
+        if body["NetworkingConfig"].as_object().is_none_or(|fields| {
+            fields.keys().map(String::as_str).collect::<BTreeSet<_>>() != BTreeSet::from(["EndpointsConfig"])
+        }) {
+            return Err("Docker exact inventory invented networking configuration fields".into());
+        }
+        if body["HostConfig"]["NetworkMode"] != primary_network {
+            return Err("Docker exact inventory changed the network mode".into());
+        }
+        let mut expected_host_fields = BTreeSet::from(["NetworkMode"]);
+        let expected_restart = expected_exact_docker_restart(manifest, &component.name)?;
+        if expected_restart
+            .as_ref()
+            .is_some_and(|policy| body["HostConfig"]["RestartPolicy"] != *policy)
+            || expected_restart.is_none() && !body["HostConfig"]["RestartPolicy"].is_null()
+        {
+            return Err("Docker exact inventory changed authored restart policy fields".into());
+        }
+        if expected_restart.is_some() {
+            expected_host_fields.insert("RestartPolicy");
+        }
+        if bind_expectations.iter().any(|bind| bind.identity == runtime_name) {
+            expected_host_fields.insert("Binds");
+        }
+        if manifest
+            .semantics
+            .required_volume_mounts
+            .iter()
+            .any(|mount| mount.service == component.name)
+        {
+            expected_host_fields.insert("Mounts");
+        }
+        if manifest
+            .semantics
+            .required_port_bindings
+            .iter()
+            .any(|port| port.service == component.name)
+        {
+            expected_host_fields.insert("PortBindings");
+        }
+        if body["HostConfig"]
+            .as_object()
+            .is_none_or(|fields| fields.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected_host_fields)
+        {
+            return Err("Docker exact inventory invented host configuration fields".into());
+        }
+        if connections
+            .keys()
+            .any(|(container, network)| *container == runtime_name && primary_networks.contains(network))
+        {
+            return Err("Docker exact inventory repeats a network attachment".into());
+        }
+        let actual_networks = primary_networks
+            .iter()
+            .copied()
+            .chain(
+                connections
+                    .keys()
+                    .filter_map(|(container, network)| (*container == runtime_name).then_some(*network)),
+            )
+            .collect::<BTreeSet<_>>();
+        if actual_networks != expected_networks {
+            return Err("Docker exact inventory changed authored network attachment set".into());
+        }
+        if endpoints.as_object().is_some_and(|values| {
+            values
+                .values()
+                .any(|value| !value.is_null() && !value.as_object().is_some_and(serde_json::Map::is_empty))
+        }) {
+            return Err("Docker exact inventory invented network endpoint options".into());
+        }
+        let expected_environment = manifest
+            .semantics
+            .required_environment
+            .iter()
+            .filter_map(|value| {
+                value
+                    .split_once(':')
+                    .filter(|(service, _)| *service == component.name)
+                    .map(|(_, assignment)| assignment)
+            })
+            .collect::<BTreeSet<_>>();
+        let mut actual_environment = BTreeSet::new();
+        if let Some(values) = body["Env"].as_array() {
+            for value in values {
+                let assignment = value
+                    .as_str()
+                    .ok_or("Docker exact inventory has malformed environment")?;
+                if !actual_environment.insert(assignment) {
+                    return Err("Docker exact inventory repeats an environment assignment".into());
+                }
+            }
+        } else if !body["Env"].is_null() {
+            return Err("Docker exact inventory has malformed environment".into());
+        }
+        if actual_environment != expected_environment {
+            return Err("Docker exact inventory changed authored environment assignments".into());
+        }
+        let expected_mounts = manifest
+            .semantics
+            .required_volume_mounts
+            .iter()
+            .filter(|mount| mount.service == component.name)
+            .map(|mount| ("volume", mount.source.as_str(), mount.target.as_str(), mount.read_only))
+            .collect::<BTreeSet<_>>();
+        let mut actual_mounts = BTreeSet::new();
+        if let Some(mounts) = body["HostConfig"]["Mounts"].as_array() {
+            for mount in mounts {
+                let kind = mount["Type"]
+                    .as_str()
+                    .ok_or("Docker exact inventory has malformed mount type")?;
+                let source = mount["Source"]
+                    .as_str()
+                    .ok_or("Docker exact inventory has malformed mount source")?;
+                let target = mount["Target"]
+                    .as_str()
+                    .ok_or("Docker exact inventory has malformed mount target")?;
+                let read_only = mount["ReadOnly"]
+                    .as_bool()
+                    .ok_or("Docker exact inventory has malformed mount mode")?;
+                if mount.as_object().is_none_or(|fields| {
+                    fields.keys().map(String::as_str).collect::<BTreeSet<_>>()
+                        != BTreeSet::from(["Type", "Source", "Target", "ReadOnly"])
+                }) {
+                    return Err("Docker exact inventory invented mount fields".into());
+                }
+                if !actual_mounts.insert((kind, source, target, read_only)) {
+                    return Err("Docker exact inventory repeats a mount".into());
+                }
+            }
+        } else if !body["HostConfig"]["Mounts"].is_null() {
+            return Err("Docker exact inventory has malformed mounts".into());
+        }
+        if actual_mounts != expected_mounts {
+            return Err("Docker exact inventory changed authored mount set".into());
+        }
+        let expected_ports = manifest
+            .semantics
+            .required_port_bindings
+            .iter()
+            .filter(|port| port.service == component.name)
+            .map(|port| format!("{}/{}", port.container, port.protocol))
+            .collect::<BTreeSet<_>>();
+        let exposed = &body["ExposedPorts"];
+        let actual_ports = if exposed.is_null() {
+            BTreeSet::new()
+        } else {
+            let by_port = exposed
+                .as_object()
+                .ok_or("Docker exact inventory has malformed exposed ports")?;
+            if by_port
+                .values()
+                .any(|value| !value.as_object().is_some_and(serde_json::Map::is_empty))
+            {
+                return Err("Docker exact inventory invented an exposed port value".into());
+            }
+            by_port.keys().map(String::as_str).collect::<BTreeSet<_>>()
+        };
+        if actual_ports != expected_ports.iter().map(String::as_str).collect::<BTreeSet<_>>() {
+            return Err("Docker exact inventory changed authored exposed ports".into());
+        }
+        let expected_bindings = manifest
+            .semantics
+            .required_port_bindings
+            .iter()
+            .filter(|port| port.service == component.name)
+            .map(|port| {
+                (
+                    format!("{}/{}", port.container, port.protocol),
+                    port.host_address.clone(),
+                    port.published
+                        .map_or_else(String::new, |published| published.to_string()),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let mut actual_bindings = BTreeSet::new();
+        let bindings = &body["HostConfig"]["PortBindings"];
+        if let Some(by_port) = bindings.as_object() {
+            if by_port.keys().map(String::as_str).collect::<BTreeSet<_>>()
+                != expected_ports.iter().map(String::as_str).collect::<BTreeSet<_>>()
+            {
+                return Err("Docker exact inventory changed authored host binding set".into());
+            }
+            for (port, values) in by_port {
+                for value in values
+                    .as_array()
+                    .ok_or("Docker exact inventory has malformed port bindings")?
+                {
+                    let host_port = value["HostPort"]
+                        .as_str()
+                        .ok_or("Docker exact inventory has malformed host port")?;
+                    let host_ip = value
+                        .as_object()
+                        .ok_or("Docker exact inventory has malformed host binding")?
+                        .get("HostIp")
+                        .map(|host_ip| host_ip.as_str().ok_or("Docker exact inventory has malformed host IP"))
+                        .transpose()?;
+                    let expected_fields = if host_ip.is_some() {
+                        BTreeSet::from(["HostIp", "HostPort"])
+                    } else {
+                        BTreeSet::from(["HostPort"])
+                    };
+                    if value.as_object().is_none_or(|fields| {
+                        fields.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected_fields
+                    }) {
+                        return Err("Docker exact inventory invented host binding fields".into());
+                    }
+                    if !actual_bindings.insert((port.to_owned(), host_ip.map(str::to_owned), host_port.to_owned())) {
+                        return Err("Docker exact inventory repeats a host binding".into());
+                    }
+                }
+            }
+        } else if !bindings.is_null() {
+            return Err("Docker exact inventory has malformed port bindings".into());
+        }
+        if actual_bindings != expected_bindings {
+            return Err("Docker exact inventory changed authored host binding set".into());
+        }
+    }
+    if containers.len() != manifest.components.len() {
+        return Err("Docker exact inventory added a container create".into());
+    }
+    if connections.keys().any(|(container, network)| {
+        !containers.contains_key(container)
+            || !actual_networks.contains(network) && !expected_prerequisites.contains(&("network", *network))
+    }) {
+        return Err("Docker exact inventory connected an undeclared resource".into());
+    }
+    Ok(())
 }
 
 fn quadlet_exporter(route: &RouteExpectation) -> Result<QuadletExporter, Box<dyn Error>> {
@@ -3030,14 +5323,7 @@ fn podman_structured_volume_mount_gaps(
         .iter()
         .filter(|expected| expected.service == name)
     {
-        let access = if expected.read_only { "ro" } else { "rw" };
-        let mut mount_options = vec![access.to_owned(), "copy".to_owned()];
-        match expected.selinux_relabel.as_deref() {
-            None => {}
-            Some("shared") => mount_options.push("z".into()),
-            Some("private") => mount_options.push("Z".into()),
-            Some(_) => return Err("unvalidated named-volume SELinux relabel".into()),
-        }
+        let mount_options = podman_named_volume_options(expected.read_only, expected.selinux_relabel.as_deref())?;
         let spelling = format!("{}:{}:{}", expected.source, expected.target, mount_options.join(","));
         let cli_has = volumes.contains(&spelling.as_str());
         let api_has = native.is_some_and(|entries| {
@@ -3060,6 +5346,18 @@ fn podman_structured_volume_mount_gaps(
     Ok(gaps)
 }
 
+fn podman_named_volume_options(read_only: bool, selinux_relabel: Option<&str>) -> Result<Vec<String>, Box<dyn Error>> {
+    let access = if read_only { "ro" } else { "rw" };
+    let mut options = vec![access.to_owned(), "copy".to_owned()];
+    match selinux_relabel {
+        None => {}
+        Some("shared") => options.push("z".into()),
+        Some("private") => options.push("Z".into()),
+        Some(_) => return Err("unvalidated named-volume SELinux relabel".into()),
+    }
+    Ok(options)
+}
+
 fn validate_podman_mounts(
     manifest: &ScenarioManifest,
     name: &str,
@@ -3073,7 +5371,16 @@ fn validate_podman_mounts(
             continue;
         }
         let (volume, destination) = rest.split_once(':').ok_or("mount grammar")?;
-        let expected = format!("{volume}:{destination}:rw,copy");
+        let typed_mount = manifest
+            .semantics
+            .required_volume_mounts
+            .iter()
+            .find(|mount| mount.service == owner && mount.source == volume && mount.target == destination);
+        let mount_options = podman_named_volume_options(
+            typed_mount.is_some_and(|mount| mount.read_only),
+            typed_mount.and_then(|mount| mount.selinux_relabel.as_deref()),
+        )?;
+        let expected = format!("{volume}:{destination}:{}", mount_options.join(","));
         assert!(
             volumes.contains(&expected.as_str()),
             "required CLI volume option changed"
@@ -3082,7 +5389,7 @@ fn validate_podman_mounts(
         assert!(
             native.iter().any(|entry| entry["Name"] == volume
                 && entry["Dest"] == destination
-                && entry["Options"] == serde_json::json!(["rw", "copy"])),
+                && entry["Options"] == serde_json::json!(mount_options)),
             "required native API volume changed"
         );
     }
@@ -4729,7 +7036,7 @@ fn convert_cli(
         .iter()
         .find(|input| input.id == route.input)
         .ok_or("missing scenario route input")?;
-    let report_directory = TemporaryDirectory::new_in(&repository_root().join("target"), "scenario-full-report")?;
+    let report_directory = TemporaryDirectory::new("scenario-full-report")?;
     let report_path = report_directory.path().join("report.json");
     let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
     command.args(["convert", &input.importer, &route.exporter]);
@@ -4840,6 +7147,12 @@ fn convert_cli(
             context,
             "--podman-max-version",
             &route.target_maximum,
+        ]);
+    }
+    if route.exporter == "docker" {
+        command.args([
+            "--docker-target",
+            route.docker_target.as_deref().ok_or("missing Docker preset")?,
         ]);
     }
     let result = command
@@ -5307,6 +7620,12 @@ impl TemporaryDirectory {
     fn new_in(parent: &Path, label: &str) -> Result<Self, std::io::Error> {
         let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
         let path = parent.join(format!("boxferry-scenario-{}-{label}-{id}", std::process::id()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new().mode(0o700).create(&path)?;
+        }
+        #[cfg(not(unix))]
         fs::create_dir(&path)?;
         Ok(Self { path })
     }
@@ -5487,7 +7806,7 @@ fn pinned_vendor_metadata_retains_superset_payloads_and_appwrite_compose_reimpor
             application.withhold_literal_environment_values();
             let version = boxferry::PlatformVersion::new(1, 0, 0);
             let target = boxferry::TargetProfile::new("compose-specification", version, Some(version))?;
-            let plan = boxferry::ExportAdapter::plan(&ComposeExporter::new()?, &application, &target)?;
+            let plan = ExportAdapter::plan(&ComposeExporter::new()?, &application, &target)?;
             let authorized = plan.authorize(boxferry::LossPolicy::AllowPartial);
             let text = authorized.output().ok_or("reviewed partial Compose artifact")?.text();
             let loaded = LoadedProject::load([DocumentInput::new(
@@ -5595,7 +7914,7 @@ fn pinned_authored_environment_expressions_use_the_specific_quadlet_source_rule(
             boxferry::PlatformVersion::new(5, 4, 0),
             Some(boxferry::PlatformVersion::new(6, 1, 0)),
         )?;
-        let plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
+        let plan = ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
         let subject = format!("services.{service_name}.environment.{key}");
         let outcomes = plan
             .outcomes()
@@ -5610,7 +7929,7 @@ fn pinned_authored_environment_expressions_use_the_specific_quadlet_source_rule(
         );
         let mut withheld = application.clone();
         withheld.withhold_literal_environment_values();
-        let withheld_plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, &withheld, &target)?;
+        let withheld_plan = ExportAdapter::plan(&QuadletExporter::new()?, &withheld, &target)?;
         let withheld_outcomes = withheld_plan
             .outcomes()
             .iter()
@@ -5632,7 +7951,7 @@ fn assert_appwrite_metadata_has_no_quadlet_carrier(application: &boxferry::Appli
         boxferry::PlatformVersion::new(5, 4, 0),
         Some(boxferry::PlatformVersion::new(6, 1, 0)),
     )?;
-    let plan = boxferry::ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
+    let plan = ExportAdapter::plan(&QuadletExporter::new()?, application, &target)?;
     assert!(
         plan.outcomes()
             .iter()

@@ -21,7 +21,10 @@ Use route-specific `--help`; it shows only applicable options.
 | `rules`                 | List diagnostic rules.                                      |
 | `explain CODE_OR_NAME`  | Explain one diagnostic rule.                                |
 
-`INPUT` and `OUTPUT` are `compose`, `quadlet`, or `podman`.
+In the Unreleased development CLI, `INPUT` and `OUTPUT` are `compose`, `docker`, `quadlet`,
+or `podman`: 16 neutral routes including Docker-to-Docker. Installed releases may expose fewer.
+Docker native/application and published-dependency qualification remain separate; see the
+[Docker development guide](../../guides/docker-input/).
 
 ## Input options
 
@@ -74,6 +77,35 @@ never invoking `podman`. Naming never selects resources or uses advisory Compose
 Exact selectors reject globs, regular expressions and partial IDs; prefixes are literal.
 Kinds are container, image, network, pod, secret and volume.
 
+## Docker input options
+
+Docker defaults to portable reconstruction, independently of `--loss-policy exact`. Library
+sources remain conservative by default. [Docker input](../../guides/docker-input/) defines the
+finite reconstruction, selection, privacy and ownership boundaries.
+
+| Option                                                 | Purpose                                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `--docker-socket PATH`                                 | Explicit local Unix socket; otherwise conventional Linux rootless-first lookup. |
+| `--docker-container NAME`                              | Exact container name; repeatable within this family.                            |
+| `--docker-container-id FULL_ID`                        | Exact full container ID; repeatable within this family.                         |
+| `--docker-network-id FULL_ID`                          | Exact standalone network ID; repeatable within this family.                     |
+| `--docker-volume NAME`                                 | Exact named volume; repeatable within this family.                              |
+| `--docker-name-prefix PREFIX`                          | One literal container-name prefix.                                              |
+| `--docker-label KEY[=VALUE]`                           | One literal metadata filter.                                                    |
+| `--docker-all-containers`                              | Explicit all-container selection within native bounds.                          |
+| `--docker-import-policy portable\|conservative`        | Reconstruct the reviewed current-state subset or retain effective evidence.     |
+| `--promote-docker-protected-environment-values`        | Independently promote protected source environment literals.                    |
+| `--promote-docker-same-host-bind-mounts`               | Independently promote reviewed same-host binds.                                 |
+| `--docker-public-label KIND:SOURCE=KEY`                | Declare one exact observed label public; repeatable.                            |
+| `--docker-resource-decision KIND:SOURCE=ACTION:TARGET` | Checked network/volume create-or-external decision; repeatable.                 |
+
+Use one selector family. Without one, metadata must identify a sole container or one complete
+consistent application group; no match, one-off, conflicting or ambiguous groups fail closed.
+`--application-name` defaults to `docker-import`, never to a label. Conventional Linux lookup
+checks `/run/user/<current-uid>/docker.sock` then `/var/run/docker.sock`; no remote environment,
+context, shell command, connection preflight or retry after selected-endpoint failure is used.
+Each acquisition call is bounded separately; discovery and inspection can be two calls.
+
 ## Output options
 
 | Option                                               | Applies to     | Purpose                                                  |
@@ -98,26 +130,37 @@ Output directories must be absent or empty, including dotfiles; existing files a
 Podman defaults to exact target 6.1.0: `podman.json` and `podman-commands.sh`. BoxFerry never executes
 output or infers targets from the source/development machine.
 
+Docker requires one of the four [exact profiles](../compatibility/#docker-development-boundaries).
+It writes inert `docker-plan.json` and, only when dependency decisions exist,
+`docker-dependencies.json` with `native_execution=false` and the exact plan SHA-256. POST entries
+are data and never sent. Review complete native prerequisites and sidecar obligations; neither
+artifact is Docker input inventory.
+
 ## Policy and reports
 
-| Option                                      | Purpose                                                                                          |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `--loss-policy exact\|approximate\|partial` | Authorize documented non-exact output.                                                           |
-| `--environment-values withhold\|include`    | Withhold environment values by default; explicitly include them in Compose or Quadlet artifacts. |
-| `--console-format json`                     | Emit one machine-readable report.                                                                |
-| `--report-file FILE`                        | Write a create-new JSON report.                                                                  |
-| `--generate-error-report`                   | Create a local ZIP support bundle.                                                               |
-| `--error-report-directory DIR`              | Select or create its direct destination directory.                                               |
-| `--include-podman-snapshot`                 | Add always-redacted Podman evidence to a generated ZIP.                                          |
-| `--verbose`                                 | Add discovery detail and expand diagnostic occurrences.                                          |
-| `--quiet`                                   | Suppress progress and success text.                                                              |
+| Option                                      | Purpose                                                                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `--loss-policy exact\|approximate\|partial` | Authorize documented non-exact output.                                                                             |
+| `--environment-values withhold\|include`    | Withhold environment values by default; explicitly include them in supported Compose, Quadlet or Docker artifacts. |
+| `--console-format json`                     | Emit one machine-readable report.                                                                                  |
+| `--report-file FILE`                        | Write a create-new JSON report.                                                                                    |
+| `--generate-error-report`                   | Create a local ZIP support bundle.                                                                                 |
+| `--error-report-directory DIR`              | Select or create its direct destination directory.                                                                 |
+| `--include-podman-snapshot`                 | Add always-redacted Podman evidence to a generated ZIP.                                                            |
+| `--verbose`                                 | Add discovery detail and expand diagnostic occurrences.                                                            |
+| `--quiet`                                   | Suppress progress and success text.                                                                                |
 
 Human output groups diagnostics with counts and bounded samples; verbose expands occurrences,
 JSON retains the complete report.
 
-Withheld literal environment assignments become named prerequisites. Exact/approximate policies
-block; partial output omits them and needs explicit values before use. `validate` plans identically
-without writing. `include` authorizes Compose/Quadlet values in owner-only Unix files. Podman
+Withheld literal environment assignments remain reported prerequisites. For Compose/Quadlet,
+partial output may omit them and require explicit values before use. Required incomplete Docker
+environment/process/health intent can refuse the complete candidate under every loss policy;
+partial loss does not guarantee a secret-dropping artifact. `validate` plans identically without
+writing. `include` authorizes supported Compose/Quadlet/Docker values in owner-only Unix files.
+Docker source environment literals also need independent
+`--promote-docker-protected-environment-values`; output consent alone does not promote them.
+Neither environment switch authorizes protected process or health values. Podman
 acquisition additionally requires portable-effective promotion (included in `portable`, explicit
 in `conservative`). Protected inline values with `include` block Podman output before writing.
 Diagnostics, JSON reports and support ZIPs stay redacted. Service environment-file contents and bind data

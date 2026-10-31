@@ -179,6 +179,7 @@ pub(crate) struct RouteExpectation {
     #[serde(default)]
     environment_values: ArtifactEnvironmentValues,
     pub target_implementation: String,
+    pub docker_target: Option<String>,
     pub loss_policy: String,
     pub target_minimum: String,
     pub target_maximum: String,
@@ -216,6 +217,48 @@ pub(crate) struct RouteExpectation {
     pub grouping: Option<String>,
     pub pod_name: Option<String>,
     pub podman_plan: Option<PodmanPlanExpectation>,
+    #[serde(default)]
+    pub docker_dependencies: Vec<DockerDependencyExpectation>,
+    #[serde(default)]
+    pub docker_empty_volume_labels: Vec<String>,
+    /// Authored input-route constraints supplement only unconstrained external networks.
+    /// They never override a manifest-wide isolation assertion or admit native execution.
+    #[serde(default)]
+    pub docker_external_network_internal: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub docker_exact_native_inventory: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct DockerDependencyExpectation {
+    pub service: String,
+    pub dependency: String,
+    pub condition: String,
+    pub condition_explicit: DockerDependencyExplicitness,
+    pub required: bool,
+    pub required_explicit: DockerDependencyExplicitness,
+    pub restart: bool,
+    pub restart_explicit: DockerDependencyExplicitness,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(from = "bool")]
+pub(crate) enum DockerDependencyExplicitness {
+    Default,
+    Explicit,
+}
+
+impl From<bool> for DockerDependencyExplicitness {
+    fn from(explicit: bool) -> Self {
+        if explicit { Self::Explicit } else { Self::Default }
+    }
+}
+
+impl DockerDependencyExplicitness {
+    pub(crate) const fn is_explicit(self) -> bool {
+        matches!(self, Self::Explicit)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -244,6 +287,37 @@ pub(crate) struct ImageOperationExpectation {
 }
 
 impl RouteExpectation {
+    pub(crate) fn validate_docker_external_network_internal(&self, manifest: &ScenarioManifest) -> Result<(), String> {
+        if self.docker_external_network_internal.is_empty() {
+            return Ok(());
+        }
+        if self.exporter != "docker"
+            || self.outcome != Outcome::MigrationSuccess
+            || self.native_validation.state != DimensionState::Passed
+        {
+            return Err("Docker external isolation assertions require a successful native Docker route".into());
+        }
+        for (name, internal) in &self.docker_external_network_internal {
+            let expected = manifest
+                .semantics
+                .required_networks
+                .iter()
+                .find(|network| network.name == *name && network.ownership == "external")
+                .ok_or("Docker route isolation assertion requires a declared external network")?;
+            if !manifest
+                .semantics
+                .selected_resources
+                .contains(&format!("network:{name}"))
+            {
+                return Err("Docker route isolation assertion references an unselected network".into());
+            }
+            if expected.internal.is_some_and(|value| value != *internal) {
+                return Err("Docker route isolation assertion contradicts manifest-wide isolation".into());
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn cli_losses(&self, directory: &Path) -> Result<Vec<LossTuple>, String> {
         let mut expected = load_loss_expectations(
             &self.allowed_losses,
@@ -415,6 +489,63 @@ impl RouteExpectation {
         .map_err(|error| error.to_string())
     }
 
+    #[cfg(feature = "docker")]
+    pub(crate) fn docker_profile(&self) -> Result<boxferry::docker::docker_lens::version::TargetProfile, String> {
+        use boxferry::docker::docker_lens::version::{DaemonMode, EngineBuild, TargetCapabilityCatalog};
+
+        let name = self
+            .docker_target
+            .as_deref()
+            .ok_or("Docker route lacks exact reviewed target preset")?;
+        let catalogue = TargetCapabilityCatalog::reviewed();
+        let profiles = catalogue
+            .profiles()
+            .filter(|profile| {
+                let identity = profile.identity();
+                match name {
+                    "upstream-29.8.1-rootful" => {
+                        matches!(identity.build(), EngineBuild::Upstream)
+                            && identity.release().as_str() == "29.8.1"
+                            && identity.mode() == DaemonMode::Rootful
+                    }
+                    "upstream-29.8.1-rootless" => {
+                        matches!(identity.build(), EngineBuild::Upstream)
+                            && identity.release().as_str() == "29.8.1"
+                            && identity.mode() == DaemonMode::Rootless
+                    }
+                    "debian11-20.10.5-rootful" => {
+                        matches!(identity.build(), EngineBuild::DebianPackage(revision)
+                            if revision.as_str() == "20.10.5+dfsg1-1+deb11u2")
+                            && identity.release().as_str() == "20.10.5+dfsg1"
+                            && identity.mode() == DaemonMode::Rootful
+                    }
+                    "debian11-20.10.5-rootless" => {
+                        matches!(identity.build(), EngineBuild::DebianPackage(revision)
+                            if revision.as_str() == "20.10.5+dfsg1-1+deb11u2")
+                            && identity.release().as_str() == "20.10.5+dfsg1"
+                            && identity.mode() == DaemonMode::Rootless
+                    }
+                    _ => false,
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let [profile] = profiles.as_slice() else {
+            return Err("Docker target preset must match exactly one reviewed profile".into());
+        };
+        let numeric_release = match name {
+            "debian11-20.10.5-rootful" | "debian11-20.10.5-rootless" => "20.10.5",
+            _ => "29.8.1",
+        };
+        if self.target_implementation != "docker"
+            || self.target_minimum != numeric_release
+            || self.target_maximum != numeric_release
+        {
+            return Err("Docker numeric target does not match the exact reviewed profile".into());
+        }
+        Ok(profile.clone())
+    }
+
     pub(crate) fn version_scope(&self) -> String {
         format!(
             "{}@{}..{}",
@@ -478,6 +609,8 @@ pub(crate) struct Semantics {
     pub required_restart: Vec<String>,
     #[serde(default)]
     pub required_runtime_names: Vec<String>,
+    #[serde(default)]
+    pub required_users: Vec<String>,
     #[serde(default)]
     pub unpublished_services: Vec<String>,
     #[serde(default)]
@@ -876,10 +1009,10 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             && (manifest.provenance.source != "authored"
                 || !manifest.provenance.privacy_reviewed
                 || !reviewed_value_source
-                || !matches!(route.exporter.as_str(), "compose" | "quadlet"))
+                || !matches!(route.exporter.as_str(), "compose" | "quadlet" | "docker"))
         {
             return Err(
-                "environment-value inclusion requires a reviewed authored input with value acquisition and Compose/Quadlet output"
+                "environment-value inclusion requires a reviewed authored input with value acquisition and a protected-value-capable output"
                     .into(),
             );
         }
@@ -901,6 +1034,30 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
         }
         route.target()?;
         route.policy()?;
+        if route.exporter == "docker" {
+            let preset = route
+                .docker_target
+                .as_deref()
+                .ok_or("Docker route requires an exact reviewed target preset")?;
+            let release = match preset {
+                "upstream-29.8.1-rootful" | "upstream-29.8.1-rootless" => "29.8.1",
+                "debian11-20.10.5-rootful" | "debian11-20.10.5-rootless" => "20.10.5",
+                _ => return Err("unrecognized exact Docker target preset".into()),
+            };
+            if route.target_implementation != "docker"
+                || route.target_minimum != release
+                || route.target_maximum != release
+            {
+                return Err("Docker route numeric target differs from its exact preset".into());
+            }
+            if route.reimport.state != DimensionState::NotApplicable {
+                return Err("inert Docker create intent cannot be reimported as observed state".into());
+            }
+            #[cfg(feature = "docker")]
+            route.docker_profile()?;
+        } else if route.docker_target.is_some() {
+            return Err("Docker target preset belongs only to Docker routes".into());
+        }
         if route.exporter == "quadlet" {
             if route
                 .grouping
@@ -919,6 +1076,175 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             ("podman", Some(plan)) => validate_podman_plan(plan)?,
             (_, None) => {}
             (_, Some(_)) => return Err("Podman plan metadata belongs only to Podman routes".into()),
+        }
+        if route.exporter != "docker" && !route.docker_dependencies.is_empty() {
+            return Err("Docker dependency decisions belong only to Docker routes".into());
+        }
+        if route.exporter != "docker" && !route.docker_empty_volume_labels.is_empty() {
+            return Err("Docker volume-label assertions belong only to Docker routes".into());
+        }
+        route.validate_docker_external_network_internal(manifest)?;
+        if route.docker_exact_native_inventory && route.exporter != "docker" {
+            return Err("exact Docker native inventory belongs only to Docker routes".into());
+        }
+        unique(
+            "Docker empty volume-label assertions",
+            route.docker_empty_volume_labels.iter().map(String::as_str),
+        )?;
+        for volume in &route.docker_empty_volume_labels {
+            if !manifest
+                .semantics
+                .selected_resources
+                .contains(&format!("volume:{volume}"))
+            {
+                return Err("Docker empty volume-label assertion references an unselected volume".into());
+            }
+        }
+        if route.docker_exact_native_inventory {
+            validate_exact_docker_review_metadata(manifest, route, directory)?;
+            validate_exact_docker_review_fields(manifest)?;
+            let selected_networks = manifest
+                .semantics
+                .selected_resources
+                .iter()
+                .filter_map(|resource| resource.strip_prefix("network:"))
+                .collect::<BTreeSet<_>>();
+            let declared_networks = manifest
+                .semantics
+                .required_networks
+                .iter()
+                .map(|network| network.name.as_str())
+                .collect::<BTreeSet<_>>();
+            if selected_networks != declared_networks
+                || manifest.semantics.required_networks.iter().any(|network| {
+                    !matches!(network.ownership.as_str(), "application" | "external")
+                        || network.ipv6.is_some()
+                        || network.ipam.is_some()
+                })
+            {
+                return Err("exact Docker inventory needs basic owned/external network expectations".into());
+            }
+            let selected_volumes = manifest
+                .semantics
+                .selected_resources
+                .iter()
+                .filter_map(|resource| resource.strip_prefix("volume:"))
+                .collect::<BTreeSet<_>>();
+            let mut declared_volumes = BTreeSet::new();
+            let mut created_volumes = BTreeSet::new();
+            for boundary in &manifest.semantics.ownership_boundaries {
+                let Some((name, ownership)) = boundary
+                    .strip_prefix("volume:")
+                    .and_then(|value| value.rsplit_once(':'))
+                else {
+                    continue;
+                };
+                if !matches!(ownership, "application" | "external") || !declared_volumes.insert(name) {
+                    return Err("exact Docker inventory needs unique explicit volume ownership".into());
+                }
+                if ownership == "application" {
+                    created_volumes.insert(name);
+                }
+            }
+            if selected_volumes != declared_volumes
+                || route
+                    .docker_empty_volume_labels
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>()
+                    != created_volumes
+            {
+                return Err("exact Docker inventory needs label-absence evidence for every owned volume".into());
+            }
+            let selected_services = manifest
+                .components
+                .iter()
+                .map(|component| component.name.as_str())
+                .collect::<BTreeSet<_>>();
+            let mut user_services = BTreeSet::new();
+            for user in &manifest.semantics.required_users {
+                let (service, value) = user
+                    .split_once(':')
+                    .ok_or("exact Docker inventory has malformed user expectation")?;
+                if value.is_empty() || !selected_services.contains(service) || !user_services.insert(service) {
+                    return Err("exact Docker inventory needs unique selected user expectations".into());
+                }
+            }
+            let membership_services = manifest
+                .semantics
+                .exact_network_memberships
+                .iter()
+                .filter_map(|membership| membership.split_once(':').map(|(service, _)| service))
+                .collect::<BTreeSet<_>>();
+            if selected_services != membership_services {
+                return Err("exact Docker inventory needs network memberships for every component".into());
+            }
+            let typed_mounts = manifest
+                .semantics
+                .required_volume_mounts
+                .iter()
+                .map(|mount| format!("{}:{}:{}", mount.service, mount.source, mount.target))
+                .collect::<BTreeSet<_>>();
+            if typed_mounts
+                != manifest
+                    .semantics
+                    .required_mounts
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+            {
+                return Err("exact Docker inventory needs a typed expectation for every named mount".into());
+            }
+            let typed_ports = manifest
+                .semantics
+                .required_port_bindings
+                .iter()
+                .filter_map(|port| {
+                    port.published
+                        .map(|published| format!("{}:{published}:{}/{}", port.service, port.container, port.protocol))
+                })
+                .collect::<BTreeSet<_>>();
+            if typed_ports
+                != manifest
+                    .semantics
+                    .required_ports
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+            {
+                return Err("exact Docker inventory needs a typed expectation for every published port".into());
+            }
+        }
+        let mut edges = BTreeSet::new();
+        for edge in &route.docker_dependencies {
+            if !edges.insert((&edge.service, &edge.dependency)) {
+                return Err("duplicate Docker dependency decision".into());
+            }
+            if !manifest
+                .semantics
+                .required_dependencies
+                .iter()
+                .any(|required| required.service == edge.service && required.dependency == edge.dependency)
+            {
+                return Err("Docker dependency decision is not authored neutral intent".into());
+            }
+        }
+        if route.exporter == "docker" && matches!(route.outcome, Outcome::MigrationSuccess | Outcome::KnownMigrationGap)
+        {
+            let required = manifest
+                .semantics
+                .required_dependencies
+                .iter()
+                .map(|edge| (edge.service.as_str(), edge.dependency.as_str()))
+                .collect::<BTreeSet<_>>();
+            if edges
+                .iter()
+                .map(|(service, dependency)| (service.as_str(), dependency.as_str()))
+                .collect::<BTreeSet<_>>()
+                != required
+            {
+                return Err("successful Docker plan must declare every authored dependency decision".into());
+            }
         }
 
         let label = format!("{} -> {}", route.input, route.exporter);
@@ -1057,6 +1383,174 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             {
                 return Err("reimport loss tuples must be positive, unique, non-exact and target-scoped".into());
             }
+        }
+    }
+    Ok(())
+}
+
+/// Exact native inventory describes inert configured intent, never application readiness.
+fn validate_exact_docker_review_metadata(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    directory: &Path,
+) -> Result<(), String> {
+    if !matches!(route.outcome, Outcome::MigrationSuccess | Outcome::KnownMigrationGap)
+        || !route.includes_environment_values()
+    {
+        return Err("exact Docker inventory requires a positive included-value review route".into());
+    }
+    if route.native_validation.state != DimensionState::Passed
+        || route.runtime_probe.state != DimensionState::NotApplicable
+        || route.reimport.state != DimensionState::NotApplicable
+    {
+        return Err("exact Docker inventory requires offline non-executing evidence dimensions".into());
+    }
+    let artifacts = load_string_expectations(
+        &route.artifacts,
+        route.artifacts_file.as_deref(),
+        directory,
+        "exact Docker artifacts",
+    )?;
+    let mut expected_artifacts = BTreeSet::from(["docker-plan.json"]);
+    if !route.docker_dependencies.is_empty() {
+        expected_artifacts.insert("docker-dependencies.json");
+    }
+    if artifacts.len() != expected_artifacts.len()
+        || artifacts.iter().map(String::as_str).collect::<BTreeSet<_>>() != expected_artifacts
+    {
+        return Err("exact Docker inventory requires the complete inert artifact pair".into());
+    }
+    if route.outcome == Outcome::KnownMigrationGap {
+        validate_nextcloud_exact_dependency_review(manifest, route, directory)?;
+    }
+    Ok(())
+}
+
+fn validate_nextcloud_exact_dependency_review(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    directory: &Path,
+) -> Result<(), String> {
+    // These seven relationships and explicit options are authored by compose.acceptance.yaml.
+    let expected_edges = BTreeSet::from([
+        ("app", "init"),
+        ("cron", "app"),
+        ("edge-proxy", "frontend"),
+        ("edge-proxy", "second-app"),
+        ("frontend", "app"),
+        ("init", "cache"),
+        ("init", "db"),
+    ]);
+    if manifest.id != "nextcloud-application"
+        || route.input != "compose"
+        || route.docker_dependencies.len() != expected_edges.len()
+        || route
+            .docker_dependencies
+            .iter()
+            .map(|edge| (edge.service.as_str(), edge.dependency.as_str()))
+            .collect::<BTreeSet<_>>()
+            != expected_edges
+        || route.docker_dependencies.iter().any(|edge| {
+            edge.condition != "started"
+                || !edge.condition_explicit.is_explicit()
+                || !edge.required
+                || !edge.required_explicit.is_explicit()
+                || edge.restart
+                || edge.restart_explicit.is_explicit()
+        })
+    {
+        return Err("exact Docker known-gap review requires the authored seven Nextcloud dependency decisions".into());
+    }
+    let expected_gaps = expected_edges
+        .iter()
+        .map(|(service, dependency)| format!("dependency:{service}:{dependency}"))
+        .collect::<BTreeSet<_>>();
+    if route.semantic_gaps.len() != expected_gaps.len()
+        || route.semantic_gaps.iter().cloned().collect::<BTreeSet<_>>() != expected_gaps
+    {
+        return Err("exact Docker known-gap review needs only the authored dependency semantic gaps".into());
+    }
+    let mut service_counts = BTreeMap::new();
+    for (service, _) in &expected_edges {
+        *service_counts.entry(*service).or_insert(0_usize) += 1;
+    }
+    let expected_subjects = service_counts
+        .into_iter()
+        .flat_map(|(service, count)| (0..count).map(move |index| format!("services.{service}.dependencies.{index}")))
+        .collect::<BTreeSet<_>>();
+    let losses = load_loss_expectations(
+        &route.allowed_losses,
+        route.allowed_losses_file.as_deref(),
+        directory,
+        "exact Docker dependency losses",
+    )?;
+    if losses.len() != expected_subjects.len()
+        || losses.iter().map(|loss| loss.subject.clone()).collect::<BTreeSet<_>>() != expected_subjects
+        || losses.iter().any(|loss| {
+            loss.rule != "BFD0006"
+                || loss.decision != "approximate"
+                || loss.count != 1
+                || loss.version_scope != route.version_scope()
+        })
+    {
+        return Err(
+            "exact Docker known-gap review permits only the seven declared approximate dependency losses".into(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_exact_docker_review_fields(manifest: &ScenarioManifest) -> Result<(), String> {
+    if !manifest.semantics.required_tmpfs.is_empty() {
+        return Err("exact Docker inventory does not admit tmpfs".into());
+    }
+    let services = manifest
+        .components
+        .iter()
+        .map(|component| component.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut restarts = BTreeSet::new();
+    for value in &manifest.semantics.required_restart {
+        let (service, policy) = value
+            .split_once(':')
+            .ok_or("exact Docker restart declaration is malformed")?;
+        if !services.contains(service)
+            || !restarts.insert(service)
+            || !matches!(policy, "absent" | "never" | "always" | "unless-stopped")
+        {
+            return Err("exact Docker inventory has an unimplemented restart declaration".into());
+        }
+    }
+    if !restarts.is_empty() && restarts != services {
+        return Err("exact Docker inventory needs restart declarations for every component".into());
+    }
+    for bind in &manifest.semantics.required_bind_mounts {
+        if !services.contains(bind.service.as_str())
+            || !matches!(bind.selinux_relabel.as_str(), "shared" | "private")
+            || [&bind.source, &bind.target]
+                .iter()
+                .any(|path| !path.starts_with('/') || path.contains(':') || path.contains('\0'))
+        {
+            return Err("exact Docker inventory requires closed authored relabel-bind declarations".into());
+        }
+    }
+    if !manifest.semantics.required_healthchecks.is_empty() {
+        let health_services = manifest
+            .semantics
+            .required_healthchecks
+            .iter()
+            .map(|health| health.service.as_str())
+            .collect::<BTreeSet<_>>();
+        if manifest.id != "nextcloud-application"
+            || manifest.semantics.required_healthchecks.len() != 6
+            || health_services != BTreeSet::from(["app", "cache", "db", "edge-proxy", "frontend", "second-app"])
+            || manifest
+                .semantics
+                .required_healthchecks
+                .iter()
+                .any(|health| health.command_kind != "exec" || health.command.is_empty())
+        {
+            return Err("exact Docker inventory has an unreviewed health declaration".into());
         }
     }
     Ok(())

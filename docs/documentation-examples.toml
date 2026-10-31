@@ -321,3 +321,126 @@ copy = ["compose-deferred.yaml"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
 expected-files = [{ actual = "quadlet-deferred-inline-output/web.container", fixture = "expected-deferred-inline-web.container" }]
+
+[[examples]]
+id = "compose-to-quadlet-explicit"
+pages = ["docs/public/guides/convert/compose-to-quadlet/index.md", "README.md"]
+command = "boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose.yaml", "--output-directory", "quadlet-output"]
+expected-exit = 0
+copy = ["compose.yaml"]
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected-web.container" }]
+
+[[examples]]
+id = "compose-to-docker-validate"
+pages = ["docs/public/guides/convert/compose-to-docker/index.md"]
+command = "boxferry validate compose docker --input-file compose.yaml --docker-target upstream-29.8.1-rootful"
+args = ["validate", "compose", "docker", "--input-file", "compose.yaml", "--docker-target", "upstream-29.8.1-rootful"]
+expected-exit = 0
+copy = ["compose.yaml"]
+stdout-contains = ["command succeeded"]
+absent = ["docker-output", "docker-plan.json", "docker-dependencies.json"]
+
+[[examples]]
+id = "compose-to-docker"
+pages = ["docs/public/guides/convert/compose-to-docker/index.md"]
+command = "boxferry convert compose docker --input-file compose.yaml --docker-target upstream-29.8.1-rootful --output-directory docker-output"
+args = ["convert", "compose", "docker", "--input-file", "compose.yaml", "--docker-target", "upstream-29.8.1-rootful", "--output-directory", "docker-output"]
+expected-exit = 0
+copy = ["compose.yaml"]
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "docker-output/docker-plan.json", fixture = "expected-docker-plan.json" }]
+artifact-sets = [{ directory = "docker-output", files = ["docker-plan.json"] }]
+artifact-contains = [{ actual = "docker-output/docker-plan.json", contains = ["\"method\":\"POST\"", "example.invalid/web:1", "web-runtime"], excludes = ["\"Env\""] }]
+absent = ["docker-output/docker-dependencies.json"]
+
+[[examples]]
+id = "compose-to-docker-unresolved"
+pages = ["docs/public/guides/convert/compose-to-docker/index.md"]
+command = "boxferry convert compose docker --input-file compose-unresolved.yaml --docker-target upstream-29.8.1-rootful --loss-policy partial --output-directory docker-error-output"
+args = ["convert", "compose", "docker", "--input-file", "compose-unresolved.yaml", "--docker-target", "upstream-29.8.1-rootful", "--loss-policy", "partial", "--output-directory", "docker-error-output"]
+expected-exit = 1
+copy = ["compose-unresolved.yaml"]
+stderr-contains = ["BFC0105", "BFD0007"]
+absent = ["docker-error-output"]
+
+[[examples]]
+id = "compose-to-docker-withheld-validate"
+pages = ["docs/public/guides/convert/compose-to-docker/index.md"]
+command = "boxferry validate compose docker --input-file compose-interpolation.yaml --env-file variables.env --docker-target upstream-29.8.1-rootful --loss-policy partial"
+args = ["validate", "compose", "docker", "--input-file", "compose-interpolation.yaml", "--env-file", "variables.env", "--docker-target", "upstream-29.8.1-rootful", "--loss-policy", "partial"]
+expected-exit = 2
+copy = ["compose-interpolation.yaml", "variables.env"]
+stderr-contains = ["BFD0006"]
+absent = ["docker-output", "docker-plan.json", "docker-dependencies.json"]
+
+[[examples]]
+id = "compose-to-docker-withheld"
+pages = ["docs/public/guides/convert/compose-to-docker/index.md"]
+command = "boxferry convert compose docker --input-file compose-interpolation.yaml --env-file variables.env --docker-target upstream-29.8.1-rootful --loss-policy partial --output-directory docker-private-output"
+args = ["convert", "compose", "docker", "--input-file", "compose-interpolation.yaml", "--env-file", "variables.env", "--docker-target", "upstream-29.8.1-rootful", "--loss-policy", "partial", "--output-directory", "docker-private-output"]
+expected-exit = 2
+copy = ["compose-interpolation.yaml", "variables.env"]
+stderr-contains = ["BFD0006"]
+absent = ["docker-private-output"]
+
+[[examples]]
+id = "quadlet-to-docker"
+pages = ["docs/public/guides/convert/quadlet-to-docker/index.md"]
+command = "boxferry convert quadlet docker --input-file web.container --application-name route-matrix --docker-target upstream-29.8.1-rootful --output-directory docker-output"
+args = ["convert", "quadlet", "docker", "--input-file", "web.container", "--application-name", "route-matrix", "--docker-target", "upstream-29.8.1-rootful", "--output-directory", "docker-output"]
+expected-exit = 0
+copy = ["web.container"]
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "docker-output/docker-plan.json", fixture = "expected-docker-plan.json" }]
+artifact-sets = [{ directory = "docker-output", files = ["docker-plan.json"] }]
+absent = ["docker-output/docker-dependencies.json"]
+
+[[examples]]
+id = "docker-to-compose-help"
+pages = ["docs/public/guides/convert/docker-to-compose/index.md"]
+command = "boxferry convert docker compose --help"
+args = ["convert", "docker", "compose", "--help"]
+expected-exit = 0
+stdout-contains = ["Docker input:"]
+
+[[examples]]
+id = "docker-to-docker-help"
+pages = ["docs/public/guides/convert/docker-to-docker/index.md"]
+command = "boxferry convert docker docker --help"
+args = ["convert", "docker", "docker", "--help"]
+expected-exit = 0
+stdout-contains = ["--docker-target"]
+
+[[examples]]
+id = "docker-to-podman-help"
+pages = ["docs/public/guides/convert/docker-to-podman/index.md"]
+command = "boxferry convert docker podman --help"
+args = ["convert", "docker", "podman", "--help"]
+expected-exit = 0
+stdout-contains = ["Docker input:"]
+
+[[examples]]
+id = "docker-to-quadlet-help"
+pages = ["docs/public/guides/convert/docker-to-quadlet/index.md"]
+command = "boxferry convert docker quadlet --help"
+args = ["convert", "docker", "quadlet", "--help"]
+expected-exit = 0
+stdout-contains = ["Docker input:"]
+
+[[examples]]
+id = "podman-to-docker-help"
+pages = ["docs/public/guides/convert/podman-to-docker/index.md"]
+command = "boxferry convert podman docker --help"
+args = ["convert", "podman", "docker", "--help"]
+expected-exit = 0
+stdout-contains = ["--docker-target"]
+
+[[examples]]
+id = "docker-input-help"
+pages = ["docs/public/guides/docker-input/index.md"]
+command = "boxferry convert docker compose --help"
+args = ["convert", "docker", "compose", "--help"]
+expected-exit = 0
+stdout-contains = ["Docker input:", "--docker-socket", "--docker-import-policy"]

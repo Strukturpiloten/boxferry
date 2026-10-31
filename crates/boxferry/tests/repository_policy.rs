@@ -21,12 +21,18 @@ const FIXTURE_SUITES: &[&str] = &[
     "real-world",
 ];
 
-const FORMAT_ADAPTER_PACKAGES: &[&str] = &["boxferry-compose", "boxferry-podman", "boxferry-quadlet"];
+const FORMAT_ADAPTER_PACKAGES: &[&str] = &[
+    "boxferry-compose",
+    "boxferry-docker",
+    "boxferry-podman",
+    "boxferry-quadlet",
+];
 
 const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
+    "boxferry-docker",
     "boxferry-podman",
     "boxferry-quadlet",
     "boxferry",
@@ -6354,6 +6360,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-check",
         "cargo ci-core",
         "cargo ci-compose",
+        "cargo ci-docker",
         "cargo ci-podman",
         "cargo ci-quadlet",
         "cargo ci-policy",
@@ -6452,6 +6459,7 @@ const REVIEWED_PRETTIER_EXCLUSIONS: &[&str] = &[
     "/CHANGELOG.md",
     "fixtures/**/expected-podman.json",
     "fixtures/**/expected-*-podman.json",
+    "fixtures/**/expected-docker-plan.json",
     "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
     "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
     "fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json",
@@ -6981,7 +6989,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: Required CI\n    if: always()",
-        "needs:\n      [\n        release-binaries,\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "needs:\n      [\n        release-binaries,\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n        docker-forgejo-application,\n      ]",
         "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
         "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
@@ -7001,6 +7009,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "coverage",
         "migration_readiness",
         "lockfile_release_age",
+        "docker_forgejo_application",
     ] {
         let output = format!("select_{selector}: ${{{{ steps.plan.outputs.select_{selector} }}}}");
         let condition = format!("if: needs.validation-plan.outputs.select_{selector} == 'true'");
@@ -7811,7 +7820,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .as_array()
         .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
     if packages.len() != PUBLISHED_PACKAGES.len() {
-        return Err("release-plz.toml must configure all six lockstep packages".to_owned());
+        return Err("release-plz.toml must configure all seven lockstep packages".to_owned());
     }
     for package in PUBLISHED_PACKAGES {
         let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
@@ -7826,7 +7835,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
     if facade["changelog_update"].as_bool() != Some(true)
         || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
-        || facade["changelog_include"].as_array().map(Vec::len) != Some(5)
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(PUBLISHED_PACKAGES.len() - 1)
     {
         return Err("the facade must aggregate all component changes into the root changelog".to_owned());
     }
@@ -8255,6 +8264,7 @@ fn validate_first_party_release_age(renovate: &serde_json::Value) -> Result<(), 
         "boxferry-model",
         "boxferry-engine",
         "boxferry-compose",
+        "boxferry-docker",
         "boxferry-podman",
         "boxferry-quadlet",
         "compose-lens",
@@ -8267,7 +8277,7 @@ fn validate_first_party_release_age(renovate: &serde_json::Value) -> Result<(), 
         .filter_map(serde_json::Value::as_str)
         .collect::<BTreeSet<_>>();
     if names.len() != expected_names.len() || actual_names != expected_names {
-        return Err("Renovate age exception must list exactly the six BoxFerry and four Lens crates".to_owned());
+        return Err("Renovate age exception must list exactly the seven BoxFerry and four Lens crates".to_owned());
     }
     let fields = rule
         .as_object()
@@ -9842,14 +9852,111 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
 }
 
 #[test]
-fn deferred_docker_and_runtime_namespaces_are_not_published_by_the_current_product() {
+fn docker_source_and_target_namespaces_are_bounded_and_runtime_namespace_remains_deferred() {
+    let docker: Vec<_> = boxferry_engine::RULES
+        .iter()
+        .filter(|rule| rule.code().starts_with("BFD"))
+        .map(|rule| (rule.code(), rule.owner()))
+        .collect();
+    assert_eq!(
+        docker,
+        [
+            ("BFD0001", "Docker source adapter"),
+            ("BFD0002", "Docker source adapter"),
+            ("BFD0003", "Docker source adapter"),
+            ("BFD0004", "Docker source adapter"),
+            ("BFD0005", "Docker target adapter"),
+            ("BFD0006", "Docker target adapter"),
+            ("BFD0007", "Docker target adapter"),
+        ]
+    );
     for rule in boxferry_engine::RULES {
         assert!(
-            !matches!(rule.code().get(..3), Some("BFD" | "BFR")),
-            "deferred Docker or runtime rule namespace must not remain published: {}",
+            !rule.code().starts_with("BFR"),
+            "deferred runtime rule namespace must not remain published: {}",
             rule.code()
         );
     }
+}
+
+#[test]
+fn docker_cli_feature_wiring_preserves_explicit_embedded_adapter_selection() -> Result<(), String> {
+    let root = repository_root();
+    let read_toml = |path: &Path| -> Result<toml::Value, String> {
+        let text = fs::read_to_string(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&text).map_err(|error| format!("invalid {}: {error}", path.display()))
+    };
+    let manifest = read_toml(&root.join("crates/boxferry/Cargo.toml"))?;
+    let features = manifest["features"].as_table().ok_or("facade features missing")?;
+    assert_eq!(features["docker"].as_array().map(Vec::len), Some(1));
+    assert_eq!(features["docker"][0].as_str(), Some("dep:boxferry-docker"));
+    let defaults = manifest["features"]["default"].as_array().ok_or("defaults missing")?;
+    assert_eq!(
+        defaults.iter().map(toml::Value::as_str).collect::<Vec<_>>(),
+        [
+            Some("cli"),
+            Some("compose"),
+            Some("docker"),
+            Some("podman"),
+            Some("quadlet")
+        ]
+    );
+    for binary in manifest["bin"].as_array().ok_or("CLI registration missing")? {
+        let required = binary["required-features"]
+            .as_array()
+            .ok_or("CLI feature boundary missing")?;
+        assert_eq!(
+            required, defaults,
+            "the CLI must require every semantic adapter explicitly"
+        );
+    }
+    assert_eq!(
+        manifest["dependencies"]["boxferry-docker"]["optional"].as_bool(),
+        Some(true)
+    );
+    let aliases = read_toml(&root.join(".cargo/config.toml"))?;
+    assert_eq!(
+        aliases["alias"]["ci-docker"].as_str(),
+        Some("check --locked --package boxferry --all-targets --no-default-features --features docker")
+    );
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).map_err(|error| error.to_string())?;
+    assert!(ci.contains("cargo ci-docker"));
+    let facade = fs::read_to_string(root.join("crates/boxferry/src/lib.rs")).map_err(|error| error.to_string())?;
+    for public_api in ["DockerImporter", "DockerSource", "acquire_docker_source"] {
+        assert!(
+            facade.contains(public_api),
+            "Docker CLI must use the public source API {public_api}"
+        );
+    }
+    assert!(facade.contains("endpoint: &docker::docker_lens::acquisition::Endpoint"));
+    assert!(facade.contains("selector: docker::docker_lens::acquisition::Selector"));
+    assert!(facade.contains("limits: docker::docker_lens::acquisition::Limits"));
+    assert!(facade.contains("cancelled: &std::sync::atomic::AtomicBool"));
+    assert!(facade.contains("docker::docker_lens::acquisition::acquire(endpoint, selector, limits, cancelled)?"));
+    assert!(facade.contains("docker::docker_lens::decoder::decode_capture(&capture)?"));
+    let routes = fs::read_to_string(root.join("crates/boxferry/src/route.rs")).map_err(|error| error.to_string())?;
+    assert!(routes.contains("Docker => \"docker\""));
+    assert!(routes.contains("DockerExactProfile"));
+    for module in ["import.rs", "source.rs", "resource_decisions.rs", "public_labels.rs"] {
+        assert!(root.join("crates/boxferry-docker/src").join(module).is_file());
+    }
+    let source =
+        fs::read_to_string(root.join("crates/boxferry-docker/src/source.rs")).map_err(|error| error.to_string())?;
+    assert!(source.contains("selection: DockerSelection::Unspecified"));
+    assert!(source.contains("promotion_policy: DockerPromotionPolicy::conservative()"));
+    let importer =
+        fs::read_to_string(root.join("crates/boxferry-docker/src/import.rs")).map_err(|error| error.to_string())?;
+    assert!(importer.contains("impl ImportAdapter for DockerImporter"));
+    assert!(importer.contains("field!(\"runtime_ports\", container.runtime_ports)"));
+    assert!(importer.contains("fn validate_public_label_decisions"));
+    assert!(importer.contains("fn validate_resource_decisions"));
+    for forbidden in ["std::os::unix", "std::process::Command", "acquisition::acquire("] {
+        assert!(
+            !importer.contains(forbidden),
+            "semantic importer must not acquire or execute: {forbidden}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -10154,7 +10261,7 @@ fn validate_release_binary_publication(release: &str) -> Result<(), String> {
         "--revision \"${GITHUB_SHA}\" --run-id \"${GITHUB_RUN_ID}\"",
         "--output target/release-artifacts --version \"${VERSION}\"",
         "archive_names+=(\"${binary_names[@]}\")",
-        "test \"${#archive_names[@]}\" -eq 12",
+        "test \"${#archive_names[@]}\" -eq 13",
         "target/release-artifacts/boxferry*.tar.gz",
         "upload_asset \"target/release-artifacts/${archive_name}\" \"application/gzip\"",
     ] {
@@ -10324,7 +10431,7 @@ fn release_binary_delivery_and_renovate_contracts_reject_counterfactuals() -> Re
     for old in [
         "release-binaries.py stage",
         "target/release-artifacts/boxferry*.tar.gz",
-        "test \"${#archive_names[@]}\" -eq 12",
+        "test \"${#archive_names[@]}\" -eq 13",
     ] {
         if validate_release_binary_delivery(&binary, &ci, &release.replace(old, "true"), &helper, &renovate).is_ok() {
             return Err(format!("release accepted counterfactual {old}"));

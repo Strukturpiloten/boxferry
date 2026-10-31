@@ -42,7 +42,8 @@ case "${command_name}:$*" in
     printf '%s\n' "${command_line% }" >> "${CHECK_ALL_TEST_LOG}"
     ;;
 esac
-if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ]]; then
+if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ||
+  "${CHECK_ALL_TEST_FAIL_COMMAND:-}" == "${command_name}:$*" ]]; then
   exit 17
 fi
 if [[ -n "${CHECK_ALL_TEST_FAIL_ARGUMENT:-}" && "$*" == "${CHECK_ALL_TEST_FAIL_ARGUMENT}" ]]; then
@@ -97,11 +98,20 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/36\]' "${test_root}/default.output")" == 36 ]]
-grep --fixed-strings --quiet -- '[36/36] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 36 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/38\]' "${test_root}/default.output")" == 38 ]]
+grep --fixed-strings --quiet -- '[38/38] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 38 steps.' ]]
+assert_contains default "cargo ci-docker"
+assert_contains check "cargo ci-docker"
 assert_contains default "bash scripts/test-application-probes.sh"
 assert_contains check "bash scripts/test-application-probes.sh"
+# The gate command is recorded by fake Bash; never run the expensive profile
+# from this orchestration regression (its script is intentionally not copied).
+[[ ! -e "${test_root}/repository/scripts/test-docker-forgejo-application.sh" ]]
+for mode in default fix check; do
+  assert_contains "${mode}" "bash scripts/test-docker-forgejo-application.sh"
+  [[ "$(grep --fixed-strings --count 'bash scripts/test-docker-forgejo-application.sh' "${test_root}/${mode}.commands")" == 1 ]]
+done
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
 assert_contains check "python3 scripts/test-reviewed-application-catalogue.py"
 for mode in default fix check; do
@@ -169,5 +179,20 @@ for mode in fix check; do
   run_gate failure "--${mode}" || status=$?
   [[ "${status}" == 17 ]]
   [[ "$(tail -n 1 "${test_root}/failure.commands")" == "actionlint" ]]
+done
+unset CHECK_ALL_TEST_FAIL
+export CHECK_ALL_TEST_FAIL_COMMAND=cargo:ci-docker
+for mode in fix check; do
+  status=0
+  run_gate docker_failure "--${mode}" || status=$?
+  [[ "${status}" == 17 ]]
+  [[ "$(tail -n 1 "${test_root}/docker_failure.commands")" == "cargo ci-docker" ]]
+done
+export CHECK_ALL_TEST_FAIL_COMMAND=bash:scripts/test-docker-forgejo-application.sh
+for mode in fix check; do
+  status=0
+  run_gate forgejo_failure "--${mode}" || status=$?
+  [[ "${status}" == 17 ]]
+  [[ "$(tail -n 1 "${test_root}/forgejo_failure.commands")" == "bash scripts/test-docker-forgejo-application.sh" ]]
 done
 printf 'Complete gate mode regression tests passed.\n'

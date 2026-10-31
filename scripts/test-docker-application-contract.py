@@ -502,6 +502,27 @@ class CoreJourneyBoundaryTests(unittest.TestCase):
                 with self.assertRaises(contract.ContractError):
                     contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile="host-metadata")
                 binary.write_bytes(b"worktree-local candidate")
+                recipe = ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                          "docker-core-semantic-projection", "--no-default-features", "--features",
+                          "compose,docker", "--jobs", "2", "--config",
+                          f'patch.crates-io.docker-lens.path="{lens}"']
+                self.assertEqual(contract.expected_build_command(lens, "core-semantic-projection"), recipe)
+                record["build_command"] = recipe
+                receipt.write_text(json.dumps(record))
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile="core-semantic-projection")
+                projection_binary = target / "docker-core-semantic-projection"
+                projection_binary.write_bytes(binary.read_bytes()); os.chmod(projection_binary, 0o700)
+                self.assertEqual(contract.verify_candidate(root, projection_binary, receipt, lens, "c" * 40,
+                                                           profile="core-semantic-projection"), record)
+                for other in ("core-journey", "volume-fixtures", "host-metadata"):
+                    with self.assertRaises(contract.ContractError):
+                        contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile=other)
+                projection = root / "boxferry-core-semantic-projection"
+                contract.capture_candidate(root, projection_binary, receipt, lens, "c" * 40, projection,
+                                           profile="core-semantic-projection")
+                self.assertEqual(projection.read_bytes(), binary.read_bytes())
+                self.assertEqual(projection.stat().st_mode & 0o777, 0o500)
                 record["build_command"] = contract.expected_build_command(lens)
                 receipt.write_text(json.dumps(record))
                 (lens / "Cargo.lock").write_bytes(b"changed lock")
@@ -520,34 +541,112 @@ class CoreJourneyBoundaryTests(unittest.TestCase):
                 source.write_bytes(b"after")
                 self.assertNotEqual(before, contract.candidate_source_digest(root))
 
-    def test_generated_compose_requires_exact_core_semantics(self) -> None:
+    def authored_projection_result(self):
+        # Fixed authored contract, never learned from Rust producer output.
+        subjects = ["application", "networks.docker-network-1.name", "networks.docker-network-1",
+                    "services.docker-service-1.container_name", "services.docker-service-1.image",
+                    "services.docker-service-1.command", "services.docker-service-1.environment.PATH",
+                    "services.docker-service-1.networks.docker-network-1", "services.docker-service-1"]
+        return {"schema_version": 1, "kind": "boxferry-private-core-semantic-comparison",
+                "native_execution": False, "native_admission": False, "status": "matched",
+                "compose_import_outcomes": [{"subject": name, "kind": "exact", "diagnostic": None}
+                                            for name in subjects], "compose_import_diagnostics": []}
+
+    def test_projection_helper_is_private_digest_bound_and_receives_document(self):
         image = "registry.invalid/boxferry-core/busybox:1.37.0"
-        document = authored_reacquired_compose(image)
-        contract.core_generated_compose(document, image)
-        for changed in (document.replace(b"docker-service-1:", b"other:"),
-                        document.replace(b"name: bf-docker-core\n", b"name: other\n"),
-                        document + b"name: second\n",
-                        document.replace(b"    container_name: bf-docker-core\n", b""),
-                        document.replace(b"container_name: bf-docker-core", b"container_name: other"),
-                        document.replace(b"exec sleep 3600", b"exec sleep 9999"),
-                        document.replace(image.encode(), b"busybox:latest"),
-                        document.replace(contract.CORE_BUSYBOX_ENV[0].encode(), b"PATH=/bin"),
-                        document.replace(b"    environment:\n", b""),
-                        document.replace(b"    networks:\n      docker-network-1: {}\n", b""),
-                        document.replace(b"      docker-network-1: {}", b"      other: {}"),
-                        document.replace(b"    name: bridge", b"    name: other"),
-                        document.replace(b"    external: true", b"    external: false"),
-                        document.replace(b"    external: true", b"    external: \"true\""),
-                        document + b"  extra:\n    image: busybox:latest\n",
-                        document + b"    privileged: true\n",
-                        document + b"    ports:\n      - 8080:80\n",
-                        document + b"    volumes:\n      - /host:/data\n",
-                        document + b"    environment:\n      - TOKEN=secret\n",
-                        document + b"    command:\n      - true\n",
-                        document + b"    image: busybox:latest\n",
-                        document + b"networks:\n  extra: {}\n"):
-            with self.subTest(changed=changed[-35:]), self.assertRaises(contract.ContractError):
-                contract.core_generated_compose(changed, image)
+        profile = {"engine_release": "29.8.1", "acquisition_api_version": "1.49", "daemon_mode": "rootless"}
+        result = self.authored_projection_result()
+        contract.core_projection_result(json.dumps(result).encode())
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); os.chmod(root, 0o700)
+            helper = root / "boxferry-core-semantic-projection"
+            body = ("#!/usr/bin/python3\nimport sys\nraw=sys.stdin.buffer.read()\n"
+                    "assert b'boxferry-core-marker' in raw\n"
+                    "assert sys.argv[1:3]==['--image-alias', '" + image + "']\n"
+                    "sys.stdout.write(" + repr(json.dumps(result)) + ")\n").encode()
+            helper.write_bytes(body); os.chmod(helper, 0o500)
+            digest = hashlib.sha256(body).hexdigest()
+            kwargs = {"helper": helper, "helper_sha256": digest, "lane": "upstream-rootless", "profile": profile}
+            contract.core_generated_compose(authored_reacquired_compose(image), image, **kwargs)
+            for digest in ("0" * 64, "bad"):
+                with self.assertRaises(contract.ContractError):
+                    contract.core_generated_compose(b"private input", image, **{**kwargs, "helper_sha256": digest})
+            os.chmod(helper, 0o700)
+            with self.assertRaises(contract.ContractError):
+                contract.core_generated_compose(b"private input", image, **kwargs)
+            os.chmod(helper, 0o500)
+            link = root / "linked-helper"; link.symlink_to(helper)
+            with self.assertRaises(contract.ContractError):
+                contract.core_generated_compose(b"private input", image, **{**kwargs, "helper": link})
+            link.unlink()
+            helper.rename(root / "original-helper")
+            helper.symlink_to(root / "original-helper")
+            with self.assertRaises(contract.ContractError):
+                contract.core_generated_compose(b"private input", image, **kwargs)
+            helper.unlink()
+            (root / "original-helper").rename(helper)
+            os.link(helper, root / "hardlinked-helper")
+            with self.assertRaises(contract.ContractError):
+                contract.core_generated_compose(b"private input", image, **kwargs)
+
+    def test_projection_child_failure_and_output_never_expose_private_values(self):
+        canary = "private-" + "projection-canary"
+        image = "registry.invalid/boxferry-core/busybox:1.37.0"
+        profile = {"engine_release": "29.8.1", "acquisition_api_version": "1.49", "daemon_mode": "rootless"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); os.chmod(root, 0o700)
+            helper = root / "boxferry-core-semantic-projection"
+            for script in ("import sys;sys.stderr.write(" + repr(canary) + ");sys.exit(1)",
+                           "import sys;sys.stdout.write(" + repr(json.dumps({"private": canary})) + ")",
+                           "import sys;sys.stdout.write('x'*70000)"):
+                body = ("#!/usr/bin/python3\n" + script + "\n").encode()
+                os.chmod(helper, 0o700) if helper.exists() else None
+                helper.write_bytes(body); os.chmod(helper, 0o500)
+                with self.assertRaises(contract.ContractError) as caught:
+                    contract.core_generated_compose(canary.encode(), image, helper=helper,
+                        helper_sha256=hashlib.sha256(body).hexdigest(), lane="upstream-rootless", profile=profile)
+                self.assertNotIn(canary, str(caught.exception))
+                self.assertNotIn(canary, repr(caught.exception))
+
+    def test_projection_closed_result_rejects_missing_extra_outcomes_diagnostics_and_leaks(self):
+        original = self.authored_projection_result()
+        variants = []
+        for key in original:
+            changed = copy.deepcopy(original); changed.pop(key); variants.append(changed)
+        for key, value in (("native_admission", True), ("native_execution", 0), ("schema_version", True),
+                           ("status", "qualified"), ("extra", "private-canary")):
+            changed = copy.deepcopy(original); changed[key] = value; variants.append(changed)
+        changed = copy.deepcopy(original); changed["compose_import_outcomes"].pop(); variants.append(changed)
+        changed = copy.deepcopy(original); changed["compose_import_outcomes"].append(changed["compose_import_outcomes"][0]); variants.append(changed)
+        for key, value in (("subject", "wrong"), ("kind", "unsupported"), ("diagnostic", "BFD0002")):
+            changed = copy.deepcopy(original); changed["compose_import_outcomes"][0][key] = value; variants.append(changed)
+        changed = copy.deepcopy(original); changed["compose_import_diagnostics"] = [{"message": "private-canary"}]; variants.append(changed)
+        for changed in variants:
+            with self.assertRaises(contract.ContractError) as caught:
+                contract.core_projection_result(json.dumps(changed).encode())
+            self.assertNotIn("private-canary", str(caught.exception))
+        for malformed in (b"", b"{", b"\xff", b" " * 65537, b'{"x":NaN}', b'{"x":1,"x":1}'):
+            with self.assertRaises(contract.ContractError):
+                contract.core_projection_result(malformed)
+
+    def test_projection_context_and_profile_never_authorize_real_core_lanes(self):
+        image = "registry.invalid/boxferry-core/busybox:1.37.0"
+        for lane in ("debian11-rootful", "debian11-rootless", "upstream-rootful", "upstream-rootless"):
+            profile = {"engine_release": "20.10.5" if lane.startswith("debian") else "29.8.1",
+                       "acquisition_api_version": "1.41" if lane.startswith("debian") else "1.49",
+                       "daemon_mode": lane.rsplit("-", 1)[1]}
+            self.assertEqual(contract.core_projection_arguments(image, lane, profile)[-2:], ["--platform", "linux/amd64"])
+            for field in profile:
+                with self.assertRaises(contract.ContractError):
+                    contract.core_projection_arguments(image, lane, {**profile, field: "wrong"})
+        self.assertEqual(contract.CORE_REACQUIRE_REPORT_EXPECTATIONS, {})
+        self.assertTrue(all(flag is False for flag in contract.core_semantic_expectations()["real_lane_qualification"].values()))
+        scripts = SOURCE.parent.parent
+        runner = (scripts / "docker-application-conformance.sh").read_text()
+        self.assertNotIn("$profile == core-semantic-projection", runner)
+        authorization = (scripts / "reviewed-docker-consumer-authorization.py").read_text()
+        self.assertIn('"scope": "volume-fixtures-only"', authorization)
+        self.assertNotIn("core-semantic-projection", authorization)
 
     def test_closed_reports_and_native_inspect(self) -> None:
         image = "registry.invalid/boxferry-core/busybox:1.2.3"
@@ -766,7 +865,8 @@ class CoreJourneyBoundaryTests(unittest.TestCase):
                 "--fixture-image", contract.CORE_BUSYBOX_FIXTURE,
             ]
             checked = subprocess.run(compose_command, capture_output=True, text=True, check=False)
-            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertIn("semantic helper evidence is incomplete", checked.stderr)
             for label, changed in (
                 ("missing container evidence", "--container-file"),
                 ("missing network evidence", "--network-file"),

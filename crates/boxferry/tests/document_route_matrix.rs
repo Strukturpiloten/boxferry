@@ -1,6 +1,12 @@
 //! Deterministic public contracts for every supported Compose/Quadlet document route.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
+#![cfg(all(
+    feature = "cli",
+    feature = "compose",
+    feature = "docker",
+    feature = "podman",
+    feature = "quadlet"
+))]
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -126,6 +132,8 @@ fn every_document_route_writes_reviewed_deterministic_bytes_and_stable_success_r
             }
             if route.output == "podman" {
                 assert_podman_artifacts(&output, &format!("{} -> {}", route.input, route.output))?;
+            } else if route.output == "docker" {
+                assert_docker_artifact(&output, &format!("{} -> {}", route.input, route.output))?;
             }
             if let Some(first) = &first_output {
                 assert_eq!(
@@ -168,7 +176,7 @@ fn exact_generated_artifacts_reimport_to_fixed_points_and_are_path_independent()
     let outputs = routes.iter().map(|route| route.output.clone()).collect::<BTreeSet<_>>();
     let document_outputs = outputs
         .iter()
-        .filter(|output| output.as_str() != "podman")
+        .filter(|output| matches!(output.as_str(), "compose" | "quadlet"))
         .collect::<Vec<_>>();
     for input in matrix.inputs.keys() {
         for intermediate in document_outputs.iter().copied() {
@@ -369,6 +377,8 @@ fn explicit_files_and_directory_discovery_produce_identical_artifacts() -> Resul
                 .arg(&input_directory);
             if output == "podman" {
                 command.args(["--podman-target-context", "unknown"]);
+            } else if output == "docker" {
+                command.args(["--docker-target", "upstream-29.8.1-rootful"]);
             }
             if let Some(application_name) = scenario.application_name.as_deref() {
                 command.args(["--application-name", application_name]);
@@ -427,6 +437,8 @@ fn every_document_route_validates_planned_artifacts_without_writing() -> Result<
         }
         if route.output == "podman" {
             command.args(["--podman-target-context", "unknown"]);
+        } else if route.output == "docker" {
+            command.args(["--docker-target", "upstream-29.8.1-rootful"]);
         }
         let result = command.args(["--console-format", "json"]).output()?;
         assert!(
@@ -476,6 +488,8 @@ fn malformed_native_input_fails_before_writing_for_every_document_route() -> Res
         }
         if output == "podman" {
             command.args(["--podman-target-context", "unknown"]);
+        } else if output == "docker" {
+            command.args(["--docker-target", "upstream-29.8.1-rootful"]);
         }
         let result = command
             .arg("--output-directory")
@@ -621,6 +635,8 @@ fn convert_route(route: &Route, fixture: &Path, output: &Path) -> Result<std::pr
     }
     if route.output == "podman" {
         command.args(["--podman-target-context", "unknown"]);
+    } else if route.output == "docker" {
+        command.args(["--docker-target", "upstream-29.8.1-rootful"]);
     }
     Ok(command
         .arg("--output-directory")
@@ -667,6 +683,8 @@ fn execute_conversion(
     }
     if output == "podman" {
         command.args(["--podman-target-context", "unknown"]);
+    } else if output == "docker" {
+        command.args(["--docker-target", "upstream-29.8.1-rootful"]);
     }
     let result = command
         .args(["--loss-policy", loss_policy, "--output-directory"])
@@ -710,6 +728,30 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
             .collect::<Vec<_>>()
     );
     assert_eq!(report["invocation"]["command_kind"], command_kind);
+    Ok(())
+}
+
+fn assert_docker_artifact(output_directory: &Path, route: &str) -> Result<(), Box<dyn Error>> {
+    assert_eq!(
+        artifact_names(output_directory)?,
+        vec!["docker-plan.json".to_owned()],
+        "{route}: inert plan only"
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&fs::read(output_directory.join("docker-plan.json"))?)?;
+    assert_eq!(plan["schema_version"], 1, "{route}: native schema");
+    assert_eq!(plan["context"]["kind"], "target", "{route}: explicit target context");
+    assert_eq!(plan["context"]["build"]["kind"], "upstream");
+    assert_eq!(plan["context"]["engine_release"], "29.8.1");
+    assert_eq!(plan["context"]["daemon_mode"], "rootful");
+    assert_eq!(plan["context"]["rendering_api_version"], "1.56");
+    assert_eq!(plan["prerequisites"], serde_json::json!([]));
+    let requests = plan["requests"].as_array().ok_or("Docker native requests missing")?;
+    assert_eq!(requests.len(), 1, "{route}: one authored service create");
+    assert_eq!(requests[0]["method"], "POST");
+    assert_eq!(requests[0]["path"], "/v1.56/containers/create?name=web-runtime");
+    assert_eq!(requests[0]["body"]["Image"], "example.invalid/web:1");
+    assert_eq!(requests[0]["body"]["HostConfig"]["RestartPolicy"]["Name"], "no");
+    assert!(requests[0]["body"].get("depends_on").is_none());
     Ok(())
 }
 

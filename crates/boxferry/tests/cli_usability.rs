@@ -3,7 +3,13 @@
 //! These expectations are authored here, independently of the CLI implementation.
 //! A Podman cassette serves read-only API responses; no runtime is started.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
+#![cfg(all(
+    feature = "cli",
+    feature = "compose",
+    feature = "docker",
+    feature = "podman",
+    feature = "quadlet"
+))]
 
 #[path = "support/podman_cassette.rs"]
 #[allow(dead_code)] // Shared cassette helper has mutation methods used by other integration tests.
@@ -19,9 +25,122 @@ use std::{
 };
 
 use podman_cassette::{PodmanCassette, PodmanCassetteServer};
+#[cfg(unix)]
+use sha2::Digest;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const FORMATS: [&str; 3] = ["compose", "podman", "quadlet"];
+
+#[cfg(unix)]
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(*byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[test]
+fn docker_cli_exposes_sixteen_routes_and_exact_reviewed_profiles() -> Result<(), Box<dyn Error>> {
+    let capabilities = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["capabilities", "--console-format", "json"])
+        .output()?;
+    assert_eq!(capabilities.status.code(), Some(0));
+    let value: serde_json::Value = serde_json::from_slice(&capabilities.stdout)?;
+    let routes = value["routes"].as_array().ok_or("missing route array")?;
+    assert_eq!(routes.len(), 16);
+    let pairs = routes
+        .iter()
+        .map(|route| (route["input_type"].as_str(), route["output_type"].as_str()))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(pairs.len(), 16, "route catalogue must not contain duplicate pairs");
+    for input in ["compose", "docker", "podman", "quadlet"] {
+        for output in ["compose", "docker", "podman", "quadlet"] {
+            assert!(pairs.contains(&(Some(input), Some(output))));
+        }
+    }
+    let targets = value["docker"]["output_targets"]
+        .as_array()
+        .ok_or("missing reviewed Docker target array")?;
+    assert_eq!(targets.len(), 4);
+    assert_eq!(
+        targets
+            .iter()
+            .filter_map(|target| target["preset"].as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "debian11-20.10.5-rootful",
+            "debian11-20.10.5-rootless",
+            "upstream-29.8.1-rootful",
+            "upstream-29.8.1-rootless",
+        ])
+    );
+    for target in targets {
+        assert!(
+            target["evidence_sha256"]
+                .as_str()
+                .is_some_and(|digest| digest.len() == 64)
+        );
+        assert!(target["advertised_api"].as_str().is_some());
+        assert!(target["acquisition_api"].as_str().is_some());
+        assert!(target["rendering_api"].as_str().is_some());
+        assert!(target["mode"].as_str().is_some());
+    }
+    for command in [
+        ["validate", "docker", "compose"],
+        ["validate", "docker", "docker"],
+        ["convert", "docker", "podman"],
+        ["convert", "compose", "docker"],
+    ] {
+        let help = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(command)
+            .arg("--help")
+            .output()?;
+        assert_eq!(help.status.code(), Some(0));
+        let text = String::from_utf8(help.stdout)?;
+        if command[1] == "docker" {
+            assert!(text.contains("--docker-socket"));
+            assert!(text.contains("--docker-container"));
+            assert!(text.contains("--docker-import-policy"));
+        }
+        if command[2] == "docker" {
+            assert!(text.contains("--docker-target"));
+            assert!(text.contains("debian11-20.10.5-rootful"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn all_sixteen_routes_expose_matching_validate_and_convert_help() -> Result<(), Box<dyn Error>> {
+    for input in ["compose", "docker", "podman", "quadlet"] {
+        for output in ["compose", "docker", "podman", "quadlet"] {
+            for verb in ["validate", "convert"] {
+                let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+                    .args([verb, input, output, "--help"])
+                    .output()?;
+                assert_eq!(result.status.code(), Some(0), "{verb} {input} {output}");
+                assert!(result.stderr.is_empty());
+                let help = String::from_utf8(result.stdout)?;
+                assert!(help.contains("--loss-policy"));
+                assert!(help.contains("--environment-values"));
+                assert_eq!(help.contains("--docker-socket"), input == "docker");
+                assert_eq!(help.contains("--docker-target"), output == "docker");
+                assert_eq!(help.contains("--output-directory"), verb == "convert");
+                if input == "docker" {
+                    assert!(help.contains("--docker-resource-decision"));
+                    assert!(help.contains("--docker-public-label"));
+                    assert!(help.contains("--promote-docker-protected-environment-values"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn single_quadlet_unit_infers_application_for_validation_and_every_exporter() -> Result<(), Box<dyn Error>> {
@@ -415,6 +534,238 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
     }
     assert_eq!(forms.len(), 18);
     assert_eq!(validation_evidence.len(), 9);
+    Ok(())
+}
+
+#[test]
+fn authored_document_inputs_plan_and_write_a_complete_inert_docker_artifact() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("docker-output-routes")?;
+    for (input, filename, content) in [
+        (
+            "compose",
+            "compose.yaml",
+            "---\nname: docker-output\nservices:\n  web:\n    image: docker.io/library/busybox:1\n",
+        ),
+        (
+            "quadlet",
+            "web.container",
+            "[Container]\nImage=docker.io/library/busybox:1\n",
+        ),
+    ] {
+        let source = scratch.path().join(filename);
+        fs::write(&source, content)?;
+        for verb in ["validate", "convert"] {
+            let destination = scratch.path().join(format!("{verb}-{input}-docker"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+            command
+                .args([verb, input, "docker", "--input-file"])
+                .arg(&source)
+                .args(["--docker-target", "upstream-29.8.1-rootful", "--loss-policy", "partial"]);
+            if verb == "convert" {
+                command.arg("--output-directory").arg(&destination);
+            }
+            let result = command.args(["--console-format", "json"]).output()?;
+            assert_eq!(
+                result.status.code(),
+                Some(0),
+                "{verb} {input} docker: {}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+            assert_eq!(report["source_type"], input);
+            assert_eq!(report["target_type"], "docker");
+            assert_eq!(report["requested_versions"]["minimum"], "upstream-29.8.1-rootful");
+            if verb == "validate" {
+                assert!(!destination.exists());
+            } else {
+                assert_eq!(
+                    artifact_names(&destination)?,
+                    BTreeSet::from(["docker-plan.json".into()])
+                );
+                let plan: serde_json::Value = serde_json::from_slice(&fs::read(destination.join("docker-plan.json"))?)?;
+                assert_eq!(plan["schema_version"], 1);
+                assert_eq!(plan["context"]["kind"], "target");
+                assert_eq!(plan["context"]["engine_release"], "29.8.1");
+                assert_eq!(plan["context"]["daemon_mode"], "rootful");
+                assert!(plan["requests"].as_array().is_some_and(|requests| !requests.is_empty()));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn compose_dependencies_emit_bound_private_docker_sidecar_and_match_validation() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("docker-dependency-sidecar")?;
+    let source = scratch.path().join("compose.yaml");
+    fs::write(
+        &source,
+        "---\nname: dependency-review\nservices:\n  database:\n    container_name: db-live\n    image: docker.io/library/busybox:1\n  web:\n    container_name: web-live\n    image: docker.io/library/busybox:1\n    depends_on:\n      database:\n        condition: service_healthy\n        required: false\n        restart: true\n",
+    )?;
+    let destination = scratch.path().join("converted");
+    let mut reports = Vec::new();
+    for verb in ["validate", "convert"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+        command
+            .args([verb, "compose", "docker", "--input-file"])
+            .arg(&source)
+            .args([
+                "--docker-target",
+                "upstream-29.8.1-rootful",
+                "--loss-policy",
+                "approximate",
+            ]);
+        if verb == "convert" {
+            command.arg("--output-directory").arg(&destination);
+        }
+        let result = command.args(["--console-format", "json"]).output()?;
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{verb}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert_eq!(report["status"], "success");
+        assert_diagnostic_subject(&report, "BFD0006", "services.web.dependencies.0")?;
+        reports.push(report);
+        if verb == "validate" {
+            assert!(!destination.exists());
+        }
+    }
+    assert_eq!(reports[0]["diagnostics"], reports[1]["diagnostics"]);
+    assert_eq!(
+        artifact_names(&destination)?,
+        BTreeSet::from(["docker-plan.json".into(), "docker-dependencies.json".into(),])
+    );
+    let plan = fs::read(destination.join("docker-plan.json"))?;
+    let native: serde_json::Value = serde_json::from_slice(&plan)?;
+    let sidecar: serde_json::Value = serde_json::from_slice(&fs::read(destination.join("docker-dependencies.json"))?)?;
+    assert_eq!(sidecar["schema_version"], 1);
+    let plan_sha256 = lowercase_hex(&sha2::Sha256::digest(&plan));
+    assert_eq!(sidecar["docker_plan_sha256"], plan_sha256);
+    assert_eq!(sidecar["decisions"][0]["condition"], "healthy");
+    assert_eq!(sidecar["decisions"][0]["service"], "web");
+    assert_eq!(sidecar["decisions"][0]["dependency"], "database");
+    assert_eq!(sidecar["decisions"][0]["service_runtime_name"], "web-live");
+    assert_eq!(sidecar["decisions"][0]["dependency_runtime_name"], "db-live");
+    let request_paths = native["requests"]
+        .as_array()
+        .ok_or("native request array missing")?
+        .iter()
+        .filter_map(|request| request["path"].as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        request_paths
+            .iter()
+            .any(|path| path.contains("/containers/create?name=web-live"))
+    );
+    assert!(
+        request_paths
+            .iter()
+            .any(|path| path.contains("/containers/create?name=db-live"))
+    );
+    assert_eq!(sidecar["decisions"][0]["required"], false);
+    assert_eq!(sidecar["decisions"][0]["restart"], true);
+    assert_eq!(sidecar["decisions"][0]["native_engine_field"], false);
+    assert_eq!(fs::metadata(&destination)?.mode() & 0o077, 0);
+    for name in ["docker-plan.json", "docker-dependencies.json"] {
+        assert_eq!(fs::metadata(destination.join(name))?.mode() & 0o077, 0);
+    }
+
+    let exact = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "compose", "docker", "--input-file"])
+        .arg(&source)
+        .args(["--docker-target", "upstream-29.8.1-rootful", "--console-format", "json"])
+        .output()?;
+    assert_eq!(exact.status.code(), Some(2));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&exact.stdout)?["status"],
+        "blocked"
+    );
+    Ok(())
+}
+
+#[test]
+fn sensitive_compose_runtime_identity_never_reaches_docker_output_or_report() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("docker-protected-identity")?;
+    for with_dependency in [false, true] {
+        let source = scratch.path().join(format!("source-{with_dependency}.yaml"));
+        let prerequisite = if with_dependency {
+            "  database:\n    image: docker.io/library/busybox:1\n"
+        } else {
+            ""
+        };
+        let dependency = if with_dependency {
+            "    depends_on:\n      - database\n"
+        } else {
+            ""
+        };
+        fs::write(
+            &source,
+            format!(
+                "---\nname: private-runtime\nservices:\n{prerequisite}  web:\n    image: docker.io/library/busybox:1\n    container_name: ${{SECRET}}\n{dependency}"
+            ),
+        )?;
+        for verb in ["validate", "convert"] {
+            let destination = scratch.path().join(format!("{verb}-{with_dependency}"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+            command
+                .args([verb, "compose", "docker", "--input-file"])
+                .arg(&source)
+                .args([
+                    "--env=SECRET=private-container-canary",
+                    "--docker-target",
+                    "upstream-29.8.1-rootful",
+                ]);
+            if verb == "convert" {
+                command.arg("--output-directory").arg(&destination);
+            }
+            let result = command.args(["--console-format", "json"]).output()?;
+            assert!(
+                !result.status.success(),
+                "{verb} unexpectedly emitted protected identity"
+            );
+            let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+            assert_diagnostic_subject(&report, "BFD0006", "services.web.runtime_name")?;
+            assert!(!String::from_utf8_lossy(&result.stdout).contains("private-container-canary"));
+            assert!(!String::from_utf8_lossy(&result.stderr).contains("private-container-canary"));
+            assert!(!destination.exists());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn existing_document_fixtures_now_write_reviewed_docker_target_intent() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("docker-output-documents")?;
+    for input in ["compose", "quadlet"] {
+        let destination = scratch.path().join(format!("{input}-docker"));
+        let result = run_route("convert", input, "docker", &destination)?;
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{input}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert_eq!(report["source_type"], input);
+        assert_eq!(report["target_type"], "docker");
+        assert_eq!(report["status"], "success");
+        assert_eq!(
+            artifact_names(&destination)?,
+            BTreeSet::from(["docker-plan.json".into()])
+        );
+        let plan: serde_json::Value = serde_json::from_slice(&fs::read(destination.join("docker-plan.json"))?)?;
+        assert!(plan["requests"].as_array().is_some_and(|requests| {
+            requests.iter().any(|request| {
+                request["path"]
+                    .as_str()
+                    .is_some_and(|path| path.contains("name=web-runtime"))
+            })
+        }));
+    }
     Ok(())
 }
 
@@ -1114,6 +1465,12 @@ fn run_route(verb: &str, input: &str, output: &str, destination: &Path) -> Resul
     }
     if output == "podman" {
         command.args(["--podman-target-context", "unknown"]);
+    }
+    if output == "docker" {
+        command.args(["--docker-target", "upstream-29.8.1-rootful"]);
+        if input != "podman" {
+            command.args(["--loss-policy", "partial"]);
+        }
     }
     if verb == "convert" {
         command.arg("--output-directory").arg(destination);

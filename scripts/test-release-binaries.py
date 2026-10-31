@@ -86,7 +86,7 @@ def expected_info(target: str, binary: bytes) -> dict:
     return {"schema_version": 1, "version": VERSION, "target": target, "revision": REVISION,
             "github_run_id": RUN, "binary_sha256": hashlib.sha256(binary).hexdigest(),
             "execution": {"mode": "qemu-user" if emulator else "native", "emulator": emulator},
-            "smoke_tests": ["version", "capabilities-nine-routes", "compose-quadlet-compose"]}
+            "smoke_tests": ["version", "capabilities-sixteen-routes", "compose-quadlet-compose"]}
 
 
 def archive_fixture(target: str = TARGETS[0], *, mutate=None, extra=None, metadata=None, payload: bytes | None = None) -> bytes:
@@ -185,6 +185,11 @@ class ArchiveTests(unittest.TestCase):
         for field, value in (("version", "0.9.0"), ("revision", "f" * 40), ("github_run_id", "1"), ("target", TARGETS[1]), ("binary_sha256", "0" * 64), ("execution", {"mode": "native", "emulator": "/private/qemu"}), ("smoke_tests", []), ("extra", "/private/build-path")):
             with self.subTest(field=field), self.assertRaises(release.ArtifactError):
                 release.validate_archive(archive_fixture(metadata=lambda value_map: value_map.update({field: value})), options(), TARGETS[0])
+
+    def test_obsolete_default_route_proof_cannot_attest_current_binary(self) -> None:
+        with self.assertRaises(release.ArtifactError):
+            release.validate_archive(archive_fixture(metadata=lambda info: info.update(
+                smoke_tests=["version", "capabilities-nine-routes", "compose-quadlet-compose"])), options(), TARGETS[0])
 
     def test_schema_types_and_duplicate_json_keys_fail(self) -> None:
         for value in (True, 1.0):
@@ -459,7 +464,7 @@ args=sys.argv[1:]
 if args == ['--version']:
     print('boxferry 0.10.0')
 elif args[:1] == ['capabilities']:
-    print(json.dumps({'schema_version':1,'routes':[{'input_type':a,'output_type':b} for a in ('compose','quadlet','podman') for b in ('compose','quadlet','podman')]}))
+    print(json.dumps({'schema_version':1,'routes':[{'input_type':a,'output_type':b} for a in ('compose','quadlet','podman','docker') for b in ('compose','quadlet','podman','docker')]}))
 elif args[:3] == ['convert','compose','quadlet']:
     source=Path(args[args.index('--input-file')+1]).read_text()
     assert 'image: docker.io/library/alpine:3.21' in source
@@ -484,6 +489,43 @@ else:
         executable.write_text(f"#!{sys.executable}\nprint('boxferry 0.10.0')\n")
         with self.assertRaises(release.ArtifactError):
             release.smoke(executable, TARGETS[0], VERSION, None)
+
+    def test_smoke_refuses_incomplete_duplicate_or_unexpected_default_routes(self) -> None:
+        executable = self.make_fake_cli()
+        # Independently enumerated default-route contract, including all Docker edges.
+        pairs = """compose compose
+compose quadlet
+compose podman
+compose docker
+quadlet compose
+quadlet quadlet
+quadlet podman
+quadlet docker
+podman compose
+podman quadlet
+podman podman
+podman docker
+docker compose
+docker quadlet
+docker podman
+docker docker"""
+        routes = [dict(zip(("input_type", "output_type"), pair.split(), strict=True)) for pair in pairs.splitlines()]
+        invalid_routes = {
+            "legacy-nine": [route for route in routes if "docker" not in route.values()],
+            "missing-docker-same-format": routes[:-1],
+            "duplicate-replaces-docker-same-format": [*routes[:-1], routes[0]],
+            "unexpected-extra": [*routes, {"input_type": "kubernetes", "output_type": "compose"}],
+            "unexpected-replaces-docker-same-format": [*routes[:-1], {"input_type": "kubernetes", "output_type": "compose"}],
+            "non-object": [*routes[:-1], None],
+            "non-string-format": [*routes[:-1], {"input_type": False, "output_type": "docker"}],
+        }
+        for label, value in invalid_routes.items():
+            with self.subTest(label=label), patch.object(release, "run_bounded", side_effect=[
+                    b"boxferry 0.10.0", json.dumps({"schema_version": 1, "routes": value}).encode()]) as run:
+                with self.assertRaises(release.ArtifactError):
+                    release.smoke(executable, TARGETS[0], VERSION, None)
+                # Refusal precedes either conversion; no incomplete catalogue is packaged.
+                self.assertEqual(run.call_count, 2)
 
     def test_pinned_qemu_preserved_guest_argv0_for_both_32bit_targets(self) -> None:
         guest = self.make_fake_cli()

@@ -1,10 +1,19 @@
 # Testing
 
+Native terminal wire goldens retain their renderer-owned bytes, including the final newline.
+The reviewed Prettier exclusions cover Podman artifacts and `expected-docker-plan.json` only;
+fixture and documentation contracts still parse and compare the Docker plans exactly. Reformatting
+these files is not a substitute for reviewing the independent native intent.
+
 The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
 requires offline source-custody/current-attempt/cleanup controls, not native
 acceptance. Complete gates remain mandatory.
 
-Run the complete deterministic gate before every pull request:
+The historical
+[target-only checkpoint](decisions/0083-bounded-docker-target-consumer-preparation.md#independent-inert-consumer-contracts)
+defines separate inert consumer contracts.
+
+Before every PR:
 
 ```console
 ./scripts/check-all.sh
@@ -41,11 +50,37 @@ see the [measurement contract](../fixtures/conformance/migration-readiness/READM
 Fixtures under `fixtures/<suite>/<id>/` follow [their contract](../fixtures/). Positive scenarios
 specify input and expectations for every exporter in `boxferry capabilities`. They check minimum
 and stricter loss policies, diagnostics, bytes, redaction, reimports, chains and fixed points;
-importer and exporter coverage are independent across all nine routes.
+importer and exporter coverage are independent for every registered fixture input. Synthetic
+Docker-source journeys complement the document/Podman corpus for the Unreleased 16-route contract.
 
 Compose and Quadlet output can be reimported. Podman output is a deployment plan, not observed
 inventory; assertions cover deterministic artifacts, semantic operations, findings and redaction.
 BoxFerry never executes `podman-commands.sh`.
+
+## Docker development evidence
+
+Source-library tests, CLI socket journeys, documentation examples and the authored corpus are
+separate development evidence, not native acceptance. The
+[Docker checks](public/development/testing/index.md#docker-development-checks) retain bounded
+GET-only acquisition, independent intent, privacy/refusal, exact plan/sidecar contracts and
+validation requirements. All 16 routes supplement the preserved nine-route subset.
+[ADR 0085](decisions/0085-docker-cli-neutral-routes.md) retains distinct native, consumer,
+application, admission and publication checkpoints; source overrides never qualify normal
+registry/package integration.
+
+### Prepared Forgejo Docker source contracts
+
+Run `bash scripts/test-docker-forgejo-application.sh` for 76 inert-transport
+controls (275.571 seconds locally). It starts no runtime and proves no native
+acceptance.
+
+The complete gate runs it once; full CI plans select its separate ten-minute
+`docker-forgejo-application` job. Documentation plans skip it explicitly; the
+aggregate rejects missing or failed selected work.
+
+[Transport details](../fixtures/conformance/forgejo-application/docker-profile-contract.md)
+and [ADR 0087](decisions/0087-prepared-docker-forgejo-application-profile.md)
+retain choreography, cleanup, privacy and native-admission prerequisites.
 
 ## Podman evidence
 
@@ -112,40 +147,10 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile application --matrix-cell podman-6.1-rootless --engine podman
 ```
 
-The separate `forgejo-application` profile runs reviewed `podman-arch-rootful` and
-`podman-6.1-rootless` cells sequentially under a 30-minute job limit. One three-image archive is reused. Each cell independently provisions Forgejo and PostgreSQL through native Podman and Docker
-Compose. Compose provisions the boundary peer as a separate project on the external edge, keeping
-selector ownership independent. It proves private-repository creation, HTTP push/clone, SSH clone/push, database
-non-publication, selector isolation, report redaction, and both named volumes after container
-recreation. Rootless alone receives the no-firewall drop-in; the reviewed Arch rootful target
-retains stock Netavark configuration and includes `nft`, so both published ports are exercised. The reviewed upstream-source rootful target is excluded because its missing `nft` makes real
-DNAT impossible. Expected cold duration is below 12 minutes.
-
-```console
-cargo build --locked --package boxferry --bin boxferry --features podman
-BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
-sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" scripts/podman-live-conformance.sh --profile forgejo-application --engine podman
-```
-
-The `paperless-application` profile uses `podman-6.1-rootless` with a 60-minute deadline. Native
-Podman and Docker Compose 5.5.0 provision its five-service converter topology. PDF, DOCX, and ODT
-inputs must pass ingestion, search, retrieval, and office-to-PDF conversion. Checks cover private
-networking, storage permissions, collision refusal, and persistent PostgreSQL/Valkey volumes. It
-requires two CPUs, 6 GiB RAM, 12 GiB disk, and at most 2.5 GiB compressed images.
-
-```console
-cargo build --locked --package boxferry --bin boxferry --features podman
-BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
-sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile paperless-application --matrix-cell podman-6.1-rootless --engine podman
-```
-
-Paperless capture is manual. Sanitizer-v2 evidence is revoked; reviewed v3 replay consumes 27 GETs.
-
-The 60-minute `immich-application` profile runs CPU-only Immich 3.1.0 on 6.1 rootless with two CPUs,
-8 GiB RAM, 12 GiB disk, and a 2.5 GiB archive cap. Its reviewed v3 replay consumes 23 GETs. Both
-captured fixtures remain supplementary to authored semantics.
-
-`observability-application` and `supabase-application` add bounded pre-release application evidence.
+Detailed [application profiles](public/development/testing/index.md#podman-application-profiles)
+retain Forgejo, Paperless, Immich, observability and Supabase topologies, native-provider checks,
+resource/deadline budgets, privacy, persistence, cleanup and manual-capture requirements.
+These bounded pre-release profiles remain separate from ordinary pull requests.
 
 The complete profile runs all reviewed rootful and rootless cells:
 

@@ -3,13 +3,13 @@ id = "compose-to-quadlet-interpolation"
 suite = "conversion"
 description = "Protects opt-in Compose interpolation from explicit plain and individually authorized sensitive process variables."
 secrets_reviewed = true
-files = ["compose.yaml", "app.container", "expected-matrix-compose.yaml", "expected-podman.json", "expected-podman-commands.sh"]
+files = ["compose.yaml", "app.container", "expected-matrix-compose.yaml", "expected-podman.json", "expected-podman-commands.sh", "expected-docker-plan.json"]
 
 [provenance]
 source = "authored"
 license = "MPL-2.0"
 redistribution = "allowed"
-modifications = "none"
+modifications = "Added independently authored inert Docker target expectations; existing non-Docker expectations are unchanged."
 
 [environment]
 description = "Interpolation is explicitly enabled; TAG=2.1 is plain, TOKEN is read by name as sensitive, and an unauthorized ambient UNAUTHORIZED value must not be captured."
@@ -66,3 +66,14 @@ expected = "expected-podman-commands.sh"
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman.json"
 expected = "expected-podman.json"
+
+[extensions.scenarios.exports.docker]
+loss-policy = "exact"
+include-environment-values = true
+artifact-values = ["explicit-secret", "safe-default"]
+diagnostic-codes = []
+diagnostic-subjects = []
+
+[[extensions.scenarios.exports.docker.artifacts]]
+artifact = "docker-plan.json"
+expected = "expected-docker-plan.json"

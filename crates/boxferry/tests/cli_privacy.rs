@@ -1,6 +1,12 @@
 //! Independent CLI contracts for environment-value authorization and report isolation.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
+#![cfg(all(
+    feature = "cli",
+    feature = "compose",
+    feature = "docker",
+    feature = "podman",
+    feature = "quadlet"
+))]
 
 #[path = "support/podman_cassette.rs"]
 #[allow(dead_code)]

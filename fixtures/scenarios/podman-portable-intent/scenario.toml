@@ -1,7 +1,7 @@
 schema = 1
 id = "podman-portable-intent"
 source-capabilities = ["podman"]
-target-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = ["podman-portable-zeta-canary", "podman-portable-alpha-canary"]
 
 [application]
@@ -255,3 +255,52 @@ semantic-gaps = [
   "network-ipv6:scenario-net",
 ]
 unavailable-prerequisites = []
+
+# Inert Docker expectations: independently reviewed source intent, never runtime acceptance.
+[[evidence]]
+input = "podman"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+environment-values = "include"
+loss-policy = "partial"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+outcome = "expected-rejection"
+reason = "The current BoxFerry Docker adapter mapping does not retain the required IPAM configuration; the unrepresented network also prevents a valid container attachment. Configured bind relabels retain exact intent with unverified host prerequisites, not actual SELinux effects. No apparently complete create request may be emitted."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = [
+  "BFD0006|networks.scenario-net.ipam_configs",
+  "BFD0006|services.portable-app.container",
+  "BFD0007|services.portable-app.networks.0",
+  "BFP0002|container:portable-app",
+  "BFP0003|networks.scenario-net.internal",
+  "BFP0003|networks.scenario-net.ipam",
+  "BFP0003|networks.scenario-net.ownership",
+  "BFP0003|services.portable-app.environment",
+  "BFP0003|services.portable-app.mounts[0]",
+  "BFP0003|services.portable-app.mounts[1]",
+  "BFP0003|services.portable-app.namespaces",
+  "BFP0003|services.portable-app.resource_controls",
+  "BFP0003|services.portable-app.security",
+  "BFP0009|services.portable-app.networks",
+  "BFP0009|services.portable-app.restart_policy",
+]
+allowed-losses = [
+  { rule = "BFD0006", subject = "networks.scenario-net.ipam_configs", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0006", subject = "services.portable-app.container", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFD0007", subject = "services.portable-app.networks.0", decision = "invalid", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0002", subject = "podman.acquisition.PLN0023", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1", count = 2 },
+  { rule = "BFP0003", subject = "networks.scenario-net.internal", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "networks.scenario-net.ipam", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "networks.scenario-net.ownership", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.environment", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[0]", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[1]", decision = "approximate", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.namespaces", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.resource_controls", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+  { rule = "BFP0003", subject = "services.portable-app.security", decision = "unsupported", version-scope = "docker@29.8.1..29.8.1" },
+]

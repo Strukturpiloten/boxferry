@@ -22,6 +22,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Immutable historical transition evidence, not dependency pins.
+  FORGEJO_LEGACY_BASE_POLICY_SHA256: 2c2b99cc7e5e1baf3ad00a6f1ab27a2f9e3036e0fa8a19a90d4cf7271a7806b7
+  FORGEJO_LEGACY_BASE_CLASSIFIER_SHA256: df2f7fa2adfc0002bd3984c91e72ba8e1412ced36e7f3acd7003960242412417
 
 jobs:
   release-binaries:
@@ -44,6 +47,7 @@ jobs:
       select_coverage: ${{ steps.plan.outputs.select_coverage }}
       select_migration_readiness: ${{ steps.plan.outputs.select_migration_readiness }}
       select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}
+      select_docker_forgejo_application: ${{ steps.plan.outputs.select_docker_forgejo_application }}
     steps:
       - name: Check out exact tested revision and comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,9 +70,15 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          known_legacy_base() {
+            printf '%s  %s\n' \
+              "${FORGEJO_LEGACY_BASE_POLICY_SHA256}" .validation-base/scripts/validation-policy.json \
+              "${FORGEJO_LEGACY_BASE_CLASSIFIER_SHA256}" .validation-base/scripts/validation-plan.py |
+              sha256sum --check --status
+          }
           if [[ "${EVENT_NAME}" == 'pull_request' ]]; then
             if [[ -f .validation-base/scripts/validation-plan.py &&
-                  -f .validation-base/scripts/validation-policy.json ]]; then
+                  -f .validation-base/scripts/validation-policy.json ]] && ! known_legacy_base; then
               python3 .validation-base/scripts/validation-plan.py plan \
                 --repository-root "${GITHUB_WORKSPACE}" \
                 --policy-root .validation-base \
@@ -81,13 +91,13 @@ jobs:
           import os
           import re
 
-          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age".split()
+          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age docker-forgejo-application".split()
           base, head, tested = (os.environ[key] for key in ("BASE_SHA", "HEAD_SHA", "GITHUB_SHA"))
           if any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in (base, head, tested)):
               raise SystemExit("first-rollout comparison has an invalid SHA")
           plan = {"schema": 2, "repository": "Strukturpiloten/boxferry", "event": "pull_request",
                   "base_sha": base, "head_sha": head, "tested_sha": tested, "profile": "full",
-                  "jobs": {job: True for job in jobs}, "reasons": ["trusted base has no classifier"],
+                  "jobs": {job: True for job in jobs}, "reasons": ["trusted base absent or exact reviewed legacy cohort"],
                   "local_fingerprint": None}
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("plan=" + json.dumps(plan, sort_keys=True, separators=(",", ":")) + "\nprofile=full\n")
@@ -122,6 +132,7 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
+          cargo ci-docker
           cargo ci-podman
           cargo ci-quadlet
       - name: Check repository policies
@@ -315,6 +326,7 @@ jobs:
           - boxferry-model
           - boxferry-engine
           - boxferry-compose
+          - boxferry-docker
           - boxferry-podman
           - boxferry-quadlet
           - boxferry
@@ -435,6 +447,18 @@ jobs:
           --head "${HEAD_SHA}"
           --minimum-age-hours 72
 
+  docker-forgejo-application:
+    name: Docker Forgejo application source contracts
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_docker_forgejo_application == 'true'
+    runs-on: ubuntu-24.04
+    # Measured local hermetic run: 275.571 seconds; no native runtime starts.
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - name: Test Docker Forgejo application profile contracts
+        run: bash scripts/test-docker-forgejo-application.sh
+
   pr-gate:
     name: Required CI
     if: always()
@@ -452,6 +476,7 @@ jobs:
         coverage,
         migration-readiness,
         lockfile-release-age,
+        docker-forgejo-application,
       ]
     runs-on: ubuntu-24.04
     steps:
@@ -497,15 +522,21 @@ jobs:
           BINARY_NEEDS_PY
           )
           export NEEDS_JSON
-          if [[ "${EVENT_NAME}" == 'pull_request' &&
-                ( ! -f .validation-base/scripts/validation-plan.py ||
-                  ! -f .validation-base/scripts/validation-policy.json ) ]]; then
+          known_legacy_base() {
+            printf '%s  %s\n' \
+              "${FORGEJO_LEGACY_BASE_POLICY_SHA256}" .validation-base/scripts/validation-policy.json \
+              "${FORGEJO_LEGACY_BASE_CLASSIFIER_SHA256}" .validation-base/scripts/validation-plan.py |
+              sha256sum --check --status
+          }
+          if [[ "${EVENT_NAME}" == 'pull_request' ]] &&
+             { [[ ! -f .validation-base/scripts/validation-plan.py ||
+                  ! -f .validation-base/scripts/validation-policy.json ]] || known_legacy_base; }; then
             # Bootstrap has no trusted verifier. Require the literal complete plan and all jobs.
             python3 - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
           import json
           import os
 
-          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age".split()
+          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age docker-forgejo-application".split()
           plan = json.loads(os.environ["PLAN_JSON"])
           needs = json.loads(os.environ["NEEDS_JSON"])
           if (set(plan) != {"schema", "repository", "event", "base_sha", "head_sha", "tested_sha",

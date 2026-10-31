@@ -9,6 +9,7 @@ contract="${script_dir}/lib/docker-application-contract.py"
 comparison="${script_dir}/lib/readiness-comparison.py"
 profile='' lane='' lens_root='' lens_revision='' script_sha='' artifact='' artifact_sha256='' api_version=''
 boxferry_root='' boxferry_binary='' boxferry_receipt=''
+core_projection_binary='' core_projection_receipt='' core_projection_receipt_sha256=''
 host_metadata_binary='' host_metadata_receipt='' host_metadata_sha256='' host_metadata_proof=''
 evidence_directory='' evidence_identity='' volume_input_proof='' volume_cleanup_proof=''
 diagnostic_directory='' expected_pid_namespace='' comparison_initialized=false comparison_baseline=false
@@ -28,6 +29,7 @@ outer_inspect=(podman inspect)
 
 usage() {
   printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--host-metadata-binary PATH --host-metadata-receipt PATH --evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
+  printf 'Core journey additionally requires a separately source-attested --core-projection-binary PATH --core-projection-receipt PATH; this offline helper grants no core execution authority.\n' >&2
   printf 'Live Engine request profiles require --unix-http-helper PATH (exact DockerLens scripts/native-unix-http.py) --unix-http-sha256 SHA. Catalogue reads pins as data only.\n' >&2
   printf 'Live outer-runtime profiles require --outer-runtime-closure-json JSON (exact six-file canonical bridge closure); DOCKERLENS_OUTER_ENGINE defaults to podman. Readiness-comparison is Podman-only.\n' >&2
   exit 2
@@ -49,6 +51,8 @@ while (($#)); do
     --boxferry-root) boxferry_root=$2 ;;
     --boxferry-binary) boxferry_binary=$2 ;;
     --boxferry-receipt) boxferry_receipt=$2 ;;
+    --core-projection-binary) core_projection_binary=$2 ;;
+    --core-projection-receipt) core_projection_receipt=$2 ;;
     --host-metadata-binary) host_metadata_binary=$2 ;;
     --host-metadata-receipt) host_metadata_receipt=$2 ;;
     --evidence-directory) evidence_directory=$2 ;;
@@ -84,6 +88,11 @@ if [[ $profile == volume-fixtures ]]; then
 else
   [[ -z $evidence_directory && -z $host_metadata_binary && -z $host_metadata_receipt ]] || usage
 fi
+if [[ $profile == core-journey ]]; then
+  [[ -n $core_projection_binary && -n $core_projection_receipt ]] || usage
+else
+  [[ -z $core_projection_binary && -z $core_projection_receipt ]] || usage
+fi
 for tool in python3 git; do command -v "$tool" > /dev/null || {
   printf 'missing required tool: %s\n' "$tool" >&2
   exit 1
@@ -110,6 +119,13 @@ if [[ $profile == core-journey || $profile == volume-fixtures ]]; then
     --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" --profile "$profile" > /dev/null
 elif [[ $profile != readiness-comparison ]]; then
   [[ -n $artifact && -z $boxferry_root && -z $boxferry_binary && -z $boxferry_receipt ]] || usage
+fi
+if [[ $profile == core-journey ]]; then
+  core_projection_receipt_sha256=$(python3 "$contract" artifact-identity --artifact "$core_projection_receipt")
+  python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
+    --binary "$core_projection_binary" --receipt "$core_projection_receipt" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --profile core-semantic-projection > /dev/null
 fi
 if [[ $profile == volume-fixtures ]]; then
   host_metadata_sha256=$(python3 "$contract" artifact-identity --artifact "$host_metadata_receipt")
@@ -677,6 +693,10 @@ if [[ $profile == core-journey ]]; then
     --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
     --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
     --destination "$boxferry_snapshot" > /dev/null
+  bounded 45s python3 "$contract" capture-candidate --boxferry-root "$boxferry_root" \
+    --binary "$core_projection_binary" --receipt "$core_projection_receipt" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --profile core-semantic-projection --destination "$run_dir/boxferry-core-semantic-projection" > /dev/null
   (
     ulimit -f 128
     bounded 60s "$boxferry_snapshot" convert compose docker \
@@ -1287,6 +1307,10 @@ else
       --image "$core_alias" --fixture-image "$fixture_image" --socket-path "$socket_path"
     python3 "$contract" check-core-output --kind compose \
       --file "$run_dir/compose-output/compose.yaml" --image "$core_alias" \
+      --projection-binary "$core_projection_binary" --projection-receipt "$core_projection_receipt" \
+      --projection-receipt-sha256 "$core_projection_receipt_sha256" --boxferry-root "$boxferry_root" \
+      --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+      --lane "$lane" --catalogue-json "$catalogue" \
       --fixture-image "$fixture_image" --container-id "$container_id" \
       --container-file "$run_dir/native-inspect.json" \
       --network-id "$network_id" --network-file "$run_dir/native-network-inspect.json"

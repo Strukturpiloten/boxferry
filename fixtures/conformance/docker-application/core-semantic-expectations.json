@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "kind": "boxferry-offline-core-semantic-expectations",
+  "native_execution": false,
+  "native_admission": false,
+  "source": {
+    "path": "fixtures/conformance/docker-application/core.compose.yaml",
+    "sha256": "64c77d9c9f63f9dbdba21a61c0538acf4a2cdd59c4a4d8765d493c32ce2aff48"
+  },
+  "provenance": {
+    "source": "authored intent plus independently fetched pinned public image configuration facts",
+    "license": "MPL-2.0 for authored expectation; no image/layer redistribution",
+    "image_metadata_review": "2026-10-29 descriptor-chain/size/digest verification; native inspect and daemon defaults not inferred",
+    "image_metadata_tool": "Python 3.13.16 standard-library HTTPS; no host registry credentials or image store",
+    "image_metadata_commands": [
+      "GET https://registry-1.docker.io/v2/library/busybox/manifests/sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e",
+      "GET https://registry-1.docker.io/v2/library/busybox/manifests/sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+      "GET https://registry-1.docker.io/v2/library/busybox/blobs/sha256:30ecbe1509090b38ef3260f3609d64d8261230464eaa4d235901db496e9647fb"
+    ],
+    "redistribution": "configuration facts and authored expectations only; no image/layer redistribution or upstream component license clearance claimed"
+  },
+  "image": {
+    "reference": "docker.io/library/busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e",
+    "index_digest": "sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e",
+    "manifest_digest": "sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+    "config_digest": "sha256:30ecbe1509090b38ef3260f3609d64d8261230464eaa4d235901db496e9647fb",
+    "platform": "linux/amd64",
+    "config": {
+      "Cmd": ["sh"],
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+    },
+    "missing_config_fields": ["Entrypoint", "User", "WorkingDir", "StopSignal", "Healthcheck"],
+    "descriptor_sizes": {
+      "index": 9535,
+      "manifest": 610,
+      "config": 459
+    }
+  },
+  "contexts": {
+    "debian11-rootful": {
+      "engine_release": "20.10.5",
+      "acquisition_api": "1.41",
+      "daemon_mode": "rootful"
+    },
+    "debian11-rootless": {
+      "engine_release": "20.10.5",
+      "acquisition_api": "1.41",
+      "daemon_mode": "rootless"
+    },
+    "upstream-rootful": {
+      "engine_release": "29.8.1",
+      "acquisition_api": "1.49",
+      "daemon_mode": "rootful"
+    },
+    "upstream-rootless": {
+      "engine_release": "29.8.1",
+      "acquisition_api": "1.49",
+      "daemon_mode": "rootless"
+    }
+  },
+  "compose_template": "---\nname: bf-docker-core\nservices:\n  docker-service-1:\n    image: BOXFERRY_CORE_IMAGE_LITERAL\n    container_name: bf-docker-core\n    command:\n      - sh\n      - -c\n      - printf boxferry-core-ready > /tmp/boxferry-core-marker; exec sleep 3600\n    environment:\n      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n    networks:\n      docker-network-1: {}\nnetworks:\n  docker-network-1:\n    name: bridge\n    external: true\n",
+  "compose_import_outcomes": [
+    {
+      "subject": "application",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "networks.docker-network-1.name",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "networks.docker-network-1",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1.container_name",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1.image",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1.command",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1.environment.PATH",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1.networks.docker-network-1",
+      "kind": "exact",
+      "diagnostic": null
+    },
+    {
+      "subject": "services.docker-service-1",
+      "kind": "exact",
+      "diagnostic": null
+    }
+  ],
+  "compose_import_diagnostics": [],
+  "real_lane_qualification": {
+    "debian11-rootful": false,
+    "debian11-rootless": false,
+    "upstream-rootful": false,
+    "upstream-rootless": false
+  },
+  "excluded_claims": [
+    "native inspect availability",
+    "owned-daemon actual defaults",
+    "Docker import/export outcome ledgers",
+    "current core execution authorization",
+    "application migration success"
+  ]
+}

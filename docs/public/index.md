@@ -1,7 +1,9 @@
 # BoxFerry documentation
 
 BoxFerry converts container application definitions without hiding incompatible intent. The
-current release supports all nine routes between Compose, Quadlet, and Podman.
+Unreleased development CLI exposes all 16 routes between Compose, Docker, Quadlet, and Podman.
+Installed releases may expose fewer. Docker native consumer/application acceptance and compatible
+published dependencies, API/package checks and complete gates remain separate prerequisites.
 
 ## Start
 
@@ -16,5 +18,5 @@ current release supports all nine routes between Compose, Quadlet, and Podman.
 - [Supported formats and versions](reference/compatibility/)
 - [Privacy-safe error reports](reference/error-reports/)
 
-ComposeLens, PodmanLens, and QuadletLens have separate library sections for Rust applications that
+ComposeLens, DockerLens, PodmanLens, and QuadletLens have separate library sections for Rust applications that
 use the native format models directly.

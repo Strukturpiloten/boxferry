@@ -18,6 +18,16 @@ files = [
   "complex-6.0.0-rootless.cassette.json",
   "complex-6.1.0-rootful.cassette.json",
   "complex-6.1.0-rootless.cassette.json",
+  "expectations/route-54-rootful-docker.diagnostics",
+  "expectations/route-54-rootful-docker.losses.tsv",
+  "expectations/route-54-rootless-docker.diagnostics",
+  "expectations/route-54-rootless-docker.losses.tsv",
+  "expectations/route-55-rootful-docker.diagnostics",
+  "expectations/route-55-rootful-docker.losses.tsv",
+  "expectations/route-55-rootless-docker.diagnostics",
+  "expectations/route-55-rootless-docker.losses.tsv",
+  "expectations/route-6-any-docker.diagnostics",
+  "expectations/route-6-any-docker.losses.tsv",
 ]
 
 [provenance]
@@ -26,7 +36,7 @@ url = "https://github.com/Strukturpiloten/podman-lens/tree/65d5c28fe04ff03a74131
 revision = "65d5c28fe04ff03a74131923de0b62d3eef44d3c"
 license = "MPL-2.0"
 redistribution = "allowed"
-modifications = "none"
+modifications = "Original replay cassettes unchanged; added independently reviewed inert Docker rejection expectations and exact diagnostic/loss sidecars."
 
 [environment]
 description = "Offline deterministic request replay only; no Podman daemon, process environment, host identity, credentials, or network access is used. Execution context comes from each cassette."

@@ -4,6 +4,7 @@ ci-clippy = "clippy --locked --workspace --all-targets --all-features -- -D warn
 ci-compose = "check --locked --package boxferry --all-targets --no-default-features --features compose"
 ci-core = "check --locked --package boxferry --all-targets --no-default-features"
 ci-doc = "doc --locked --workspace --all-features --no-deps"
+ci-docker = "check --locked --package boxferry --all-targets --no-default-features --features docker"
 ci-doctest = "test --locked --doc --workspace --all-features"
 ci-podman = "check --locked --package boxferry --all-targets --no-default-features --features podman"
 ci-policy = "test --locked --package boxferry --test repository_policy"

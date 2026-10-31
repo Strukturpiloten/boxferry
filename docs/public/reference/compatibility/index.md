@@ -1,18 +1,27 @@
 # Compatibility
 
-The current CLI supports Linux and all nine Compose, Quadlet, and Podman routes.
+The CLI supports Linux. The Unreleased development source exposes all 16 Compose, Docker,
+Quadlet, and Podman routes; installed releases may expose fewer. This matrix describes development
+functionality, not native consumer/application or release qualification.
 
-| Input   | Output  | Target contract                                |
-| ------- | ------- | ---------------------------------------------- |
-| Compose | Compose | Rolling Compose Specification generation       |
-| Compose | Quadlet | Podman 5.4.0 through 6.1.2 by default          |
-| Compose | Podman  | Reviewed exact Podman target, 6.1.0 by default |
-| Quadlet | Compose | Rolling Compose Specification generation       |
-| Quadlet | Quadlet | Podman 5.4.0 through 6.1.2 by default          |
-| Quadlet | Podman  | Reviewed exact Podman target, 6.1.0 by default |
-| Podman  | Compose | Rolling Compose Specification generation       |
-| Podman  | Quadlet | Podman 5.4.0 through 6.1.2 by default          |
-| Podman  | Podman  | Reviewed exact Podman target, 6.1.0 by default |
+| Input   | Output  | Target contract                                    |
+| ------- | ------- | -------------------------------------------------- |
+| Compose | Docker  | Explicit exact reviewed Docker profile; inert plan |
+| Quadlet | Docker  | Explicit exact reviewed Docker profile; inert plan |
+| Podman  | Docker  | Explicit exact reviewed Docker profile; inert plan |
+| Docker  | Compose | Rolling Compose Specification generation           |
+| Docker  | Quadlet | Podman 5.4.0 through 6.1.2 by default              |
+| Docker  | Podman  | Reviewed exact Podman target, 6.1.0 by default     |
+| Docker  | Docker  | Explicit exact reviewed Docker profile; inert plan |
+| Compose | Compose | Rolling Compose Specification generation           |
+| Compose | Quadlet | Podman 5.4.0 through 6.1.2 by default              |
+| Compose | Podman  | Reviewed exact Podman target, 6.1.0 by default     |
+| Quadlet | Compose | Rolling Compose Specification generation           |
+| Quadlet | Quadlet | Podman 5.4.0 through 6.1.2 by default              |
+| Quadlet | Podman  | Reviewed exact Podman target, 6.1.0 by default     |
+| Podman  | Compose | Rolling Compose Specification generation           |
+| Podman  | Quadlet | Podman 5.4.0 through 6.1.2 by default              |
+| Podman  | Podman  | Reviewed exact Podman target, 6.1.0 by default     |
 
 Run `boxferry capabilities` for the installed build's exact route and version data.
 
@@ -52,6 +61,28 @@ Compose output is provider-neutral. The CLI does not ask for a Docker Compose or
 version and does not claim every historical provider accepts the document. Embedded Rust callers
 can select exact provider-aware targets through the library API.
 
+## Docker development boundaries
+
+Docker input uses finite DockerLens native version/context evidence, not an arbitrary Engine/API
+range. Docker output requires `--docker-target` to resolve exactly one reviewed native profile:
+
+| Preset                      | Engine/build                                                        | Daemon mode |
+| --------------------------- | ------------------------------------------------------------------- | ----------- |
+| `debian11-20.10.5-rootful`  | Debian 11 Engine `20.10.5+dfsg1`, package `20.10.5+dfsg1-1+deb11u2` | rootful     |
+| `debian11-20.10.5-rootless` | Debian 11 Engine `20.10.5+dfsg1`, package `20.10.5+dfsg1-1+deb11u2` | rootless    |
+| `upstream-29.8.1-rootful`   | Upstream Engine `29.8.1`                                            | rootful     |
+| `upstream-29.8.1-rootless`  | Upstream Engine `29.8.1`                                            | rootless    |
+
+Each preset resolves native API versions and reviewed capability evidence from DockerLens.
+The shorter Debian preset spelling is not a generic upstream `20.10.5` claim. Neither an observed
+source daemon mode nor the development host selects an output target. Unknown source mode is
+retained as evidence; mode-sensitive intent still needs its own prerequisites.
+
+See [Docker input and artifacts](../../guides/docker-input/) for selection, reconstruction, consent
+and output obligations. Source functionality and native Lens evidence do not establish actual
+BoxFerry consumer/application acceptance or normal registry compatibility. Compatible published
+dependencies and ordinary API/package and complete checks remain required.
+
 ## Platform support
 
 - Linux is supported.
@@ -63,8 +94,9 @@ can select exact provider-aware targets through the library API.
 ## Scope
 
 Podman input is an acquired runtime inventory and resource graph. Podman output is a desired,
-review-only deployment artifact and cannot be re-imported as runtime evidence. Docker and Kubernetes
-remain deferred, and BoxFerry does not ship speculative adapters or any apply/deploy command.
+review-only deployment artifact and cannot be re-imported as runtime evidence. Docker input is
+read-only inventory; Docker output is inert native requests and conditional dependency decisions,
+never observed input evidence. Kubernetes remains deferred. BoxFerry has no apply/deploy command.
 
 Recognizing a native key does not guarantee every value converts exactly. When source and target
 semantics differ, the diagnostic and loss policy are the compatibility contract.

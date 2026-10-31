@@ -1,4 +1,4 @@
-# Repository guidance for coding agents
+# Repository guidance for agents
 
 ## Read before changing code
 
@@ -15,13 +15,14 @@ ADRs; add or supersede any contradicted accepted ADR in the same change. Also re
 
 ## Product boundaries
 
-- BoxFerry owns orchestration, neutral model, semantic adapters, loss policy, diagnostics, CLI;
-  ComposeLens, PodmanLens, and QuadletLens own native formats and cannot depend on BoxFerry.
-- All inputs use an importer and the neutral model; all outputs use an exporter, including
-  same-format routes.
-- Podman acquisition is explicit, read-only. Never apply output, invoke generated commands, deploy,
-  or send mutating runtime requests.
-- Docker and Kubernetes remain deferred; do not add placeholder adapters.
+- BoxFerry owns orchestration, neutral model, semantic adapters, loss policy, diagnostics, CLI.
+  ComposeLens, DockerLens, PodmanLens, QuadletLens: native formats; no BoxFerry dependency.
+- All routes, including same-format: importer → neutral model → exporter.
+- Docker/Podman: explicit read-only acquisition. Never apply output, execute generated commands,
+  deploy or mutate runtimes.
+- [ADR 0085](docs/decisions/0085-docker-cli-neutral-routes.md): 16 CLI routes, Docker input,
+  bounded acquisition, inert output. Native/application and published-dependency qualification stay
+  separate. Kubernetes deferred; no placeholders or neutral-model bypass.
 
 Implement from scratch; never copy or mechanically translate oracle source. Record external oracle
 version, command, provenance, license, and redistribution status.

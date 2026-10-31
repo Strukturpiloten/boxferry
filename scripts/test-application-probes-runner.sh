@@ -49,6 +49,8 @@ printf '%s\n' '#!/usr/bin/env bash' \
   '  name=test-readiness-comparison.py' \
   'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-docker-nextcloud-contract.py" ]]; then' \
   '  name=test-docker-nextcloud-contract.py' \
+  'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-docker-nextcloud-input-contract.py" ]]; then' \
+  '  name=test-docker-nextcloud-input-contract.py' \
   'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-apply-reacquire-contract.py" ]]; then' \
   '  name=test-apply-reacquire-contract.py' \
   'else' \
@@ -65,7 +67,7 @@ run_probe_test() {
 }
 readonly existing_order=$'test-application-probes-runner.sh\ntest-docker-paperless-application.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh'
 run_probe_test
-[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-readiness-comparison.py\ntest-podman-live-cleanup.sh\ntest-docker-nextcloud-contract.py\ntest-apply-reacquire-contract.py' ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-readiness-comparison.py\ntest-podman-live-cleanup.sh\ntest-docker-nextcloud-contract.py\ntest-docker-nextcloud-input-contract.py\ntest-apply-reacquire-contract.py' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-docker-paperless-application.sh || status=$?
@@ -141,6 +143,11 @@ run_probe_test test-docker-nextcloud-contract.py || status=$?
 [[ "${status}" == 37 ]]
 [[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-readiness-comparison.py\ntest-podman-live-cleanup.sh\ntest-docker-nextcloud-contract.py' ]]
 
+: > "${probe_log}"
+status=0
+run_probe_test test-docker-nextcloud-input-contract.py || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(tail -n 2 "${probe_log}")" == $'test-docker-nextcloud-contract.py\ntest-docker-nextcloud-input-contract.py' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-apply-reacquire-contract.py || status=$?

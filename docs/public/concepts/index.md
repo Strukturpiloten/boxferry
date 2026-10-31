@@ -5,11 +5,14 @@ keeps conversion rules independent of a specific source-target pair.
 
 ```text
 Compose ──┐                         ┌── Compose
+Docker ───┤                         ├── Docker
 Podman ───┼── application model ────┼── Podman
 Quadlet ──┘                         └── Quadlet
 ```
 
-The current CLI exposes all nine routes. Docker and Kubernetes remain deferred.
+The Unreleased development CLI exposes all 16 routes; installed releases may expose fewer.
+Kubernetes remains deferred. Docker development scope and pending qualification are described in
+the [Docker guide](../guides/docker-input/).
 
 ## Fidelity outcomes
 
@@ -41,6 +44,7 @@ Rule codes identify stable conditions:
 - `BFQ` — Quadlet input and Quadlet mapping
 - `BFO` — orchestration, files, and reports
 - `BFP` — Podman input, Podman mapping, and Podman output planning
+- `BFD` — Docker input, reconstruction and Docker output planning
 
 Use `boxferry explain CODE` or open the rule's reference page.
 
@@ -52,9 +56,19 @@ expressions must be resolved before they can enter the neutral model.
 
 Podman-to-Podman is not a passthrough: an explicitly acquired runtime inventory is imported into the
 neutral model and exported as a desired deployment plan. The resulting `podman.json` is not an
-inventory snapshot and cannot be imported again. Compose and Quadlet output remain re-importable.
+inventory snapshot and cannot be imported again. Docker-to-Docker also reconstructs neutral intent and exports an inert plan; `docker-plan.json`
+is not an observed inventory and cannot be imported as Docker input. Its conditional dependency
+sidecar records manual obligations and never executes readiness. Compose and Quadlet output
+remain re-importable.
 
 ## Runtime safety
+
+Docker input uses bounded read-only Lens acquisition. The CLI checks only conventional local
+sockets or an explicit endpoint; no remote environment endpoint or Docker command is inferred.
+Portable source reconstruction and exact-default loss policy are independent. Environment values,
+binds, public labels and lifecycle decisions each need their own reviewed authorization. Required
+incomplete or protected intent may block Docker output under every loss policy; `partial` does not
+guarantee a usable artifact after removing secrets. See the [Docker guide](../guides/docker-input/).
 
 Podman input is read-only and requires selectors. The CLI checks one deterministic local socket
 pair—current-user rootless first, then rootful—unless `--podman-socket` explicitly overrides it.

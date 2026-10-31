@@ -137,7 +137,7 @@ write_changelog \
   '# Changelog' '' '## [Unreleased]' '' \
   '## [0.10.0] - 2026-10-28' '' '- Complete release notes.'
 cp -- "${changelog}" "${metadata_repository}/CHANGELOG.md"
-metadata="$(jq -n '{packages: (["boxferry-model", "boxferry-engine", "boxferry-compose", "boxferry-podman", "boxferry-quadlet", "boxferry"] | map({name: ., version: "0.10.0", publish: null}))}')"
+metadata="$(jq -n '{packages: (["boxferry-model", "boxferry-engine", "boxferry-compose", "boxferry-docker", "boxferry-podman", "boxferry-quadlet", "boxferry"] | map({name: ., version: "0.10.0", publish: null}))}')"
 for mode in --development --release; do
   env PATH="${temporary_directory}/bin:${PATH}" BOXFERRY_TEST_CARGO_METADATA="${metadata}" \
     bash "${metadata_repository}/scripts/validate-release-metadata.sh" "${mode}" > /dev/null

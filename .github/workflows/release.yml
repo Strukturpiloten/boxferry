@@ -399,6 +399,16 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: bash .github/scripts/publish-crate.sh boxferry-compose "${VERSION}"
 
+      - name: Authenticate boxferry-docker to crates.io
+        id: auth_docker
+        if: steps.auth_mode.outputs.bootstrap != 'true'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish boxferry-docker
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_docker.outputs.token || secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-docker "${VERSION}"
+
       - name: Authenticate boxferry-podman to crates.io
         id: auth_podman
         if: steps.auth_mode.outputs.bootstrap != 'true'
@@ -440,6 +450,7 @@ jobs:
             boxferry-model
             boxferry-engine
             boxferry-compose
+            boxferry-docker
             boxferry-podman
             boxferry-quadlet
             boxferry
@@ -468,7 +479,7 @@ jobs:
           mapfile -t binary_names <<< "${binary_archive_names}"
           test "${#binary_names[@]}" -eq 6
           archive_names+=("${binary_names[@]}")
-          test "${#archive_names[@]}" -eq 12
+          test "${#archive_names[@]}" -eq 13
           cd "${artifact_directory}"
           sha256sum "${archive_names[@]}" > SHA256SUMS
 
@@ -538,7 +549,7 @@ jobs:
             exit 1
           fi
 
-          for package in boxferry-model boxferry-engine boxferry-compose boxferry-podman boxferry-quadlet boxferry; do
+          for package in boxferry-model boxferry-engine boxferry-compose boxferry-docker boxferry-podman boxferry-quadlet boxferry; do
             upload_asset "target/release-artifacts/${package}-${VERSION}.crate" "application/gzip"
           done
           binary_names="$(python3 scripts/release-binaries.py archive-names --version "${VERSION}")"
