@@ -42,7 +42,9 @@ def encoded(value):
 
 def read_private(path, maximum=128 * 1024):
     need(path.is_absolute() and path.resolve(strict=True) == path)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    # Linux owned-private reads must not mutate their own access timestamp:
+    # retain every complete before/after stat check, with no flag fallback.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME)
     try:
         before = os.fstat(fd)
         need(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid()

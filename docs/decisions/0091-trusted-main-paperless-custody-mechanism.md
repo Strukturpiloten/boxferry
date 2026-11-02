@@ -132,6 +132,13 @@ observation write and verifier read are charged within the original byte allowan
 
 ## Bounds and evidence
 
+The Linux mechanism reads owned private files with `O_NOATIME` on the existing
+read descriptor. Reading must not change its own access timestamp: complete
+before/after descriptor and pathname stat equality remains mandatory, including
+inode, mode, owner, links, size, modification and change metadata. A denied or
+unsupported flag refuses the read without fallback or retry. This adds no
+privilege, descriptor, runtime operation or alternate file authority.
+
 Keep the worker's 45-minute backstop, original 780-second execution and 120-second
 cleanup, existing two-CPU/4-GiB/512-PID outer policy, two mounts, seventeen retained
 and conservative thirty-six holder/frame FDs, 130-byte request read and 4096-byte
