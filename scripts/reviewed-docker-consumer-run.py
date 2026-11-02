@@ -39,6 +39,8 @@ FAILURE_PHASES = frozenset({
     "host-metadata-build", "host-metadata-capture", "host-metadata-receipt", "inert-build",
     "inert-discovery", "inert-capture", "inert-tests", "build-source-recheck", "build-state", "build-export",
     "native-runtime",
+    "mechanism-runtime", "mechanism-context", "mechanism-source", "mechanism-copy", "mechanism-binding",
+    "mechanism-import", "mechanism-observer", "mechanism-execution", "mechanism-evidence",
 })
 RUNTIME_FACTS = {
     "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
@@ -792,8 +794,14 @@ class CustodyObserver:
                 os.close(fd)
 
 
-def mechanism(args):
+def mechanism(args, *, phase=None):
+    def mark(name):
+        if phase is not None:
+            phase(name)
+
+    mark("mechanism-runtime")
     runtime_environment(os.environ, require_docker=True)
+    mark("mechanism-context")
     auth.require(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
                  and args.box_sha == args.trusted_sha == os.environ.get("GITHUB_SHA")
                  and args.trusted_sha == os.environ.get("GITHUB_WORKFLOW_SHA")
@@ -803,9 +811,12 @@ def mechanism(args):
                  and args.box_pr is None and args.lens_pr is None and args.build_artifact_id is None
                  and args.case in auth.CUSTODY_CASES and args.lane == "upstream-rootless"
                  and not os.environ.get("GITHUB_TOKEN") and not os.environ.get("GH_TOKEN"))
+    mark("mechanism-source")
     box, sdk, files = auth.custody_sources(args.trusted_root, args.lens_root, args.trusted_sha)
     auth.require(args.lens_sha == sdk["revision"])
+    mark("mechanism-copy")
     auth.copy_closure(files, args.execution_root)
+    mark("mechanism-binding")
     args.private.mkdir(mode=0o700)
     actors = {name: os.environ.get(name, "") for name in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR")}
     auth.require(all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", value) is not None for value in actors.values())
@@ -816,17 +827,28 @@ def mechanism(args):
                "box": box, "sdk": sdk, "sdk_root": str(args.lens_root), "context": context}
     path = args.private / "mechanism-binding.json"
     write(path, binding)
+    mark("mechanism-import")
     source = args.execution_root / auth.CUSTODY_LAUNCHER
     spec = importlib.util.spec_from_file_location("held_main_custody_mechanism", source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    mark("mechanism-observer")
     observer = CustodyObserver(module, args.private, args.lens_root, context, args.case)
     args.output.mkdir(mode=0o700)
+    def observe(process):
+        mark("mechanism-observer")
+        result = observer.tick(process)
+        mark("mechanism-execution")
+        return result
+
     try:
+        mark("mechanism-execution")
         execute([sys.executable, str(source), "run", "--binding", str(path)], root=args.execution_root,
                 log=args.private / "mechanism.log", seconds=900, cleanup_seconds=125, preserve_guard=True,
-                observe=observer.tick, accepted_statuses=(0,) if args.case in {"positive", "guard-loss"} else (-signal.SIGKILL,))
+                observe=observe, accepted_statuses=(0,) if args.case in {"positive", "guard-loss"} else (-signal.SIGKILL,))
+        mark("mechanism-observer")
         observations = observer.finish()
+        mark("mechanism-evidence")
         auth.custody_sources(args.trusted_root, args.lens_root, args.trusted_sha)
         for name, raw in files.items():
             auth.require(auth.read(args.execution_root / name) == raw)
@@ -902,7 +924,7 @@ def main():
         args = arguments()
         if args.command == "mechanism":
             auth.require(args.output is not None)
-            mechanism(args)
+            mechanism(args, phase=mark)
         elif args.command == "build":
             auth.require(args.case is None and args.checked_at is None)
             auth.require(args.lane in auth.LANES and args.output is None and args.build_artifact_id is None)

@@ -2,9 +2,12 @@
 """Offline independent authority/observer controls; no native qualification."""
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 import copy
+import errno
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -545,6 +548,243 @@ class FixedEntrypoint(unittest.TestCase):
         self.assertIn("main-custody-admission:", workflow)
         self.assertIn("main-custody-evidence:", workflow)
         self.assertEqual(workflow.count("source-kind: trusted-main-mechanism"), 2)
+
+
+class PrivateReadIntegrity(unittest.TestCase):
+    SECURITY_FIELDS = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink", "st_size",
+                       "st_mtime_ns", "st_ctime_ns")
+
+    def private_file(self, directory):
+        path = directory / "protected-source.json"
+        value = {"protected": "private-read-secret-canary"}
+        mechanism.write_new(path, value)
+        # Deliberately stale atime reproduces ordinary relatime access updates.
+        # It is never warmed or moved into the future to suppress the defect.
+        original = path.stat()
+        os.utime(path, ns=(1_000_000_000, original.st_mtime_ns))
+        return path, mechanism.encoded(value)
+
+    def test_real_old_atime_read_preserves_all_stat_fields_and_returns_exact_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path, expected = self.private_file(Path(temporary))
+            before = path.stat()
+            self.assertEqual(mechanism.read_private(path), expected)
+            after = path.stat()
+            self.assertEqual(before, after)
+            self.assertEqual(before.st_atime_ns, after.st_atime_ns)
+            for field in self.SECURITY_FIELDS:
+                with self.subTest(field=field):
+                    self.assertEqual(getattr(before, field), getattr(after, field))
+
+    def test_metadata_or_path_mutation_during_read_still_refuses(self):
+        for change in ("mode", "links", "size", "mtime", "path"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                path, _expected = self.private_file(directory)
+                read = os.read
+                changed = False
+                def mutate(descriptor, maximum):
+                    nonlocal changed
+                    raw = read(descriptor, maximum)
+                    if raw and not changed:
+                        changed = True
+                        if change == "mode":
+                            path.chmod(0o640)
+                        elif change == "links":
+                            os.link(path, directory / "unexpected-link")
+                        elif change == "size":
+                            with path.open("ab") as output:
+                                output.write(b"modified")
+                        elif change == "mtime":
+                            stamp = path.stat()
+                            os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1_000_000_000))
+                        else:
+                            replacement = directory / "replacement.json"
+                            mechanism.write_new(replacement, {"protected": "private-read-secret-canary"})
+                            replacement.replace(path)
+                    return raw
+                with mock.patch.object(mechanism.os, "read", side_effect=mutate):
+                    with self.assertRaises(mechanism.Refused):
+                        mechanism.read_private(path)
+                self.assertTrue(changed)
+
+    def test_private_uid_mode_and_link_requirements_are_not_relaxed(self):
+        for change in ("uid", "mode", "links"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+                directory = Path(temporary)
+                path, _expected = self.private_file(directory)
+                if change == "uid":
+                    stack.enter_context(mock.patch.object(mechanism.os, "geteuid", return_value=os.geteuid() + 1))
+                elif change == "mode":
+                    path.chmod(0o644)
+                else:
+                    os.link(path, directory / "unexpected-link")
+                read = stack.enter_context(mock.patch.object(mechanism.os, "read", side_effect=AssertionError("private bytes read before validation")))
+                with self.assertRaises(mechanism.Refused):
+                    mechanism.read_private(path)
+                read.assert_not_called()
+
+
+class MechanismDiagnostics(unittest.TestCase):
+    class HostileError(Exception):
+        def __str__(self):
+            raise AssertionError("exception text must never be consulted")
+
+        def __repr__(self):
+            raise AssertionError("exception representation must never be consulted")
+
+    @contextmanager
+    def harness(self, fault=None, *, close_fault=False, persist_fault=False, case="positive"):
+        with tempfile.TemporaryDirectory(prefix="mechanism-diagnostics-") as temporary, ExitStack() as stack:
+            base = Path(temporary)
+            args = types.SimpleNamespace(command="mechanism", trusted_root=base / "trusted-secret-canary",
+                box_root=base / "trusted-secret-canary", lens_root=base / "sdk-secret-canary",
+                execution_root=base / "execution-secret-canary", private=base / "private-secret-canary",
+                output=base / "output-secret-canary", trusted_sha=MAIN, box_sha=MAIN, lens_sha=SDK,
+                run_id=123, attempt=2, box_pr=None, lens_pr=None, build_artifact_id=None,
+                case=case, lane="upstream-rootless", checked_at=1000)
+            environment = {"GITHUB_SHA": MAIN, "GITHUB_WORKFLOW_SHA": MAIN, "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ATTEMPT": "2", "GITHUB_ACTOR": "Alice", "GITHUB_TRIGGERING_ACTOR": "Bob",
+                "GITHUB_JOB": "lanes", "PRIVATE_VALUE": "environment-secret-canary"}
+            if fault == "context":
+                args.box_sha = "c" * 40
+            stack.enter_context(mock.patch.dict(os.environ, environment, clear=True))
+            for name in ("getuid", "geteuid", "getgid", "getegid"):
+                stack.enter_context(mock.patch.object(worker.os, name, return_value=0))
+            stack.enter_context(mock.patch.object(worker.time, "time", return_value=1000))
+            error = self.HostileError("exception-secret-canary /private/secret-canary\n::error::hostile")
+            runtime = stack.enter_context(mock.patch.object(worker, "runtime_environment",
+                side_effect=error if fault == "runtime" else None))
+            files = {auth.CUSTODY_LAUNCHER: b"reviewed copied source"}
+            source_calls = []
+            def sources(*arguments):
+                source_calls.append(arguments)
+                if fault == "source" and len(source_calls) == 1 or fault == "evidence-source" and len(source_calls) == 2:
+                    raise error
+                return {"revision": MAIN}, {"revision": SDK}, files
+            stack.enter_context(mock.patch.object(auth, "custody_sources", side_effect=sources))
+            copied = stack.enter_context(mock.patch.object(auth, "copy_closure", side_effect=error if fault == "copy" else None))
+            original_mkdir = Path.mkdir
+            def mkdir(path, *arguments, **keywords):
+                if fault == "binding-directory" and path == args.private or fault == "observer-directory" and path == args.output:
+                    raise error
+                return original_mkdir(path, *arguments, **keywords)
+            stack.enter_context(mock.patch.object(Path, "mkdir", autospec=True, side_effect=mkdir))
+            writes = []
+            def write(path, value):
+                kind = value.get("result", "binding")
+                writes.append((path, kind))
+                if fault == "binding-write" and kind == "binding" or fault == "evidence-write" and kind == "checks-passed":
+                    raise error
+                if persist_fault and kind == "refused":
+                    raise error
+            stack.enter_context(mock.patch.object(worker, "write", side_effect=write))
+            loader = types.SimpleNamespace(exec_module=mock.Mock(side_effect=error if fault == "import-load" else None))
+            spec = types.SimpleNamespace(loader=loader)
+            stack.enter_context(mock.patch.object(worker.importlib.util, "spec_from_file_location",
+                side_effect=error if fault == "import-spec" else None, return_value=spec))
+            stack.enter_context(mock.patch.object(worker.importlib.util, "module_from_spec", return_value=types.SimpleNamespace()))
+            process, tick_result = object(), object()
+            observer = types.SimpleNamespace(owner=None, guard=None, cid=None, phase=0,
+                tick=mock.Mock(side_effect=error if fault == "observer-tick" else None, return_value=tick_result),
+                finish=mock.Mock(side_effect=error if fault == "observer-finish" else None, return_value={}),
+                close=mock.Mock(side_effect=error if close_fault else None))
+            constructor = stack.enter_context(mock.patch.object(worker, "CustodyObserver",
+                side_effect=error if fault == "observer-construction" else None, return_value=observer))
+            executions = []
+            def execute(arguments, **keywords):
+                executions.append((arguments, keywords))
+                if fault == "execution":
+                    raise error
+                self.assertIs(keywords["observe"](process), tick_result)
+                return b""
+            stack.enter_context(mock.patch.object(worker, "execute", side_effect=execute))
+            read = stack.enter_context(mock.patch.object(auth, "read",
+                side_effect=error if fault == "evidence-read" else None, return_value=files[auth.CUSTODY_LAUNCHER]))
+            validation = stack.enter_context(mock.patch.object(evidence, "validate_mechanism",
+                side_effect=error if fault == "evidence-validation" else None))
+            stack.enter_context(mock.patch.object(worker, "arguments", return_value=args))
+            yield types.SimpleNamespace(args=args, observer=observer, process=process, writes=writes,
+                source_calls=source_calls, executions=executions, copied=copied, loader=loader,
+                runtime=runtime, constructor=constructor, read=read, validation=validation)
+
+    def capture_main(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = worker.main()
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_actual_mechanism_boundaries_attribute_failures_without_private_text(self):
+        for fault, expected in (
+            ("runtime", "mechanism-runtime"), ("context", "mechanism-context"),
+            ("source", "mechanism-source"), ("copy", "mechanism-copy"),
+            ("binding-directory", "mechanism-binding"), ("binding-write", "mechanism-binding"),
+            ("import-spec", "mechanism-import"), ("import-load", "mechanism-import"),
+            ("observer-construction", "mechanism-observer"), ("observer-directory", "mechanism-observer"),
+            ("execution", "mechanism-execution"), ("observer-tick", "mechanism-observer"),
+            ("observer-finish", "mechanism-observer"), ("evidence-source", "mechanism-evidence"),
+            ("evidence-read", "mechanism-evidence"), ("evidence-validation", "mechanism-evidence"),
+            ("evidence-write", "mechanism-evidence"),
+        ):
+            with self.subTest(fault=fault), self.harness(fault) as setup:
+                expected_message = "reviewed Docker consumer execution rejected: phase=" + expected + " reason=rejected; no passing evidence\n"
+                self.assertEqual(self.capture_main(), (1, "", expected_message))
+                if fault in {"execution", "observer-tick", "observer-finish", "evidence-source",
+                             "evidence-read", "evidence-validation", "evidence-write"}:
+                    setup.observer.close.assert_called_once_with()
+                else:
+                    setup.observer.close.assert_not_called()
+
+    def test_refusal_persistence_and_close_failures_preserve_originating_phase(self):
+        for persist, close in ((True, False), (False, True), (True, True)):
+            with self.subTest(persist=persist, close=close), self.harness("execution", persist_fault=persist, close_fault=close) as setup:
+                self.assertEqual(self.capture_main(), (1, "", "reviewed Docker consumer execution rejected: phase=mechanism-execution reason=rejected; no passing evidence\n"))
+                setup.observer.close.assert_called_once_with()
+                self.assertEqual([kind for _path, kind in setup.writes], ["binding", "refused"])
+
+    def test_success_is_silent_and_keeps_original_calls_budgets_and_statuses(self):
+        for case, statuses in (("positive", (0,)), ("guard-loss", (0,)), ("owner-loss", (-mechanism.signal.SIGKILL,))):
+            with self.subTest(case=case), self.harness(case=case) as setup:
+                self.assertEqual(self.capture_main(), (0, "", ""))
+                self.assertEqual([kind for _path, kind in setup.writes], ["binding", "checks-passed"])
+                setup.observer.tick.assert_called_once_with(setup.process)
+                setup.observer.finish.assert_called_once_with()
+                setup.observer.close.assert_called_once_with()
+                self.assertEqual(len(setup.source_calls), 2)
+                self.assertEqual(len(setup.executions), 1)
+                arguments, options = setup.executions[0]
+                self.assertEqual(arguments, [sys.executable, str(setup.args.execution_root / auth.CUSTODY_LAUNCHER),
+                    "run", "--binding", str(setup.args.private / "mechanism-binding.json")])
+                self.assertEqual((options["seconds"], options["cleanup_seconds"], options["preserve_guard"], options["accepted_statuses"]),
+                                 (900, 125, True, statuses))
+
+    def test_phase_order_and_observer_callback_argument_return_are_preserved(self):
+        with self.harness() as setup:
+            phases = []
+            self.assertIsNone(worker.mechanism(setup.args, phase=phases.append))
+            self.assertEqual(phases, ["mechanism-runtime", "mechanism-context", "mechanism-source", "mechanism-copy",
+                "mechanism-binding", "mechanism-import", "mechanism-observer", "mechanism-execution",
+                "mechanism-observer", "mechanism-execution", "mechanism-observer", "mechanism-evidence"])
+            setup.observer.tick.assert_called_once_with(setup.process)
+
+    def test_denied_or_unsupported_private_open_never_retries_or_leaks(self):
+        for code in (errno.EPERM, errno.EINVAL, errno.EOPNOTSUPP):
+            with self.subTest(errno=code), self.harness() as setup:
+                path = setup.args.private.parent / "protected-private-path-secret-canary.json"
+                mechanism.write_new(path, {"protected": "private-content-secret-canary"})
+                setup.observer.tick.side_effect = lambda _process: mechanism.read_private(path)
+                failure = OSError(code, "private-open-error-secret-canary", str(path))
+                with mock.patch.object(mechanism.os, "open", side_effect=failure) as opened, \
+                     mock.patch.object(mechanism.os, "read", side_effect=AssertionError("read after refused open")) as read:
+                    self.assertEqual(self.capture_main(), (1, "", "reviewed Docker consumer execution rejected: phase=mechanism-observer reason=rejected; no passing evidence\n"))
+                opened.assert_called_once_with(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME)
+                read.assert_not_called()
+                setup.observer.close.assert_called_once_with()
+
+    def test_unknown_or_hostile_phase_inputs_use_only_fixed_fallback(self):
+        for phase in ("private-secret-canary\n::error::injected", self.HostileError("exception-secret-canary"), Path("/private/secret-canary")):
+            self.assertEqual(worker.failure_message(phase),
+                "reviewed Docker consumer execution rejected: phase=arguments reason=rejected; no passing evidence")
 
 
 class ObserverAuthority(unittest.TestCase):
