@@ -8,6 +8,10 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0091](0091-trusted-main-paperless-custody-mechanism.md) owns the fixed
+trusted-main six-volume custody mechanism, preserving product and application
+acceptance boundaries and existing candidate admission.
+
 [ADR 0086](0086-downloadable-cli-binaries.md) amends ADR 0024 with downloadable Linux and
 macOS client binaries and their evidence boundaries.
 

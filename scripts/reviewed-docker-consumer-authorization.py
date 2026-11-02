@@ -64,6 +64,22 @@ POLICY = {
     "execution_seconds": 780, "cleanup_seconds": 120, "cargo_jobs": 2,
     "upstream_rootless_prerequisite": "github_runner_userns_v1",
 }
+CUSTODY_HELPERS = Path(".github/reviewed-paperless-custody-helpers.json")
+CUSTODY_LAUNCHER = "scripts/verify-docker-paperless-custody.py"
+CUSTODY_SOURCE_FILES = frozenset({
+    "scripts/lib/docker-paperless-transport.py", "scripts/lib/docker-application-contract.py",
+    "scripts/lib/docker-paperless-volume-custody.py", "scripts/lib/docker-core-artifact.py",
+    "scripts/lib/docker-application-schedule.py", "scripts/lib/docker-application-expectations.py",
+    "scripts/lib/docker-paperless-application.sh", "scripts/lib/paperless-application.sh",
+    "scripts/lib/paperless-application-probes.sh", "fixtures/conformance/docker-application/expected-applications.json",
+    "fixtures/conformance/paperless-ngx-application/compose.yaml",
+    "fixtures/conformance/paperless-ngx-application/images.tsv",
+    "fixtures/conformance/paperless-ngx-application/providers.tsv",
+    "fixtures/conformance/paperless-ngx-application/document-probe.py",
+})
+CUSTODY_BOX_FILES = BOX_FILES | CUSTODY_SOURCE_FILES | {CUSTODY_LAUNCHER}
+CUSTODY_CASES = ("positive", "replace-data", "replace-media", "replace-consume", "replace-export",
+                 "replace-pgdata", "replace-redisdata", "owner-loss", "guard-loss", "expiry", "lost-ack")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 RECORD = re.compile(r'docs/evidence/reviewed/sha256/([0-9a-f]{64})\.json')
@@ -226,6 +242,50 @@ def copy_closure(files: dict[str, bytes], destination: Path) -> None:
             stream.write(raw)
         target.chmod(0o600)
         require(read(target) == raw)
+
+
+def custody_helper_policy(trusted: Path):
+    """Immutable helper authority comes only from the exact trusted main tree."""
+    value = document(trusted / CUSTODY_HELPERS, 16 * 1024)
+    keys(value, ("schema", "repository", "revision", "source_sha256", "lock_sha256", "files"))
+    require(value["schema"] == 1 and type(value["schema"]) is int
+            and value["repository"] == "Strukturpiloten/docker-lens")
+    sha(value["revision"], SHA)
+    sha(value["source_sha256"])
+    sha(value["lock_sha256"])
+    require(type(value["files"]) is dict
+            and set(value["files"]) == (LENS_FILES - {"src/reviewed_catalog.rs"}))
+    for digest in value["files"].values():
+        sha(digest)
+    workflow = read(trusted / ".github/workflows/reviewed-docker-consumer-validation.yml").decode()
+    require(re.findall(r"(?m)^  CUSTODY_HELPER_REVISION: ([0-9a-f]{40})$", workflow) == [value["revision"]])
+    return value
+
+
+def custody_main_source(trusted: Path, revision: str):
+    """The workflow's actual clean main commit is authority, never a feature PR."""
+    sha(revision, SHA)
+    require(git(trusted, "rev-parse", "--show-toplevel") == str(trusted)
+            and git(trusted, "rev-parse", "HEAD") == revision
+            and git(trusted, "status", "--porcelain", "--untracked-files=all") == ""
+            and len(CUSTODY_BOX_FILES) == 32)
+    files = {name: read(trusted / name) for name in sorted(CUSTODY_BOX_FILES)}
+    return {"revision": revision, "source_sha256": source_digest(trusted),
+            "lock_sha256": hashlib.sha256(read(trusted / "Cargo.lock")).hexdigest(),
+            "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}}, files
+
+
+def custody_sources(trusted: Path, lens: Path, revision: str):
+    box, files = custody_main_source(trusted, revision)
+    dependency = custody_helper_policy(trusted)
+    require(git(lens, "rev-parse", "--show-toplevel") == str(lens)
+            and git(lens, "rev-parse", "HEAD") == dependency["revision"]
+            and git(lens, "status", "--porcelain", "--untracked-files=all") == ""
+            and source_digest(lens) == dependency["source_sha256"]
+            and hashlib.sha256(read(lens / "Cargo.lock")).hexdigest() == dependency["lock_sha256"])
+    for name, expected in dependency["files"].items():
+        require(hashlib.sha256(read(lens / name)).hexdigest() == expected)
+    return box, dependency, files
 
 
 def main():

@@ -23,7 +23,8 @@ BOX = "Strukturpiloten/boxferry"
 LENS = "Strukturpiloten/docker-lens"
 PHASES = frozenset({
     "authorization", "workflow-pin", "helper-load", "context/Box-admission",
-    "Box-permission", "Box-pull", "Lens-permission", "Lens-pull",
+    "Box-permission", "Box-pull", "Lens-permission", "Lens-pull", "main-source", "main-context",
+    "main-Box-permission", "main-Lens-permission",
 })
 # Exact value-free AdmissionError constants in the independently pinned helper.
 # Do not stringify unknown errors or infer HTTP status: fetch_json discards it.
@@ -122,6 +123,30 @@ def admit_pair(env, pair, helper, get, *, phase=None) -> None:
                      and repository["id"] == lens["repository_id"] and repository.get("full_name") == LENS)
 
 
+def admit_main_mechanism(env, trusted, revision, helper, get, *, phase=None):
+    """Only the actual default-main workflow, never arbitrary candidate source."""
+    mark = phase or (lambda _name: None)
+    mark("main-context")
+    auth.require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                 and env.get("GITHUB_REF") == "refs/heads/main" and env.get("GITHUB_REPOSITORY") == BOX
+                 and env.get("GITHUB_REPOSITORY_ID") == "1318220645"
+                 and env.get("GITHUB_WORKFLOW_REF") == BOX + "/.github/workflows/reviewed-docker-consumer-validation.yml@refs/heads/main"
+                 and revision == env.get("GITHUB_SHA") == env.get("GITHUB_WORKFLOW_SHA"))
+    auth.sha(revision, auth.SHA)
+    auth.require(all(re.fullmatch(r"[1-9][0-9]{0,19}", env.get(name, "")) is not None
+                     for name in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")))
+    actors = {env.get("GITHUB_ACTOR", ""), env.get("GITHUB_TRIGGERING_ACTOR", "")}
+    auth.require(all(helper.ACTOR_RE.fullmatch(actor) is not None for actor in actors))
+    mark("main-source")
+    auth.custody_main_source(trusted, revision)
+    auth.custody_helper_policy(trusted)
+    for repository, label in ((BOX, "main-Box-permission"), (LENS, "main-Lens-permission")):
+        mark(label)
+        for actor in sorted(actors):
+            permission = get(f"/repos/{repository}/collaborators/{quote(actor, safe='')}/permission", repository)
+            auth.require(type(permission) is dict and permission.get("permission") in helper.ALLOWED_ROLES)
+
+
 def repository_getter(helper, box_token, lens_token):
     """Select an explicit credential only for the two literal repository policies."""
     auth.require(type(box_token) is str and bool(box_token)
@@ -148,12 +173,18 @@ def main():
         parser.add_argument("--trusted-root", type=Path, required=True)
         parser.add_argument("--admission-root", type=Path, required=True)
         parser.add_argument("--admission-revision", required=True)
-        parser.add_argument("--box-pr", type=int, required=True)
-        parser.add_argument("--box-sha", required=True)
-        parser.add_argument("--lens-pr", type=int, required=True)
-        parser.add_argument("--lens-sha", required=True)
+        parser.add_argument("--box-pr", type=int)
+        parser.add_argument("--box-sha")
+        parser.add_argument("--lens-pr", type=int)
+        parser.add_argument("--lens-sha")
+        parser.add_argument("--main-mechanism", action="store_true")
+        parser.add_argument("--trusted-sha")
         args = parser.parse_args()
-        pair, _ = auth.authorize(args.trusted_root, args.box_pr, args.box_sha, args.lens_pr, args.lens_sha)
+        if args.main_mechanism:
+            auth.require(all(value is None for value in (args.box_pr, args.box_sha, args.lens_pr, args.lens_sha)))
+        else:
+            auth.require(args.trusted_sha is None)
+            pair, _ = auth.authorize(args.trusted_root, args.box_pr, args.box_sha, args.lens_pr, args.lens_sha)
         mark("workflow-pin")
         workflow = auth.read(args.trusted_root / ".github/workflows/reviewed-docker-consumer-validation.yml").decode()
         pins = re.findall(r"(?m)^  ADMISSION_REVISION: ([0-9a-f]{40})$", workflow)
@@ -163,7 +194,10 @@ def main():
         mark("context/Box-admission")
         get = repository_getter(helper, os.environ.get("GITHUB_TOKEN", ""),
                                 os.environ.get("DOCKERLENS_ADMISSION_TOKEN", ""))
-        admit_pair(os.environ, pair, helper, get, phase=mark)
+        if args.main_mechanism:
+            admit_main_mechanism(os.environ, args.trusted_root, args.trusted_sha, helper, get, phase=mark)
+        else:
+            admit_pair(os.environ, pair, helper, get, phase=mark)
     except Exception as error:
         print(failure_message(phase, error, helper), file=sys.stderr)
         return 1

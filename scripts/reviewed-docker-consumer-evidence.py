@@ -11,9 +11,11 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -326,7 +328,117 @@ def aggregate(root: Path, *, expected_context, pair, lens, files, box_files):
                       pair=pair, lens=lens, files=files, box_files=box_files)
 
 
+def validate_expiry_decision(value, *, owner_pid, owner_start, guard_pid, guard_start, guard_source):
+    auth.keys(value, ("schema", "decision", "owner_pid", "owner_start", "guard_pid", "guard_start",
+        "custody_sha256", "guard_source_sha256", "lease_binding_sha256", "lease_sequence", "lease_cutoff",
+        "lease_wall_cutoff", "execution_deadline", "cleanup_deadline", "decided_boottime", "decided_wall_ms",
+        "owner_alive", "cancelled"))
+    auth.require(type(value["schema"]) is int and value["schema"] == 1
+                 and value["decision"] == "guard-selected-lease-expiry"
+                 and value["owner_alive"] is True and value["cancelled"] is False
+                 and type(value["lease_sequence"]) is int and value["lease_sequence"] == 2)
+    for key, expected in (("owner_pid", owner_pid), ("owner_start", owner_start), ("guard_pid", guard_pid),
+                          ("guard_start", guard_start), ("guard_source_sha256", guard_source)):
+        auth.require(value[key] == expected)
+    for key in ("custody_sha256", "guard_source_sha256", "lease_binding_sha256"):
+        auth.sha(value[key])
+    for key in ("lease_wall_cutoff", "execution_deadline", "cleanup_deadline", "decided_wall_ms"):
+        auth.positive(value[key])
+    for key in ("lease_cutoff", "decided_boottime"):
+        auth.require(type(value[key]) in (int, float) and 0 < value[key] < value["cleanup_deadline"])
+    auth.require(value["lease_cutoff"] < value["execution_deadline"] < value["cleanup_deadline"]
+                 <= value["execution_deadline"] + 120
+                 and value["decided_boottime"] < value["execution_deadline"]
+                 and (value["decided_boottime"] >= value["lease_cutoff"]
+                      or value["decided_wall_ms"] >= value["lease_wall_cutoff"]))
+
+
+def validate_mechanism(value, *, trusted, revision, run_id, attempt, case, actors):
+    """A closed mechanism record cannot qualify a driver or application."""
+    auth.keys(value, ("schema", "scope", "result", "case", "context", "sdk", "observations",
+                      "applications_accepted", "full_driver", "target_recreation", "native_qualified"))
+    auth.require(type(value["schema"]) is int and value["schema"] == 1
+                 and value["scope"] == "paperless-custody-mechanism" and value["result"] == "checks-passed"
+                 and case in auth.CUSTODY_CASES and value["case"] == case
+                 and type(value["applications_accepted"]) is int and value["applications_accepted"] == 0
+                 and value["full_driver"] is False and value["target_recreation"] is False
+                 and value["native_qualified"] is False)
+    expected_box, _files = auth.custody_main_source(trusted, revision)
+    auth.require(value["sdk"] == auth.custody_helper_policy(trusted))
+    context_value = value["context"]
+    auth.keys(context_value, ("run_id", "attempt", "workflow_sha", "box", "actors", "checked_at", "job"))
+    auth.require(context_value["run_id"] == run_id and context_value["attempt"] == attempt
+                 and context_value["workflow_sha"] == revision and context_value["box"] == expected_box
+                 and context_value["job"] == "lanes")
+    auth.keys(context_value["actors"], ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"))
+    auth.require(context_value["actors"] == actors)
+    auth.require(all(type(actor) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", actor) is not None
+                     for actor in context_value["actors"].values()))
+    auth.require(type(context_value["checked_at"]) is int and context_value["checked_at"] > 0)
+    observed = value["observations"]
+    auth.keys(observed, ("owner_pid", "owner_start", "guard_pid", "guard_start", "inner_peer", "role_objects", "view", "callbacks",
+                        "close_before_removal", "owner_exited", "guard_exited", "core_absent", "storage_absent",
+                        "private_absent", "calls", "read_bytes", "calls_upper_bound", "read_bytes_upper_bound",
+                        "uncertain_attempt", "allowance_reused", "expiry_decision"))
+    for key in ("owner_pid", "owner_start", "guard_pid", "guard_start"):
+        auth.positive(observed[key])
+    auth.require(observed["owner_pid"] != observed["guard_pid"])
+    if case == "expiry":
+        validate_expiry_decision(observed["expiry_decision"], owner_pid=observed["owner_pid"],
+            owner_start=observed["owner_start"], guard_pid=observed["guard_pid"], guard_start=observed["guard_start"],
+            guard_source=context_value["box"]["files"]["scripts/lib/docker-application-contract.py"])
+    else:
+        auth.require(observed["expiry_decision"] is None)
+    auth.require(type(observed["callbacks"]) is list and 2 <= len(observed["callbacks"]) <= 4)
+    for callback in observed["callbacks"]:
+        auth.keys(callback, ("pid", "start", "sid"))
+        for integer in callback.values():
+            auth.positive(integer)
+        auth.require(callback["sid"] == observed["owner_pid"]
+                     and callback["pid"] not in {observed["owner_pid"], observed["guard_pid"]})
+    auth.require(len({callback["pid"] for callback in observed["callbacks"]}) == len(observed["callbacks"]))
+    auth.keys(observed["inner_peer"], ("pid", "start", "uid", "gid"))
+    for integer in observed["inner_peer"].values():
+        auth.positive(integer)
+    roles = ("data", "media", "consume", "export", "pgdata", "redisdata")
+    auth.keys(observed["role_objects"], roles)
+    for identity in observed["role_objects"].values():
+        auth.require(type(identity) is list and len(identity) == 2
+                     and all(type(item) is int and item > 0 for item in identity))
+    auth.require(len({tuple(identity) for identity in observed["role_objects"].values()}) == 6)
+    auth.keys(observed["view"], ("root", "user_namespace", "mount_namespace", "graph", "outer_graph"))
+    for identity in observed["view"].values():
+        auth.require(type(identity) is list and len(identity) == 2
+                     and all(type(item) is int and item > 0 for item in identity))
+    auth.require(observed["view"]["graph"] == observed["view"]["outer_graph"]
+                 and observed["view"]["graph"] not in observed["role_objects"].values())
+    auth.require(all(observed[key] is True for key in ("close_before_removal", "owner_exited", "guard_exited",
+                     "core_absent", "storage_absent", "private_absent")))
+    auth.require(type(observed["calls"]) is int and 0 < observed["calls"] <= 256
+                 and type(observed["read_bytes"]) is int and 0 < observed["read_bytes"] <= 16 * 1024 * 1024
+                 and type(observed["calls_upper_bound"]) is int
+                 and observed["calls"] <= observed["calls_upper_bound"] <= 256
+                 and type(observed["read_bytes_upper_bound"]) is int
+                 and observed["read_bytes"] <= observed["read_bytes_upper_bound"] <= 16 * 1024 * 1024
+                 and observed["uncertain_attempt"] is (case != "positive") and observed["allowance_reused"] is False)
+
+
 def main():
+    if "--mechanism" in sys.argv[1:]:
+        parser = argparse.ArgumentParser(description="Validate one main-only custody mechanism record")
+        parser.add_argument("--mechanism", action="store_true", required=True)
+        parser.add_argument("--trusted-root", type=Path, required=True)
+        parser.add_argument("--trusted-sha", required=True)
+        parser.add_argument("--artifacts", type=Path, required=True)
+        parser.add_argument("--run-id", required=True)
+        parser.add_argument("--attempt", required=True)
+        parser.add_argument("--case", choices=auth.CUSTODY_CASES, required=True)
+        args = parser.parse_args()
+        auth.require(set(path.name for path in args.artifacts.iterdir()) == {"mechanism.json"})
+        validate_mechanism(auth.document(args.artifacts / "mechanism.json", 128 * 1024),
+            trusted=args.trusted_root, revision=args.trusted_sha, run_id=args.run_id, attempt=args.attempt,
+            case=args.case, actors={name: os.environ.get(name, "") for name in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR")})
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("trusted-root", "box-root", "lens-root", "verifier-root", "artifacts", "bindings"):
         parser.add_argument("--" + name, type=Path, required=True)

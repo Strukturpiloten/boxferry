@@ -2,6 +2,10 @@
 name: Reviewed Docker pair admission and immediate revocation
 description: Trusted-job-only explicit read credentials with a mandatory revocation barrier.
 inputs:
+  source-kind:
+    description: Closed trusted-main mechanism or existing exact candidate pair.
+    default: candidate
+    required: false
   client-id:
     description: Existing release-plz App client ID reference.
     required: true
@@ -13,16 +17,16 @@ inputs:
     required: true
   box-pr:
     description: Authorized BoxFerry PR number.
-    required: true
+    required: false
   box-sha:
     description: Authorized BoxFerry head.
-    required: true
+    required: false
   lens-pr:
     description: Authorized DockerLens PR number.
-    required: true
+    required: false
   lens-sha:
     description: Authorized DockerLens head.
-    required: true
+    required: false
 outputs:
   checked-at:
     description: Last successful canonical admission time, before immediate revocation.
@@ -51,13 +55,21 @@ runs:
         BOX_SHA: ${{ inputs.box-sha }}
         LENS_PR: ${{ inputs.lens-pr }}
         LENS_SHA: ${{ inputs.lens-sha }}
+        SOURCE_KIND: ${{ inputs.source-kind }}
       run: |
         set -euo pipefail
         test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
-        python3 trusted/scripts/reviewed-docker-consumer-admission.py \
-          --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
-          --admission-revision "$ADMISSION_REVISION" \
-          --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+        arguments=(--trusted-root "$PWD/trusted" --admission-root "$PWD/admission"
+          --admission-revision "$ADMISSION_REVISION")
+        case "$SOURCE_KIND" in
+          candidate)
+            arguments+=(--box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA") ;;
+          trusted-main-mechanism)
+            test -z "$BOX_PR$BOX_SHA$LENS_PR$LENS_SHA"
+            arguments+=(--main-mechanism --trusted-sha "$GITHUB_SHA") ;;
+          *) exit 2 ;;
+        esac
+        python3 trusted/scripts/reviewed-docker-consumer-admission.py "${arguments[@]}"
         echo "checked_at=$(date +%s)" >> "$GITHUB_OUTPUT"
     - name: Immediately revoke DockerLens token including failed or cancelled admission
       id: revoke
