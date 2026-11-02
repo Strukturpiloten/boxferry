@@ -271,6 +271,63 @@ class DirectoryControls(unittest.TestCase):
         self.assertTrue(lease.closed)
         self.assertEqual(lease.fds, {})
 
+    def test_actual_old_atime_socket_acquires_all_handles_without_warming(self):
+        path = self.socket_directory / "docker.sock"
+        original = path.lstat()
+        os.utime(path, ns=(1_000_000_000, original.st_mtime_ns))
+        before = path.lstat()
+        lease = self.lease()
+        self.assertEqual(len(lease.fds), 17)
+        after = path.lstat()
+        self.assertEqual((before.st_dev, before.st_ino, before.st_mode, before.st_uid, before.st_gid,
+                          before.st_nlink, before.st_size, before.st_mtime_ns, before.st_ctime_ns),
+                         (after.st_dev, after.st_ino, after.st_mode, after.st_uid, after.st_gid,
+                          after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns))
+        lease.close()
+        self.assertTrue(lease.closed)
+        self.assertEqual(lease.fds, {})
+
+    def test_socket_security_field_change_after_connect_refuses(self):
+        fields = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink", "st_size",
+                  "st_mtime_ns", "st_ctime_ns")
+        path = self.socket_directory / "docker.sock"
+        original_lstat = pathlib.Path.lstat
+        for field in fields:
+            calls = 0
+            def changed(pathname, *arguments, **keywords):
+                nonlocal calls
+                info = original_lstat(pathname, *arguments, **keywords)
+                if pathname == path:
+                    calls += 1
+                    if calls == 2:
+                        values = {name: getattr(info, name) for name in fields}
+                        values[field] ^= 0o020 if field == "st_mode" else 1
+                        return types.SimpleNamespace(**values)
+                return info
+            with self.subTest(field=field), mock.patch.object(pathlib.Path, "lstat", new=changed):
+                with self.assertRaises(custody.Refused):
+                    self.lease()
+            self.assertEqual(calls, 2)
+
+    def test_replaced_socket_path_refuses_even_with_same_kernel_peer(self):
+        path = self.socket_directory / "docker.sock"
+        original_connect = socket.socket.connect
+        replaced = False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as replacement:
+            def connect(stream, address):
+                nonlocal replaced
+                result = original_connect(stream, address)
+                if address == str(path) and not replaced:
+                    path.rename(self.socket_directory / "original.sock")
+                    replacement.bind(str(path))
+                    replacement.listen(1)
+                    replaced = True
+                return result
+            with mock.patch.object(socket.socket, "connect", new=connect):
+                with self.assertRaises(custody.Refused):
+                    self.lease()
+        self.assertTrue(replaced)
+
     def test_partial_acquisition_closes_all_known_handles(self):
         self.role("redisdata").rename(self.role("redisdata").with_name("retained"))
         count = fd_count()
