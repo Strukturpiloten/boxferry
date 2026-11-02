@@ -5,6 +5,9 @@ set -Eeuo pipefail
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 bash "${script_directory}/test-application-probes-runner.sh"
 bash "${script_directory}/test-docker-paperless-application.sh"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-owner-recovery.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-paperless-volume-custody.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-paperless-custody-mechanism.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-expectations.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-application-expectations.py" check-sources
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-schedule.py"

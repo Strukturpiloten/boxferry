@@ -4,25 +4,48 @@ name: Reviewed Docker consumer validation
 on:
   workflow_dispatch:
     inputs:
+      task:
+        description: Closed volume consumer or main-only custody mechanism.
+        type: choice
+        default: volume-consumer
+        options: [volume-consumer, paperless-custody-mechanism]
+      mechanism_case:
+        description: Positive prerequisite first; later controls use independent original leases.
+        type: choice
+        default: positive
+        options:
+          [
+            positive,
+            replace-data,
+            replace-media,
+            replace-consume,
+            replace-export,
+            replace-pgdata,
+            replace-redisdata,
+            owner-loss,
+            guard-loss,
+            expiry,
+            lost-ack,
+          ]
       context_only:
         description: Verify only the real nested hosted caller context; no App credentials or candidate work.
         default: false
         type: boolean
       box_pr:
         description: Open same-repository BoxFerry PR authorized on trusted main.
-        required: true
+        required: false
         type: string
       box_sha:
         description: Full authorized current published BoxFerry head.
-        required: true
+        required: false
         type: string
       lens_pr:
         description: Open same-repository DockerLens PR authorized on trusted main.
-        required: true
+        required: false
         type: string
       lens_sha:
         description: Full authorized current published DockerLens head.
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -37,6 +60,8 @@ env:
   # Reviewed DockerLens #42 merge; unreleased shared CI helper, not a release pin.
   # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main
   ADMISSION_REVISION: c1b79d6af1b29f036b7704efc225fbd648e0b1cc
+  # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=TheRealBecks/issue172
+  CUSTODY_HELPER_REVISION: ec58b844a46c881ea175bccae85a049f609b43c1
   BOX_PR: ${{ inputs.box_pr }}
   BOX_SHA: ${{ inputs.box_sha }}
   LENS_PR: ${{ inputs.lens_pr }}
@@ -52,14 +77,14 @@ jobs:
       lane: upstream-rootless
       admission_revision: ""
       box_pr: ${{ inputs.box_pr }}
-      box_sha: ${{ inputs.box_sha }}
+      box_sha: ${{ inputs.task == 'paperless-custody-mechanism' && github.sha || inputs.box_sha }}
       lens_pr: ${{ inputs.lens_pr }}
-      lens_sha: ${{ inputs.lens_sha }}
+      lens_sha: ${{ inputs.task == 'paperless-custody-mechanism' && github.sha || inputs.lens_sha }}
 
   admission:
     name: Admit both exact reviewed published heads
     needs: context-smoke
-    if: inputs.context_only == false && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    if: inputs.context_only == false && inputs.task == 'volume-consumer' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -115,7 +140,7 @@ jobs:
   aggregate:
     name: Fresh trusted Docker consumer result
     needs: [admission, lanes]
-    if: always() && !inputs.context_only && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    if: always() && !inputs.context_only && inputs.task == 'volume-consumer' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -186,3 +211,106 @@ jobs:
           box-sha: ${{ inputs.box_sha }}
           lens-pr: ${{ inputs.lens_pr }}
           lens-sha: ${{ inputs.lens_sha }}
+
+  main-custody-admission:
+    name: Admit exact main-only custody source and real actors
+    needs: context-smoke
+    if: inputs.context_only == false && inputs.task == 'paperless-custody-mechanism' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      checked_at: ${{ steps.admit.outputs.checked-at }}
+      helper_sha: ${{ steps.source.outputs.helper_sha }}
+    steps:
+      - name: Check out exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out independently pinned permission helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ env.ADMISSION_REVISION }}
+          path: admission
+          persist-credentials: false
+      - name: Require only actual main source and the closed helper pin
+        id: source
+        run: |
+          set -euo pipefail
+          test -z "$BOX_PR$BOX_SHA$LENS_PR$LENS_SHA"
+          test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          value = json.loads(Path("trusted/.github/reviewed-paperless-custody-helpers.json").read_text())
+          assert value["revision"] == os.environ["CUSTODY_HELPER_REVISION"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("helper_sha=" + value["revision"] + "\n")
+          PYTHON
+      - name: Admit both real actors and immediately revoke read token
+        id: admit
+        uses: ./trusted/.github/actions/reviewed-docker-admission
+        with:
+          source-kind: trusted-main-mechanism
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          admission-revision: ${{ env.ADMISSION_REVISION }}
+
+  main-custody:
+    name: Fixed main-only custody / ${{ inputs.mechanism_case }}
+    needs: main-custody-admission
+    if: inputs.context_only == false && inputs.task == 'paperless-custody-mechanism'
+    uses: ./.github/workflows/reviewed-docker-consumer-worker.yml
+    with:
+      mode: mechanism
+      lane: upstream-rootless
+      box_pr: ""
+      box_sha: ${{ github.sha }}
+      lens_pr: ""
+      lens_sha: ${{ needs.main-custody-admission.outputs.helper_sha }}
+      case: ${{ inputs.mechanism_case }}
+      checked_at: ${{ needs.main-custody-admission.outputs.checked_at }}
+
+  main-custody-evidence:
+    name: Independently validate mechanism-only evidence
+    needs: main-custody
+    if: inputs.context_only == false && inputs.task == 'paperless-custody-mechanism' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out independently pinned permission helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ env.ADMISSION_REVISION }}
+          path: admission
+          persist-credentials: false
+      - name: Admit both real actors and immediately revoke read token
+        uses: ./trusted/.github/actions/reviewed-docker-admission
+        with:
+          source-kind: trusted-main-mechanism
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          admission-revision: ${{ env.ADMISSION_REVISION }}
+      - name: Download only the exact current mechanism record
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: paperless-custody-${{ inputs.mechanism_case }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mechanism-evidence
+          digest-mismatch: error
+      - name: Validate exact main run attempt actors and mechanism-only outcome
+        env:
+          CASE: ${{ inputs.mechanism_case }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/reviewed-docker-consumer-evidence.py --mechanism \
+            --trusted-root "$PWD/trusted" --trusted-sha "$GITHUB_SHA" --artifacts "$PWD/mechanism-evidence" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --case "$CASE"

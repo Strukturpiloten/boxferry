@@ -13,7 +13,9 @@ import re
 import secrets
 import selectors
 import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -197,7 +199,7 @@ def child_environment():
 
 
 def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 1024 * 1024,
-            cleanup_seconds=10, preserve_guard=False):
+            cleanup_seconds=10, preserve_guard=False, observe=None, accepted_statuses=(0,)):
     auth.require(seconds > 0)
     deadline = time.monotonic() + seconds
     failed = False
@@ -248,6 +250,8 @@ def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 10
                 selector.register(process.stdout, selectors.EVENT_READ)
                 total = 0
                 while selector.get_map() or not exited():
+                    if observe is not None:
+                        observe(process)
                     if cancelled is not None:
                         stop_work(cancellation=True)
                     if time.monotonic() >= deadline:
@@ -283,7 +287,7 @@ def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 10
             signal.signal(kind, handler)
     if cancellation_failure or (cancelled is not None and not failed and status == 0):
         raise SystemExit(128 + cancelled)
-    auth.require(not failed and status == 0)
+    auth.require(not failed and status in accepted_statuses)
     return auth.read(log, maximum)
 
 
@@ -447,6 +451,415 @@ def run(args):
     write(args.output / "volume-proof.json", volume)
 
 
+class CustodyObserver:
+    """Existing worker's read-only proof; never a holder or recovery authority."""
+
+    def __init__(self, module, private, lens, context, case):
+        self.module, self.c, self.private, self.lens = module, module.contract(), private, lens
+        self.context, self.case = context, case
+        self.owner = self.guard = self.cid = None
+        self.owner_fd = self.guard_fd = self.outer_fd = None
+        self.phase = self.calls = self.bytes = self.ack_calls = self.ack_bytes = 0
+        self.known_calls = self.known_bytes = 0
+        self.roles = None
+        self.closed_before_removal = False
+        self.observation = private / "observation"
+        self.observation.mkdir(mode=0o700)
+
+    def alive(self, fd):
+        return fd is not None and self.c.parent_alive(fd)
+
+    def uncertainty(self):
+        replacement = self.case.startswith("replace-") and not getattr(self, "replacement_observed", False)
+        check = self.case.startswith("replace-") or self.case == "lost-ack"
+        return (2 if replacement else 0) + (3 if check else 0), (2 * self.module.LIMIT if replacement else 0) + (
+            self.module.CHECK_BYTES if check else 0)
+
+    def charge(self, calls, size):
+        self.calls += calls
+        self.bytes += size
+        # A failed post-hold check can consume its entire original reservation;
+        # uncertainty never gives the observer a second allowance.
+        uncertain_calls, uncertain_bytes = self.uncertainty()
+        auth.require(self.known_calls + self.calls - self.ack_calls + uncertain_calls <= 256
+                     and self.known_bytes + self.bytes - self.ack_bytes + uncertain_bytes <= 16 * self.module.LIMIT)
+
+    def reserve(self, calls, size):
+        uncertain_calls, uncertain_bytes = self.uncertainty()
+        auth.require(self.known_calls + self.calls - self.ack_calls + uncertain_calls + calls <= 256
+                     and self.known_bytes + self.bytes - self.ack_bytes + uncertain_bytes + size <= 16 * self.module.LIMIT)
+
+    def read_phase(self, path):
+        raw = self.module.read_private(path)
+        self.charge(0, len(raw))
+        return json.loads(raw, object_pairs_hook=auth.no_duplicates)
+
+    def command(self, arguments):
+        """Only canonical preflight or exact previously retained presence reads."""
+        if arguments != ["preflight"]:
+            auth.require(self.owner is not None and len(arguments) == 3 and arguments[0] == "presence"
+                         and (arguments[1], arguments[2]) in {
+                             ("container", self.cid), ("container", self.owner["outer_name"]),
+                             ("volume", self.owner["volume_name"])})
+            auth.require(self.alive(self.outer_fd))
+            current = os.stat("/var/run/docker.sock")
+            auth.require((current.st_dev, current.st_ino) == self.outer_socket)
+        deadline = self.owner["cleanup_deadline"]
+        auth.require(self.c.owner_clock() + .1 < deadline)
+        maximum = self.module.LIMIT if arguments == ["preflight"] else 16
+        self.reserve(1, maximum + 1)
+        self.charge(1, 0)
+        process = subprocess.Popen(["bash", str(self.lens / "scripts/native-outer-command.sh"),
+            "--engine", "docker", "--directory", str(self.observation), *arguments],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=child_environment(), start_new_session=True)
+        raw = bytearray()
+        try:
+            os.set_blocking(process.stdout.fileno(), False)
+            with selectors.DefaultSelector() as poll:
+                poll.register(process.stdout, selectors.EVENT_READ)
+                eof = False
+                while not eof:
+                    auth.require(self.c.owner_clock() < deadline)
+                    for key, _event in poll.select(min(.1, max(.001, deadline - self.c.owner_clock()))):
+                        block = os.read(key.fd, min(65536, maximum + 1 - len(raw)))
+                        self.charge(0, len(block))
+                        if not block:
+                            eof = True
+                            break
+                        raw.extend(block)
+                        auth.require(len(raw) <= maximum)
+            status = process.wait(timeout=max(.001, deadline - self.c.owner_clock()))
+            auth.require(status in (0, 1) and (arguments == ["preflight"] or not raw))
+            return status, bytes(raw)
+        finally:
+            self.c.owner_command_quiescence(process, min(deadline, self.c.owner_clock() + 2))
+            process.wait(timeout=2)
+            process.stdout.close()
+
+    def object_identity(self, role):
+        auth.require(role in self.module.ROLES and self.owner is not None and self.cid is not None)
+        peer = self.inner_peer
+        pidfd = self.c.verified_parent_fd(peer["pid"], peer["start"])
+        rootfd = graphfd = rolefd = None
+        try:
+            auth.require(self.alive(pidfd))
+            # Same fixed intentional daemon proc-root transition as the holder;
+            # no setns, guest command, provider or retained directory capability.
+            rootfd = os.open(f"/proc/{peer['pid']}/root", self.fd_code.OPATH)
+            root = os.fstat(rootfd)
+            auth.require([root.st_dev, root.st_ino] == self.held_view["root"])
+            graphfd = self.fd_code.directory(rootfd, self.fd_code.GRAPH)
+            graph = os.fstat(graphfd)
+            auth.require([graph.st_dev, graph.st_ino] == self.held_view["graph"])
+            rolefd = self.fd_code.directory(graphfd, "volumes/" + self.owner["prefix"] + "-paper-" + role + "/_data")
+            current = os.fstat(rolefd)
+            auth.require(self.alive(pidfd))
+            for name, key in (("user", "user_namespace"), ("mnt", "mount_namespace")):
+                namespace = os.stat(f"/proc/{peer['pid']}/ns/{name}")
+                auth.require([namespace.st_dev, namespace.st_ino] == self.held_view[key])
+            return [current.st_dev, current.st_ino]
+        finally:
+            for fd in (rolefd, graphfd, rootfd, pidfd):
+                if fd is not None:
+                    os.close(fd)
+
+    def inventory(self, *, strict=False):
+        auth.require(self.guard is not None)
+        if not self.alive(self.guard_fd):
+            return {}
+        directory = Path(f"/proc/{self.guard['pid']}/fd")
+        self.reserve(0, 128 * 4096)
+        result = {}
+        objects = set()
+        with os.scandir(directory) as entries:
+            for index, entry in enumerate(entries):
+                auth.require(index < 128 and entry.name.isdigit())
+                try:
+                    target = os.readlink(directory / entry.name)
+                except FileNotFoundError:
+                    continue
+                self.charge(0, len(target.encode()))
+                auth.require(len(target.encode()) <= 4096)
+                try:
+                    metadata = os.stat(directory / entry.name)
+                except FileNotFoundError:
+                    continue
+                objects.add((metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)))
+                for role in self.module.ROLES:
+                    suffix = "/volumes/" + self.owner["prefix"] + "-paper-" + role + "/_data"
+                    if target.removesuffix(" (deleted)") == "/home/docker/.local/share/docker" + suffix:
+                        auth.require(stat.S_ISDIR(metadata.st_mode) and (not strict or role not in result))
+                        result.setdefault(role, [metadata.st_dev, metadata.st_ino])
+        self.last_fd_objects = objects
+        return result
+
+    def view(self, peer):
+        auth.keys(peer, ("pid", "start", "uid", "gid"))
+        for value in peer.values():
+            auth.positive(value)
+        socket_path = Path(self.owner["socket_directory"]) / "docker.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+            stream.settimeout(min(.2, max(.001, self.owner["execution_deadline"] - self.c.owner_clock())))
+            stream.connect(str(socket_path))
+            auth.require(struct.unpack("3i", stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                         == (peer["pid"], peer["uid"], peer["gid"]))
+        auth.require(self.c.process_start(peer["pid"]) == peer["start"])
+        paths = {"root": f"/proc/{peer['pid']}/root", "user_namespace": f"/proc/{peer['pid']}/ns/user",
+                 "mount_namespace": f"/proc/{peer['pid']}/ns/mnt",
+                 "graph": f"/proc/{peer['pid']}/root/home/docker/.local/share/docker",
+                 "outer_graph": self.owner["volume_path"]}
+        result = {}
+        for key, path in paths.items():
+            info = os.stat(path)
+            auth.require((info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)) in self.last_fd_objects)
+            result[key] = [info.st_dev, info.st_ino]
+        auth.require(result["graph"] == result["outer_graph"])
+        return result
+
+    def tick(self, process):
+        if self.owner_fd is None:
+            self.owner_start = self.c.process_start(process.pid)
+            self.owner_fd = self.c.verified_parent_fd(process.pid, self.owner_start)
+        path = self.private / f"phase-{self.phase}.json"
+        if path.exists():
+            row = self.read_phase(path)
+            auth.keys(row, ("stage", "owner", "custody_sha256", "guard", "cid", "case", "calls",
+                            "read_bytes", "callback_pids", "callbacks", "inner_peer"))
+            auth.require(row["case"] == self.case and row["owner"]["parent_pid"] == process.pid
+                         and row["owner"]["parent_start"] == self.owner_start and self.alive(self.owner_fd))
+            owner_path = Path(row["owner"]["directory"]) / "owner-custody.json"
+            owner = self.c.owner_read(owner_path, row["custody_sha256"])
+            auth.require(owner == row["owner"] and owner["guard_source_sha256"] ==
+                         self.context["box"]["files"]["scripts/lib/docker-application-contract.py"])
+            auth.require(type(row["calls"]) is int and 0 <= row["calls"] <= 256
+                         and type(row["read_bytes"]) is int and 0 <= row["read_bytes"] <= 16 * self.module.LIMIT)
+            auth.require(row["calls"] >= self.known_calls and row["read_bytes"] >= self.known_bytes)
+            self.known_calls, self.known_bytes = row["calls"], row["read_bytes"]
+            if self.owner is None:
+                auth.require(self.phase == 0 and row["stage"] == "prepared" and row["cid"] is None)
+                marker = self.read_phase(owner_path.parent / "owner-ready.json")
+                auth.require(marker == row["guard"] and marker["custody_sha256"] == row["custody_sha256"])
+                self.guard_fd = self.c.verified_parent_fd(marker["pid"], marker["start"])
+                auth.require(self.alive(self.guard_fd) and os.getsid(marker["pid"]) == marker["pid"]
+                             and os.getsid(process.pid) == process.pid)
+                auth.require(Path(f"/proc/{marker['pid']}/cmdline").read_bytes().split(b"\0")[:-1]
+                             == [os.fsencode(arg) for arg in self.c.owner_guard_command(owner, owner_path, row["custody_sha256"])])
+                self.owner, self.guard = owner, marker
+                self.custody_sha = row["custody_sha256"]
+                self.fd_code = self.c.owner_paperless_module(owner)
+                original = self.read_phase(owner_path.parent / "outer-runtime.json")
+                status, _raw = self.command(["preflight"])
+                auth.require(status == 0)
+                fresh = self.read_phase(self.observation / "outer-runtime.json")
+                auth.require(original["peer"] == fresh["peer"] and original["storage_root"] == fresh["storage_root"] == owner["graph_root"])
+                peer = fresh["peer"]
+                self.outer_fd = self.c.verified_parent_fd(peer["daemon_pid"], peer["daemon_starttime"])
+                self.outer_socket = (peer["socket_device"], peer["socket_inode"])
+                auth.require(self.alive(self.outer_fd))
+            else:
+                auth.require(owner == self.owner and row["guard"] == self.guard)
+                if row["stage"] == "held":
+                    auth.require(self.phase == 1 and self.alive(self.guard_fd))
+                    self.cid = self.c.owner_cid(owner)
+                    auth.require(self.cid is not None and row["cid"] == self.cid)
+                    auth.require(self.command(["presence", "container", self.cid])[0] == 0)
+                    self.roles = self.inventory(strict=True)
+                    auth.require(set(self.roles) == set(self.module.ROLES)
+                                 and len({tuple(value) for value in self.roles.values()}) == 6
+                                 and len(set(row["callback_pids"])) == 2)
+                    self.inner_peer = row["inner_peer"]
+                    self.held_view = self.view(self.inner_peer)
+                    auth.require(all(self.object_identity(role) == self.roles[role] for role in self.module.ROLES))
+                    lease = self.read_phase(owner_path.parent / "paperless-transport/binding.json")
+                    auth.require(lease["owner"] == owner and lease["arguments"]["custody_sha256"] == row["custody_sha256"]
+                                 and type(lease["cutoff"]) in (int, float)
+                                 and self.c.owner_clock() < lease["cutoff"] <= owner["execution_deadline"])
+                    self.lease_cutoff = lease["cutoff"]
+                    self.lease_binding_hash = hashlib.sha256(self.module.encoded(lease)).hexdigest()
+                    if self.case == "expiry":
+                        self.reserve(0, 128 * 1024 + 8192)
+                        manifest_path = Path(lease["arguments"]["manifest_path"])
+                        auth.require(manifest_path.parent.parent == owner_path.parent and manifest_path.name == "manifest.json")
+                        manifest_raw = self.module.read_private(manifest_path)
+                        self.charge(0, len(manifest_raw))
+                        auth.require(hashlib.sha256(manifest_raw).hexdigest() == lease["arguments"]["manifest_sha256"])
+                        self.lease_wall_cutoff = json.loads(manifest_raw, object_pairs_hook=auth.no_duplicates)["config"]["work_deadline_ms"]
+                        auth.positive(self.lease_wall_cutoff)
+                        auth.require(not os.path.lexists(self.c.owner_expiry_observation_path(owner)))
+                        auth.require(not os.path.lexists(str(self.c.owner_expiry_observation_path(owner)) + ".pending"))
+                    self.callbacks = row["callbacks"]
+                elif row["stage"] == "replaced":
+                    auth.require(self.case.startswith("replace-") and self.phase == 2
+                                 and self.roles is not None and self.alive(self.guard_fd))
+                    role = self.case.removeprefix("replace-")
+                    auth.require(self.inventory(strict=True) == self.roles
+                                 and self.object_identity(role) != self.roles[role])
+                    self.replacement_observed = True
+                else:
+                    auth.require(row["stage"] == "closed" and self.phase == 2 and self.roles is not None)
+                    auth.require(not self.inventory() and self.command(["presence", "container", self.cid])[0] == 0)
+                    self.closed_before_removal = True
+                    self.callbacks = row["callbacks"]
+            self.module.write_new(self.private / f"ack-{self.phase}.json", {"stage": row["stage"],
+                "calls": self.calls - self.ack_calls, "read_bytes": self.bytes - self.ack_bytes})
+            self.ack_calls, self.ack_bytes = self.calls, self.bytes
+            self.phase += 1
+        elif self.roles is not None and not self.closed_before_removal and self.case not in {"positive", "guard-loss"}:
+            if not self.inventory() and self.command(["presence", "container", self.cid])[0] == 0:
+                self.closed_before_removal = True
+
+    def expiry_observation(self):
+        # Only the previously authenticated original guard can produce this
+        # fixed private observation. A late verifier clock is never evidence.
+        self.reserve(0, 8192)
+        path = self.c.owner_expiry_observation_path(self.owner)
+        before = path.lstat()
+        raw = self.module.read_private(path, maximum=4096)
+        self.charge(0, 2 * len(raw))  # Original guard write plus this verifier read.
+        decision = json.loads(raw, object_pairs_hook=auth.no_duplicates)
+        proof.validate_expiry_decision(decision, owner_pid=self.owner["parent_pid"],
+            owner_start=self.owner["parent_start"], guard_pid=self.guard["pid"], guard_start=self.guard["start"],
+            guard_source=self.owner["guard_source_sha256"])
+        for key, expected in (("custody_sha256", self.custody_sha), ("lease_binding_sha256", self.lease_binding_hash),
+                ("lease_cutoff", self.lease_cutoff), ("lease_wall_cutoff", self.lease_wall_cutoff),
+                ("execution_deadline", self.owner["execution_deadline"]), ("cleanup_deadline", self.owner["cleanup_deadline"])):
+            auth.require(decision[key] == expected)
+        auth.require(before == path.lstat())
+        self.expiry_decision = decision  # Retain bounded validated data before disposal.
+        # Remove only this exact observation data, never a runtime resource.
+        auth.require(before == path.lstat())
+        path.unlink()
+        auth.require(not os.path.lexists(path))
+        return decision
+
+    def finish(self):
+        auth.require(self.owner is not None and self.cid is not None and self.roles is not None)
+        while self.alive(self.guard_fd):
+            auth.require(self.c.owner_clock() < self.owner["cleanup_deadline"])
+            if not self.closed_before_removal and not self.inventory():
+                self.closed_before_removal = self.command(["presence", "container", self.cid])[0] == 0
+            time.sleep(.01)
+        auth.require(not self.alive(self.owner_fd) and self.closed_before_removal and not self.inventory())
+        auth.require(not self.case.startswith("replace-") or getattr(self, "replacement_observed", False))
+        expiry_decision = self.expiry_observation() if self.case == "expiry" else None
+        if self.case.startswith("replace-") or self.case == "lost-ack":
+            request = self.read_phase(self.private / "request-2.json")
+            auth.keys(request, ("phase", "sequence", "owner_pid", "owner_start", "pid", "start", "sid",
+                                "sent_boottime", "binding_sha256", "challenge_sha256"))
+            auth.require(request["phase"] == "paperless-check" and request["sequence"] == 2
+                         and request["owner_pid"] == self.owner["parent_pid"]
+                         and request["owner_start"] == self.owner["parent_start"] and request["sid"] == self.owner["parent_pid"]
+                         and request["binding_sha256"] == self.lease_binding_hash
+                         and type(request["sent_boottime"]) in (int, float)
+                         and 0 < request["sent_boottime"] < self.owner["execution_deadline"])
+            auth.positive(request["pid"])
+            auth.positive(request["start"])
+            auth.sha(request["challenge_sha256"])
+        if self.case == "lost-ack":
+            control = self.read_phase(self.private / "lost-ack.json")
+            auth.keys(control, ("phase", "owner_pid", "owner_start", "pid", "start", "sid", "sequence",
+                                "binding_sha256", "challenge_sha256"))
+            auth.require(control["phase"] == "paperless-check" and control["owner_pid"] == self.owner["parent_pid"]
+                         and control["owner_start"] == self.owner["parent_start"] and control["sid"] == self.owner["parent_pid"]
+                         and control["sequence"] == 3 and control["binding_sha256"] == self.lease_binding_hash)
+            auth.positive(control["pid"])
+            auth.positive(control["start"])
+            auth.sha(control["challenge_sha256"])
+        for kind, identity in (("container", self.cid), ("container", self.owner["outer_name"]), ("volume", self.owner["volume_name"])):
+            auth.require(self.command(["presence", kind, identity])[0] == 1)
+        auth.require(not os.path.lexists(self.owner["directory"]))
+        result_path = self.private / "result.json"
+        if self.case in {"positive", "guard-loss"}:
+            result = self.read_phase(result_path)
+            auth.require(result["case"] == self.case)
+            self.known_calls, self.known_bytes = result["calls"], result["read_bytes"]
+            self.callbacks = result["callbacks"]
+        upper_calls, upper_bytes = self.uncertainty()
+        return {"owner_pid": self.owner["parent_pid"], "owner_start": self.owner["parent_start"],
+            "guard_pid": self.guard["pid"], "guard_start": self.guard["start"], "inner_peer": self.inner_peer,
+            "role_objects": self.roles, "view": self.held_view, "callbacks": self.callbacks, "close_before_removal": True, "owner_exited": True, "guard_exited": True,
+            "core_absent": True, "storage_absent": True, "private_absent": True,
+            "calls": self.known_calls + self.calls - self.ack_calls,
+            "read_bytes": self.known_bytes + self.bytes - self.ack_bytes,
+            "calls_upper_bound": self.known_calls + self.calls - self.ack_calls + upper_calls,
+            "read_bytes_upper_bound": self.known_bytes + self.bytes - self.ack_bytes + upper_bytes,
+            "uncertain_attempt": self.case != "positive", "allowance_reused": False, "expiry_decision": expiry_decision}
+
+    def close(self):
+        for fd in (self.owner_fd, self.guard_fd, self.outer_fd):
+            if fd is not None:
+                os.close(fd)
+
+
+def mechanism(args):
+    runtime_environment(os.environ, require_docker=True)
+    auth.require(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+                 and args.box_sha == args.trusted_sha == os.environ.get("GITHUB_SHA")
+                 and args.trusted_sha == os.environ.get("GITHUB_WORKFLOW_SHA")
+                 and args.box_root == args.trusted_root
+                 and str(args.run_id) == os.environ.get("GITHUB_RUN_ID")
+                 and str(args.attempt) == os.environ.get("GITHUB_RUN_ATTEMPT")
+                 and args.box_pr is None and args.lens_pr is None and args.build_artifact_id is None
+                 and args.case in auth.CUSTODY_CASES and args.lane == "upstream-rootless"
+                 and not os.environ.get("GITHUB_TOKEN") and not os.environ.get("GH_TOKEN"))
+    box, sdk, files = auth.custody_sources(args.trusted_root, args.lens_root, args.trusted_sha)
+    auth.require(args.lens_sha == sdk["revision"])
+    auth.copy_closure(files, args.execution_root)
+    args.private.mkdir(mode=0o700)
+    actors = {name: os.environ.get(name, "") for name in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR")}
+    auth.require(all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", value) is not None for value in actors.values())
+                 and args.checked_at is not None and 0 <= time.time() - args.checked_at <= 300)
+    context = {"run_id": str(args.run_id), "attempt": str(args.attempt), "workflow_sha": args.trusted_sha,
+               "box": box, "actors": actors, "checked_at": args.checked_at, "job": os.environ["GITHUB_JOB"]}
+    binding = {"schema": 1, "scope": "paperless-custody-mechanism", "case": args.case,
+               "box": box, "sdk": sdk, "sdk_root": str(args.lens_root), "context": context}
+    path = args.private / "mechanism-binding.json"
+    write(path, binding)
+    source = args.execution_root / auth.CUSTODY_LAUNCHER
+    spec = importlib.util.spec_from_file_location("held_main_custody_mechanism", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    observer = CustodyObserver(module, args.private, args.lens_root, context, args.case)
+    args.output.mkdir(mode=0o700)
+    try:
+        execute([sys.executable, str(source), "run", "--binding", str(path)], root=args.execution_root,
+                log=args.private / "mechanism.log", seconds=900, cleanup_seconds=125, preserve_guard=True,
+                observe=observer.tick, accepted_statuses=(0,) if args.case in {"positive", "guard-loss"} else (-signal.SIGKILL,))
+        observations = observer.finish()
+        auth.custody_sources(args.trusted_root, args.lens_root, args.trusted_sha)
+        for name, raw in files.items():
+            auth.require(auth.read(args.execution_root / name) == raw)
+        value = {"schema": 1, "scope": "paperless-custody-mechanism", "result": "checks-passed",
+                 "case": args.case, "context": context, "sdk": sdk, "observations": observations,
+                 "applications_accepted": 0, "full_driver": False, "target_recreation": False,
+                 "native_qualified": False}
+        proof.validate_mechanism(value, trusted=args.trusted_root, revision=args.trusted_sha,
+                                 run_id=str(args.run_id), attempt=str(args.attempt), case=args.case, actors=actors)
+        write(args.output / "mechanism.json", value)
+    except BaseException:
+        # Only already retained identities are reported. A partial journal is
+        # never promoted to custody or permission for worker-side teardown.
+        owner = observer.owner or {}
+        guard = observer.guard or {}
+        failure = {"schema": 1, "scope": "paperless-custody-mechanism", "result": "refused",
+            "case": args.case, "context": context, "sdk": sdk, "applications_accepted": 0,
+            "full_driver": False, "target_recreation": False, "native_qualified": False,
+            "residuals": {"verification": "incomplete", "last_verified_phase": observer.phase,
+                "owner_pid": owner.get("parent_pid"), "owner_start": owner.get("parent_start"),
+                "guard_pid": guard.get("pid"), "guard_start": guard.get("start"), "core_id": observer.cid,
+                "core_name": owner.get("outer_name"), "storage_name": owner.get("volume_name"),
+                "private_directory": owner.get("directory"),
+                "expiry_observation": str(observer.c.owner_expiry_observation_path(owner)) if owner else None,
+                "expiry_observation_pending": str(observer.c.owner_expiry_observation_path(owner)) + ".pending" if owner else None,
+                "worker_teardown_authority": False}}
+        if not (args.output / "mechanism.json").exists():
+            write(args.output / "mechanism.json", failure)
+        raise
+    finally:
+        observer.close()
+
+
 class ClosedArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError("rejected") from None
@@ -454,17 +867,21 @@ class ClosedArgumentParser(argparse.ArgumentParser):
 
 def arguments():
     parser = ClosedArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("build", "run"))
+    parser.add_argument("command", choices=("build", "run", "mechanism"))
     for name in ("trusted-root", "box-root", "lens-root", "execution-root", "private"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("box-pr", "lens-pr", "run-id", "attempt"):
+    for name in ("run-id", "attempt"):
         parser.add_argument("--" + name, type=int, required=True)
+    for name in ("box-pr", "lens-pr"):
+        parser.add_argument("--" + name, type=int)
     for name in ("box-sha", "lens-sha", "trusted-sha"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--lane", choices=auth.LANES)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--bundle-root", type=Path, required=True)
     parser.add_argument("--build-artifact-id")
+    parser.add_argument("--case", choices=auth.CUSTODY_CASES)
+    parser.add_argument("--checked-at", type=int)
     return parser.parse_args()
 
 
@@ -483,10 +900,15 @@ def main():
 
     try:
         args = arguments()
-        if args.command == "build":
+        if args.command == "mechanism":
+            auth.require(args.output is not None)
+            mechanism(args)
+        elif args.command == "build":
+            auth.require(args.case is None and args.checked_at is None)
             auth.require(args.lane in auth.LANES and args.output is None and args.build_artifact_id is None)
             build(args, phase=mark)
         else:
+            auth.require(args.case is None and args.checked_at is None)
             auth.require(args.lane is not None and args.output is not None and args.build_artifact_id is not None)
             mark("native-runtime")
             run(args)

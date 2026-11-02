@@ -338,7 +338,11 @@ fn validate_reviewed_docker_credential_isolation(sources: &[String; 4], release_
         return Err("Docker admission must reuse the current canonical release-plz App Action pin".to_owned());
     }
     let admission = "uses: ./trusted/.github/actions/reviewed-docker-admission";
-    if dispatcher.matches(admission).count() != 2 || lane.matches(admission).count() != 2 {
+    let candidate_dispatcher = dispatcher
+        .split("\n  main-custody-admission:\n")
+        .next()
+        .unwrap_or(dispatcher);
+    if candidate_dispatcher.matches(admission).count() != 2 || lane.matches(admission).count() != 2 {
         return Err("Docker consumer must retain ten isolated admissions across four lanes".to_owned());
     }
     for required in [
@@ -349,7 +353,7 @@ fn validate_reviewed_docker_credential_isolation(sources: &[String; 4], release_
         "--bindings \"$PWD/bindings\"",
         "      context_only: true",
     ] {
-        if !dispatcher.contains(required) {
+        if !candidate_dispatcher.contains(required) {
             return Err(format!("Docker dispatcher lacks isolation contract `{required}`"));
         }
     }
@@ -491,6 +495,102 @@ fn reviewed_docker_app_credentials_are_isolated_from_candidate_jobs() -> Result<
         return Err("Docker admission App pin must stay synchronized with canonical release-plz".to_owned());
     }
     validate_reviewed_docker_credential_isolation(&advanced, &release_plz.replacen(canonical, &future, 1))?;
+    Ok(())
+}
+
+fn validate_main_custody_workflow(dispatcher: &str, worker: &str, helper_revision: &str) -> Result<(), String> {
+    let main = dispatcher
+        .split_once("\n  main-custody-admission:\n")
+        .ok_or("Docker dispatcher lacks separate trusted-main admission")?
+        .1;
+    for required in [
+        "options: [volume-consumer, paperless-custody-mechanism]",
+        "inputs.task == 'volume-consumer'",
+        &format!("CUSTODY_HELPER_REVISION: {helper_revision}"),
+    ] {
+        if !dispatcher.contains(required) {
+            return Err(format!("Docker main mechanism lacks dispatcher contract `{required}`"));
+        }
+    }
+    for required in [
+        "needs: context-smoke",
+        "needs: main-custody-admission",
+        "needs: main-custody",
+        "mode: mechanism",
+        "box_sha: ${{ github.sha }}",
+        "checked_at: ${{ needs.main-custody-admission.outputs.checked_at }}",
+        "--trusted-sha \"$GITHUB_SHA\"",
+        "--case \"$CASE\"",
+    ] {
+        if !main.contains(required) {
+            return Err(format!("Docker main mechanism lacks exact-source barrier `{required}`"));
+        }
+    }
+    if main.matches("source-kind: trusted-main-mechanism").count() != 2
+        || main.matches("inputs.task == 'paperless-custody-mechanism'").count() != 3
+        || main.contains("continue-on-error:")
+        || main.contains("secrets: inherit")
+    {
+        return Err("Docker main mechanism must retain two isolated admissions and three closed jobs".to_owned());
+    }
+    for required in [
+        "if: inputs.mode == 'mechanism'",
+        "sudo env -i",
+        "--box-root \"$PWD/trusted\"",
+        "GITHUB_SHA=\"$GITHUB_SHA\" GITHUB_WORKFLOW_SHA=\"$GITHUB_WORKFLOW_SHA\"",
+        "GITHUB_ACTOR=\"$GITHUB_ACTOR\" GITHUB_TRIGGERING_ACTOR=\"$GITHUB_TRIGGERING_ACTOR\"",
+        "--lane upstream-rootless --case \"$CUSTODY_CASE\" --checked-at \"$CUSTODY_CHECKED_AT\"",
+        "path: staged/custody/mechanism.json",
+    ] {
+        if !worker.contains(required) {
+            return Err(format!("Docker main mechanism lacks fixed worker barrier `{required}`"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn trusted_main_custody_keeps_exact_source_and_independent_admissions() -> Result<(), String> {
+    let root = repository_root();
+    let dispatcher = fs::read_to_string(root.join(".github/workflows/reviewed-docker-consumer-validation.yml"))
+        .map_err(|error| error.to_string())?;
+    let worker = fs::read_to_string(root.join(".github/workflows/reviewed-docker-consumer-worker.yml"))
+        .map_err(|error| error.to_string())?;
+    let integrity: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".github/reviewed-paperless-custody-helpers.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let revision = integrity["revision"]
+        .as_str()
+        .ok_or("custody helper integrity lacks revision")?;
+    validate_main_custody_workflow(&dispatcher, &worker, revision)?;
+    for (before, after) in [
+        ("needs: main-custody-admission", "needs: []"),
+        ("source-kind: trusted-main-mechanism", "source-kind: candidate"),
+        ("box_sha: ${{ github.sha }}", "box_sha: ${{ inputs.box_sha }}"),
+        (
+            "checked_at: ${{ needs.main-custody-admission.outputs.checked_at }}",
+            "checked_at: stale",
+        ),
+        ("--trusted-sha \"$GITHUB_SHA\"", "--trusted-sha feature"),
+        ("CUSTODY_HELPER_REVISION:", "UNREVIEWED_HELPER_REVISION:"),
+    ] {
+        let changed = dispatcher.replace(before, after);
+        if changed == dispatcher || validate_main_custody_workflow(&changed, &worker, revision).is_ok() {
+            return Err(format!("Docker main mechanism accepted dispatcher mutation `{before}`"));
+        }
+    }
+    for before in [
+        "--box-root \"$PWD/trusted\"",
+        "GITHUB_SHA=\"$GITHUB_SHA\" GITHUB_WORKFLOW_SHA=\"$GITHUB_WORKFLOW_SHA\"",
+        "--lane upstream-rootless --case \"$CUSTODY_CASE\" --checked-at \"$CUSTODY_CHECKED_AT\"",
+    ] {
+        let changed = worker.replace(before, "removed barrier");
+        if changed == worker || validate_main_custody_workflow(&dispatcher, &changed, revision).is_ok() {
+            return Err(format!("Docker main mechanism accepted worker mutation `{before}`"));
+        }
+    }
     Ok(())
 }
 

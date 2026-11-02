@@ -738,9 +738,17 @@ def signal_parent(pid: int, start: int) -> None:
         os.close(fd)
 
 
-def guard_parent(pid: int, start: int, execution_seconds: int, cleanup_seconds: int,
-                 ready_file: str | None = None) -> None:
-    require(0 < execution_seconds <= 780 and 0 < cleanup_seconds <= 120,
+def guard_parent(pid: int, start: int, execution_seconds: int | None, cleanup_seconds: int | None,
+                 ready_file: str | None = None, *, owner_custody: pathlib.Path | None = None,
+                 owner_custody_sha256: str | None = None) -> None:
+    if owner_custody is not None:
+        require(execution_seconds is None and cleanup_seconds is None and ready_file is None
+                and owner_custody_sha256 is not None, "owner guard cannot renew relative budgets")
+        guard_owner_parent(pid, start, owner_custody, owner_custody_sha256)
+        return
+    require(owner_custody_sha256 is None, "owner guard binding is incomplete")
+    require(type(execution_seconds) is int and type(cleanup_seconds) is int
+            and 0 < execution_seconds <= 780 and 0 < cleanup_seconds <= 120,
             "parent execution budget is invalid")
     fd = verified_parent_fd(pid, start)
     try:
@@ -773,6 +781,940 @@ def guard_parent(pid: int, start: int, execution_seconds: int, cleanup_seconds: 
             pass
     finally:
         os.close(fd)
+
+
+# Finite whole-owner recovery; only the closed trusted-main test selects Paperless custody.
+OWNER_FIELDS = frozenset({
+    "parent_pid", "parent_start", "execution_deadline", "cleanup_deadline", "guard_source_sha256",
+    "directory", "directory_identity", "helper_closure", "engine", "lane", "context", "run", "prefix",
+    "outer_name", "outer_run", "outer_owner", "outer_image", "volume_name", "volume_path", "graph_root",
+    "socket_directory", "socket_identity", "guest_directory", "fixture_root", "runner_profile", "cid_file",
+})
+OWNER_LIMIT = 1_048_576
+PAPERLESS_SOURCES = (
+    "scripts/lib/docker-paperless-transport.py", "scripts/lib/docker-application-contract.py",
+    "scripts/lib/docker-paperless-volume-custody.py",
+    "scripts/lib/docker-core-artifact.py", "scripts/lib/docker-application-schedule.py",
+    "scripts/lib/docker-application-expectations.py", "scripts/lib/docker-paperless-application.sh",
+    "scripts/lib/paperless-application.sh", "scripts/lib/paperless-application-probes.sh",
+    "fixtures/conformance/docker-application/expected-applications.json",
+    "fixtures/conformance/paperless-ngx-application/compose.yaml",
+    "fixtures/conformance/paperless-ngx-application/images.tsv",
+    "fixtures/conformance/paperless-ngx-application/providers.tsv",
+    "fixtures/conformance/paperless-ngx-application/document-probe.py",
+)
+
+
+def owner_paperless_root(value: dict[str, Any]) -> None:
+    """Require original whole-owner authority before any new custody I/O."""
+    require(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0,
+            "Paperless requires root whole-owner custody")
+    require(os.stat("/proc/self/ns/user") == os.stat("/proc/1/ns/user")
+            and pathlib.Path("/proc/self/uid_map").read_text().split() == ["0", "0", "4294967295"],
+            "Paperless requires original host user authority")
+
+
+def owner_paperless_parent_root(value: dict[str, Any]) -> None:
+    """Admit the live root parent before creation, never rediscover it in recovery."""
+    parent_status = pathlib.Path(f"/proc/{value['parent_pid']}/status").read_text().splitlines()
+    require(all(next(line for line in parent_status if line.startswith(key)).split()[1:] == ["0"] * 4
+                for key in ("Uid:", "Gid:")), "Paperless original owner is not root")
+
+
+def owner_paperless_sources(value: dict[str, Any]) -> bytes:
+    """Original root-owner sealed authority, never a callback hash authority."""
+    owner_paperless_root(value)
+    require(value["lane"] == "upstream-rootless"
+            and value["fixture_root"] == "/tmp/boxferry-fixture/" + value["prefix"],
+            "Paperless owner context differs")
+    sources = value.get("paperless_sources")
+    require(type(sources) is dict and set(sources) == set(PAPERLESS_SOURCES),
+            "Paperless original source closure differs")
+    held = None
+    for name in PAPERLESS_SOURCES:
+        expected = sources[name]
+        require(type(expected) is str and DIGEST_PATTERN.fullmatch(expected) is not None,
+                "Paperless original source digest differs")
+        raw = bounded_regular_bytes(REPOSITORY_ROOT / name, OWNER_LIMIT)
+        require(hashlib.sha256(raw).hexdigest() == expected, "Paperless original source changed")
+        if name == "scripts/lib/docker-paperless-volume-custody.py":
+            held = raw
+    require(held is not None, "Paperless custody source missing")
+    return held
+
+
+def owner_paperless_module(value: dict[str, Any]):
+    # Compile exactly the authenticated retained bytes; no second pathname read
+    # and no import-time opportunity for callback-supplied code authority.
+    import types
+    raw = owner_paperless_sources(value)
+    module = types.ModuleType("held_paperless_volume_custody")
+    exec(compile(raw, "held-paperless-volume-custody", "exec"), module.__dict__)
+    return module
+OWNER_FIXTURE_CHECK = r'''
+set -eu
+fixture=$1
+[ -d /tmp ] && [ ! -L /tmp ]
+[ "$(stat -c %d /)" = "$(stat -c %d /tmp)" ]
+if [ -e "$fixture" ] || [ -L "$fixture" ]; then
+  [ "$2" = bound ] && [ -d "$fixture" ] && [ ! -L "$fixture" ]
+  [ "$(stat -c %d /tmp)" = "$(stat -c %d "$fixture")" ]
+fi
+while read -r a b c d mount rest; do
+  case "$mount" in /tmp|"$fixture"|"$fixture/"*) exit 1 ;; esac
+done < /proc/self/mountinfo
+'''
+OWNER_PAPERLESS_FIXTURE_CHECK = r'''
+set -eu
+fixture=$1
+[ -d /tmp ] && [ ! -L /tmp ]
+[ "$(stat -c %d /)" = "$(stat -c %d /tmp)" ]
+[ "$(stat -c %u /tmp)" = 0 ]
+tmpmode=$(stat -c %a /tmp)
+[ "$((0$tmpmode & 0022))" = 0 ] || [ "$((0$tmpmode & 01000))" != 0 ]
+parent=/tmp/boxferry-fixture
+for path in "$parent" "$fixture"; do
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    [ -d "$path" ] && [ ! -L "$path" ]
+    [ "$(stat -c %d /tmp)" = "$(stat -c %d "$path")" ]
+    [ "$(stat -c %u "$path")" = 0 ]
+    mode=$(stat -c %a "$path")
+    [ "$((0$mode & 0022))" = 0 ]
+    if [ "$path" = "$fixture" ]; then [ "$2" = bound ]; fi
+  else
+    [ "$2" = new ]
+  fi
+done
+while read -r b c d root mount rest; do
+  case "$mount" in /tmp|"$parent"|"$parent/"*) exit 1 ;; esac
+done < /proc/self/mountinfo
+'''
+
+
+def owner_clock() -> float:
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def owner_private(path: pathlib.Path, *, directory: bool = False) -> os.stat_result:
+    require(path.is_absolute() and path.resolve(strict=True) == path, "owner private path differs")
+    info = path.lstat()
+    require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == (0o700 if directory else 0o600)
+            and (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1),
+            "owner private custody differs")
+    return info
+
+
+def owner_socket_directory(value: dict[str, Any]) -> os.stat_result:
+    path = pathlib.Path(value["socket_directory"])
+    if "paperless_sources" not in value:
+        return owner_private(path, directory=True)
+    # The actual outer-run parent was authenticated by outer_run_directory.
+    # Its 0700 host boundary protects the canonical nested 0777 bind directory
+    # that the inner UID1000 daemon must be able to write. No permission repair.
+    owner_paperless_root(value)
+    require(path.is_absolute() and path.resolve(strict=True) == path, "owner socket path differs")
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+            and stat.S_IMODE(info.st_mode) == 0o777, "owner Paperless socket custody differs")
+    return info
+
+
+def owner_save(path: pathlib.Path, value: dict[str, Any]) -> None:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    require(len(raw) <= 16_384, "owner record exceeds bound")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(raw)
+        output.flush()
+        os.fsync(output.fileno())
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def owner_validate(value: dict[str, Any]) -> list[str]:
+    require(type(value) is dict and set(value) in (OWNER_FIELDS, OWNER_FIELDS | {"paperless_sources"}),
+            "owner custody fields differ")
+    require(all(type(value[key]) is int and value[key] > 0 for key in
+                ("parent_pid", "parent_start", "execution_deadline", "cleanup_deadline")), "owner clock or parent differs")
+    require(value["execution_deadline"] < value["cleanup_deadline"] <= value["execution_deadline"] + 600,
+            "owner original cutoffs differ")
+    require(value["engine"] in {"podman", "docker"} and value["lane"] in {"upstream-rootful", "upstream-rootless"},
+            "owner runtime selection differs")
+    require(all(type(value[key]) is str for key in OWNER_FIELDS - {
+                "parent_pid", "parent_start", "execution_deadline", "cleanup_deadline", "helper_closure", "runner_profile"}),
+            "owner custody field type differs")
+    require(DIGEST_PATTERN.fullmatch(value["guard_source_sha256"]) is not None
+            and hashlib.sha256(bounded_regular_bytes(pathlib.Path(__file__), 512 * 1024)).hexdigest()
+                == value["guard_source_sha256"], "owner guard source differs")
+    directory = pathlib.Path(value["directory"])
+    outer_run_directory(directory, value["directory_identity"])
+    token = directory.name.removeprefix("boxferry-docker-core.")
+    require(value["outer_run"] == token and value["outer_name"] == "bf-docker-core-" + token
+            and value["outer_owner"] == "io.boxferry.docker-core-run"
+            and value["volume_name"] == "bf-docker-core-data-" + token
+            and value["cid_file"] == str(directory / "outer-create.cid")
+            and value["guest_directory"] == "/boxferry-core"
+            and value["socket_directory"] == str(directory / "socket"), "owner finite identities differ")
+    require(all(type(value[key]) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value[key])
+                for key in ("context", "run", "prefix")), "owner application binding differs")
+    require(IMAGE_PATTERN.fullmatch(value["outer_image"]) is not None, "owner image differs")
+    graph = value["graph_root"]
+    require(type(graph) is str and graph.startswith("/") and graph != "/"
+            and all(part not in {"", ".", ".."} for part in graph.split("/")[1:])
+            and value["volume_path"] == graph + "/volumes/" + value["volume_name"] + "/_data",
+            "owner volume source differs")
+    socket_info = owner_socket_directory(value)
+    require(value["socket_identity"] == f"{socket_info.st_dev}:{socket_info.st_ino}", "owner socket custody differs")
+    require(value["fixture_root"] == "/tmp/boxferry-forgejo-" + token
+            or value["lane"] == "upstream-rootless"
+            and value["fixture_root"] == "/tmp/boxferry-fixture/" + value["prefix"],
+            "owner fixture containment differs")
+    runner = value["runner_profile"]
+    if value["engine"] == "docker" and value["lane"] == "upstream-rootless":
+        require(type(runner) is dict and set(runner) == {"nonce", "revision", "workflow_run", "attempt"}
+                and all(type(item) is str for item in runner.values())
+                and re.fullmatch(r"[0-9a-f]{32}", runner["nonce"]) is not None
+                and SHA_PATTERN.fullmatch(runner["revision"]) is not None
+                and all(re.fullmatch(r"[1-9][0-9]{0,19}", runner[key]) is not None
+                        for key in ("workflow_run", "attempt")), "owner runner custody differs")
+    else:
+        require(runner is None, "unexpected owner runner custody")
+    require(type(value["helper_closure"]) is dict, "owner helper closure differs")
+    if "paperless_sources" in value:
+        owner_paperless_sources(value)
+    return outer_runtime_command(directory / "outer-runtime-helper", value["directory_identity"],
+                                 json.dumps(value["helper_closure"]), value["engine"])
+
+
+def owner_read(path: pathlib.Path, expected: str) -> dict[str, Any]:
+    owner_private(path)
+    raw = outer_runtime_bytes(path, private=True)
+    require(DIGEST_PATTERN.fullmatch(expected) is not None and hashlib.sha256(raw).hexdigest() == expected,
+            "owner custody digest differs")
+    value = json.loads(raw, object_pairs_hook=no_duplicate_keys)
+    require(path == pathlib.Path(value["directory"]) / "owner-custody.json", "owner custody location differs")
+    owner_validate(value)
+    return value
+
+
+class OwnerRecoveryNeeded(ContractError):
+    """A valid guard lost its owner/readiness window; consume existing custody."""
+
+
+def owner_lifecycle(state: dict[str, Any] | None, deadline: float) -> None:
+    if state is not None and not state["recovering"]:
+        if (state["cancelled"] or not parent_alive(state["parent_fd"])
+                or owner_clock() + 0.1 >= min(deadline, state["execution_deadline"])):
+            raise OwnerRecoveryNeeded("owner readiness lifecycle interrupted")
+
+
+def owner_command_quiescence(process: subprocess.Popen, cutoff: float) -> None:
+    """Signal while the original leader is unreaped; verify surviving tasks."""
+    held = []
+    try:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if not entry.name.isdecimal():
+                    continue
+                try:
+                    with open(entry.path + "/stat", "rb") as source:
+                        fields = source.read().rsplit(b")", 1)[1].split()
+                    if int(fields[2]) != process.pid or fields[0] == b"Z":
+                        continue
+                    descriptor = verified_parent_fd(int(entry.name), int(fields[19]))
+                    held.append(descriptor)
+                    require(os.getpgid(int(entry.name)) == process.pid, "owner command group changed")
+                except (FileNotFoundError, ProcessLookupError, ParentGone):
+                    continue
+        for descriptor in held:
+            remaining = cutoff - owner_clock()
+            monitor = select.poll()
+            monitor.register(descriptor, select.POLLIN)
+            require(remaining > 0 and bool(monitor.poll(max(1, int(remaining * 1000)))),
+                    "owner command termination unverified")
+    finally:
+        for descriptor in held:
+            os.close(descriptor)
+
+
+def owner_call(value: dict[str, Any], arguments: list[str], deadline: float, *, unprepared: bool = False,
+               lifecycle: dict[str, Any] | None = None,
+               paperless_archive_limit: int | None = None,
+               paperless_caller: bool = False) -> tuple[int, bytes]:
+    """One source-checked bridge invocation; no renewed timeout or output spill."""
+    import selectors
+    require(type(paperless_caller) is bool, "owner Paperless actor differs")
+    if paperless_caller:
+        require(not unprepared and value["lane"] == "upstream-rootless"
+                and value["fixture_root"] == "/tmp/boxferry-fixture/" + value["prefix"]
+                and os.getsid(0) == value["parent_pid"]
+                and process_start(value["parent_pid"]) == value["parent_start"],
+                "owner Paperless caller session differs")
+    archive_limit = None
+    if paperless_archive_limit is not None:
+        import threading
+        # A stricter file bound on the EXISTING pinned-reference/sole-path save
+        # operation. This grants neither another native action nor another path.
+        references = {line.split("\t")[1] for line in (
+            REPOSITORY_ROOT / "fixtures/conformance/paperless-ngx-application/images.tsv").read_text().splitlines()
+            if line and not line.startswith("#")}
+        require(paperless_caller and threading.active_count() == 1
+                and not unprepared and value["lane"] == "upstream-rootless"
+                and value["fixture_root"] == "/tmp/boxferry-fixture/" + value["prefix"]
+                and type(paperless_archive_limit) is int and 0 < paperless_archive_limit <= 2_684_354_560
+                and len(arguments) == 3 and arguments[0] == "image-save" and arguments[1] in references
+                and arguments[2] == str(pathlib.Path(value["directory"]) / "busybox.tar"),
+                "owner Paperless archive restriction differs")
+        def archive_limit():
+            _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+            cap = paperless_archive_limit if hard == resource.RLIM_INFINITY else min(paperless_archive_limit, hard)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+    command = [*owner_validate(value), *arguments]
+    if not unprepared:
+        custody = pathlib.Path(value["directory"]) / "owner-custody.json"
+        owner_private(custody)
+        require(outer_runtime_bytes(custody, private=True)
+                == json.dumps(value, sort_keys=True, separators=(",", ":")).encode(),
+                "owner sealed custody changed")
+    owner_lifecycle(lifecycle, deadline)
+    require(owner_clock() + 0.1 < deadline, "owner cleanup deadline exhausted")
+    # Guard-owned operations retain their independent sessions. Paperless work
+    # stays visible to the original owner's whole-session watchdog; a distinct
+    # PGID still lets the existing unreaped-leader quiescence cover every child.
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               **({"process_group": 0} if paperless_caller else {"start_new_session": True}),
+                               **({"preexec_fn": archive_limit, "umask": 0o077} if archive_limit is not None else {}))
+    selector = selectors.DefaultSelector()
+    output = bytearray()
+    total = 0
+    completed = False
+    try:
+        for stream in (process.stdout, process.stderr):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        while selector.get_map():
+            owner_lifecycle(lifecycle, deadline)
+            require(owner_clock() < deadline, "owner command deadline exhausted")
+            for key, _ in selector.select(min(0.05, max(0, deadline - owner_clock()))):
+                raw = os.read(key.fileobj.fileno(), 65536)
+                if not raw:
+                    selector.unregister(key.fileobj)
+                    continue
+                total += len(raw)
+                require(total <= OWNER_LIMIT, "owner command output exceeds bound")
+                if key.fileobj is process.stdout:
+                    output.extend(raw)
+        # Observe exit WITHOUT reaping. This fresh session's original leader
+        # reserves its PID/PGID through the final ownership-sensitive signal.
+        # Popen.poll/communicate/wait would release that reservation too early.
+        while True:
+            owner_lifecycle(lifecycle, deadline)
+            require(owner_clock() < deadline, "owner command deadline exhausted")
+            observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if observed is not None:
+                break
+            time.sleep(min(0.01, max(0, deadline - owner_clock())))
+        status = observed.si_status if observed.si_code == os.CLD_EXITED else -observed.si_status
+        owner_lifecycle(lifecycle, deadline)
+        require(owner_clock() < deadline, "owner command finished late")
+        completed = True
+        return status, bytes(output)
+    finally:
+        selector.close()
+        # No wait/poll/communicate has reaped this session's leader yet.
+        try:
+            owner_command_quiescence(process, min(value["cleanup_deadline"], owner_clock() + 2))
+        finally:
+            process.wait(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+        if completed:
+            owner_lifecycle(lifecycle, deadline)
+            require(owner_clock() < deadline, "owner command finished late")
+
+
+def prepare_owner_custody(value: dict[str, Any]) -> tuple[pathlib.Path, str]:
+    """Read-only collision checks, then durable obligation BEFORE either create."""
+    owner_validate(value)
+    if "paperless_sources" in value:
+        owner_paperless_parent_root(value)
+    now = owner_clock()
+    require(now + 2 < value["execution_deadline"] <= now + 3600, "owner execution cutoff differs")
+    parent = verified_parent_fd(value["parent_pid"], value["parent_start"])
+    try:
+        require(parent_alive(parent) and os.getsid(value["parent_pid"]) == value["parent_pid"]
+                and os.getpgid(value["parent_pid"]) == value["parent_pid"], "owner must own a dedicated session")
+        require(not os.path.lexists(value["cid_file"]), "owner CID already exists")
+        for kind, name in (("container", value["outer_name"]), ("volume", value["volume_name"])):
+            status, _ = owner_call(value, ["presence", kind, name], min(value["execution_deadline"], now + 8), unprepared=True)
+            require(status == 1, "owner resource collides or absence is unknown")
+        require(parent_alive(parent), "owner exited during preparation")
+        path = pathlib.Path(value["directory"]) / "owner-custody.json"
+        owner_save(path, value)
+        return path, hashlib.sha256(outer_runtime_bytes(path, private=True)).hexdigest()
+    finally:
+        os.close(parent)
+
+
+def owner_guard_command(value: dict[str, Any], path: pathlib.Path, digest: str) -> list[str]:
+    return [sys.executable, str(pathlib.Path(__file__).resolve()), "deadline-guard",
+            "--parent-pid", str(value["parent_pid"]), "--parent-start", str(value["parent_start"]),
+            "--owner-custody", str(path), "--owner-custody-sha256", digest]
+
+
+def owner_cid(value: dict[str, Any]) -> str | None:
+    path = pathlib.Path(value["cid_file"])
+    try:
+        owner_private(path)
+        raw = outer_runtime_bytes(path, private=True)
+    except (OSError, ContractError):
+        return None
+    # Same exact canonical artifact as the producer, never a name lookup.
+    require(len(raw) <= 65, "owner CID exceeds bound")
+    try:
+        text = raw.decode("ascii")
+    except UnicodeError:
+        return None
+    return text.strip() if re.fullmatch(r"[0-9a-f]{64}\n?", text) else None
+
+
+def owner_volume(value: dict[str, Any], deadline: float, *, lifecycle: dict[str, Any] | None = None) -> None:
+    status, raw = owner_call(value, ["observe", "volume", value["volume_name"]], deadline, lifecycle=lifecycle)
+    require(status == 0, "owner storage observation unavailable")
+    volume = json.loads(raw, object_pairs_hook=no_duplicate_keys)
+    require(type(volume) is dict and volume.get("Name") == value["volume_name"]
+            and volume.get("Driver") == "local" and volume.get("Mountpoint") == value["volume_path"]
+            and volume.get("Labels") == {value["outer_owner"]: value["outer_run"]}
+            and volume.get("Options") in (None, {}) and volume.get("Scope") in (None, "local"),
+            "owner dedicated local storage differs")
+
+
+def owner_ready(value: dict[str, Any], *, lifecycle: dict[str, Any] | None = None) -> str:
+    cid = owner_cid(value)
+    require(cid is not None, "owner creation identity is unavailable")
+    deadline = min(value["execution_deadline"], value["cleanup_deadline"] - 2)
+    for arguments in (
+        ["daemon-binding", cid, value["outer_name"], value["outer_owner"], value["outer_run"], value["outer_image"]],
+        ["check-mounts", cid, value["volume_name"], value["lane"].rsplit("-", 1)[1],
+         value["socket_directory"], "/boxferry-core", value["graph_root"]],
+        ["binding", "volume", value["volume_name"], value["volume_name"], value["outer_owner"], value["outer_run"]],
+    ):
+        require(owner_call(value, arguments, deadline, lifecycle=lifecycle)[0] == 0, "owner identity or containment differs")
+    owner_volume(value, deadline, lifecycle=lifecycle)
+    bound = pathlib.Path(value["directory"]) / "owner-bound.json"
+    if bound.exists():
+        require(json.loads(outer_runtime_bytes(bound, private=True)) == {"cid": cid}, "owner CID changed")
+    fixture_check = (OWNER_PAPERLESS_FIXTURE_CHECK if value["fixture_root"].startswith("/tmp/boxferry-fixture/")
+                     else OWNER_FIXTURE_CHECK)
+    require(owner_call(value, ["exec", cid, "sh", "-ec", fixture_check, "--", value["fixture_root"],
+                               "bound" if bound.exists() else "new"], deadline, lifecycle=lifecycle)[0] == 0,
+            "owner fixture escapes containment")
+    if not bound.exists():
+        owner_save(bound, {"cid": cid})
+    return cid
+
+
+def owner_work_snapshot(value: dict[str, Any], held: dict[tuple[int, int], int]) -> bool:
+    """Capture task pidfds only while the ORIGINAL session leader anchors it.
+
+    The future caller must keep every workload/native-create child in that
+    dedicated session. Only the independent guard's own commands use new ones.
+    A recycled numeric session/PGID never authorizes signalling a new task.
+    """
+    try:
+        require(process_start(value["parent_pid"]) == value["parent_start"], "owner parent was replaced")
+    except FileNotFoundError:
+        return False
+    for identity, descriptor in list(held.items()):
+        if not parent_alive(descriptor):
+            os.close(descriptor)
+            del held[identity]
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[3]) != value["parent_pid"] or fields[0] == "Z":
+                continue
+            pid, start = int(entry.name), int(fields[19])
+            require(start >= value["parent_start"] and entry.stat().st_uid == os.geteuid(),
+                    "owner process session differs")
+            if (pid, start) in held:
+                continue
+            descriptor = verified_parent_fd(pid, start)
+            try:
+                require(os.getsid(pid) == value["parent_pid"]
+                        and process_start(value["parent_pid"]) == value["parent_start"],
+                        "owner process session changed")
+                held[(pid, start)] = descriptor
+            except BaseException:
+                os.close(descriptor)
+                raise
+        except (FileNotFoundError, ProcessLookupError, ParentGone):
+            continue
+    return True
+
+
+def owner_stop_work(value: dict[str, Any], held: dict[tuple[int, int], int], *, keep_parent: bool = False) -> None:
+    """Quiesce held original-session tasks BEFORE any pending-create observation."""
+    owner_work_snapshot(value, held)
+    for (pid, _start), descriptor in held.items():
+        if keep_parent and pid == value["parent_pid"]:
+            continue
+        try:
+            signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for (pid, _start), descriptor in held.items():
+        if keep_parent and pid == value["parent_pid"]:
+            continue
+        monitor = select.poll()
+        monitor.register(descriptor, select.POLLIN)
+        remaining = value["cleanup_deadline"] - owner_clock()
+        require(remaining > 0 and bool(monitor.poll(min(1000, max(1, int(remaining * 1000))))),
+                "owner workload termination unverified")
+    # Never signal an uncaptured task found through a reused numeric group.
+    # Unknown surviving work retains custody instead of racing a late CREATE.
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[3]) == value["parent_pid"] and fields[0] != "Z":
+                require(keep_parent and int(entry.name) == value["parent_pid"],
+                        "owner workload quiescence is unknown")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+
+
+def owner_remove_private(value: dict[str, Any]) -> None:
+    """Walk held directories, never following a replaced root or symlink."""
+    directory = pathlib.Path(value["directory"])
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    def remove_contents(fd: int) -> None:
+        outer_run_directory(directory, value["directory_identity"])
+        for name in sorted(os.listdir(fd), key=lambda name: name in {"owner-custody.json", "owner-ready.json", "owner-bound.json"}):
+            require(owner_clock() + 0.05 < value["cleanup_deadline"], "owner private cleanup cutoff exhausted")
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    remove_contents(child)
+                    current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino), "owner child changed")
+                    os.rmdir(name, dir_fd=fd)
+                finally:
+                    os.close(child)
+            else:
+                os.unlink(name, dir_fd=fd)
+    try:
+        remove_contents(descriptor)
+        outer_run_directory(directory, value["directory_identity"])
+        os.rmdir(directory)
+        require(not os.path.lexists(directory), "owner private absence unverified")
+    finally:
+        os.close(descriptor)
+
+
+def cleanup_owner_custody(value: dict[str, Any], *, bound_cid: str | None = None) -> None:
+    """Distinct final whole-owner disposal; no inner/application success claim."""
+    owner_validate(value)
+    deadline = value["cleanup_deadline"]
+    cid = owner_cid(value)
+    bound = pathlib.Path(value["directory"]) / "owner-bound.json"
+    if bound_cid is not None:
+        require(cid == bound_cid and json.loads(outer_runtime_bytes(bound, private=True)) == {"cid": bound_cid},
+                "owner completed identity changed")
+    elif bound.exists():
+        require(json.loads(outer_runtime_bytes(bound, private=True)) == {"cid": cid}, "owner completed identity differs")
+    if cid is None:
+        require(owner_call(value, ["presence", "container", value["outer_name"]], deadline)[0] == 1,
+                "owner pending container identity is unresolved")
+    else:
+        status, _ = owner_call(value, ["presence", "container", cid], deadline)
+        if status == 0:
+            require(owner_call(value, ["daemon-binding", cid, value["outer_name"], value["outer_owner"],
+                                      value["outer_run"], value["outer_image"]], deadline)[0] == 0,
+                    "owner daemon binding differs")
+            require(owner_call(value, ["remove", cid, value["outer_name"], value["outer_owner"],
+                                      value["outer_run"]], deadline)[0] == 0, "owner daemon removal failed")
+        else:
+            require(status == 1, "owner daemon presence unknown")
+        for identity in (cid, value["outer_name"]):
+            require(owner_call(value, ["presence", "container", identity], deadline)[0] == 1,
+                    "owner daemon absence unverified")
+    runner = value["runner_profile"]
+    if runner is not None:
+        status, raw = owner_call(value, ["apparmor", "cleanup", value["lane"], runner["nonce"]], deadline)
+        require(status == 0, "owner runner teardown failed")
+        runner_prerequisite(raw.decode(), runner["revision"], runner["workflow_run"], runner["attempt"])
+    status, _ = owner_call(value, ["presence", "volume", value["volume_name"]], deadline)
+    if status == 0:
+        owner_volume(value, deadline)
+        require(owner_call(value, ["binding", "volume", value["volume_name"], value["volume_name"],
+                                  value["outer_owner"], value["outer_run"]], deadline)[0] == 0,
+                "owner storage binding differs")
+        require(owner_call(value, ["volume-remove", value["volume_name"], value["outer_owner"],
+                                  value["outer_run"]], deadline)[0] == 0, "owner storage removal failed")
+    else:
+        require(status == 1, "owner storage presence unknown")
+    require(owner_call(value, ["presence", "volume", value["volume_name"]], deadline)[0] == 1,
+            "owner storage absence unverified")
+    require(owner_clock() < deadline, "owner cleanup completed late")
+    owner_remove_private(value)
+    require(owner_clock() < deadline, "owner private cleanup completed late")
+
+
+def owner_capability(path: pathlib.Path, digest: str, *, phase: str, context: str,
+                     execution_deadline: int, cleanup_deadline: int,
+                     paperless_binding: str | None = None, paperless_sequence: int = 0) -> dict[str, Any]:
+    """One fixed live-peer readiness/close protocol, never a generic RPC."""
+    import secrets
+    import struct
+    value = owner_read(path, digest)
+    paperless = phase in {"paperless-hold", "paperless-check", "paperless-close"}
+    require(phase in {"pending", "ready", "close", "paperless-hold", "paperless-check", "paperless-close"}
+            and context == value["context"]
+            and type(execution_deadline) is int and execution_deadline == value["execution_deadline"]
+            and type(cleanup_deadline) is int and cleanup_deadline == value["cleanup_deadline"],
+            "owner capability binding differs")
+    require((paperless and "paperless_sources" in value and type(paperless_binding) is str
+             and DIGEST_PATTERN.fullmatch(paperless_binding) is not None
+             and type(paperless_sequence) is int and 0 <= paperless_sequence <= 256)
+            or not paperless and paperless_binding is None and paperless_sequence == 0,
+            "owner Paperless capability differs")
+    directory = path.parent
+    marker = json.loads(outer_runtime_bytes(directory / "owner-ready.json", private=True))
+    require(set(marker) == {"pid", "start", "custody_sha256"} and marker["custody_sha256"] == digest,
+            "owner guard acknowledgement differs")
+    descriptor = verified_parent_fd(marker["pid"], marker["start"])
+    challenge = secrets.token_hex(32)
+    try:
+        require(parent_alive(descriptor) and os.getsid(marker["pid"]) == marker["pid"], "owner guard is not independent")
+        command = pathlib.Path(f"/proc/{marker['pid']}/cmdline").read_bytes().split(b"\0")[:-1]
+        require(command == [os.fsencode(arg) for arg in owner_guard_command(value, path, digest)],
+                "owner guard source invocation differs")
+        socket_path = directory / "owner-guard.sock"
+        info = socket_path.lstat()
+        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600, "owner guard channel differs")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+            deadline = cleanup_deadline if phase == "close" else execution_deadline
+            require(owner_clock() < deadline, "owner capability expired")
+            channel.settimeout(max(0.001, deadline - owner_clock()))
+            channel.connect(str(socket_path))
+            peer, uid, _gid = struct.unpack("3i", channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            require(peer == marker["pid"] and uid == os.geteuid(), "owner guard live peer differs")
+            request = phase + " " + challenge
+            if paperless:
+                request += " " + str(paperless_sequence)
+            channel.sendall((request + "\n").encode())
+            response = bytearray()
+            while b"\n" not in response:
+                raw = channel.recv(4097 - len(response))
+                require(bool(raw), "owner guard acknowledgement missing")
+                response.extend(raw)
+                require(len(response) <= 4096, "owner guard acknowledgement exceeds bound")
+            result = json.loads(response, object_pairs_hook=no_duplicate_keys)
+            expected = {"challenge": challenge, "custody_sha256": digest, "phase": phase,
+                        "execution_deadline": execution_deadline, "cleanup_deadline": cleanup_deadline}
+            if paperless:
+                require(set(result) == set(expected) | {"binding_sha256", "sequence", "calls", "read_bytes", "checks"}
+                        and result["binding_sha256"] == paperless_binding
+                        and result["sequence"] == paperless_sequence + 1
+                        and all(type(result[key]) is int and 0 <= result[key] <= bound
+                                for key, bound in (("calls", 256), ("read_bytes", 16 * OWNER_LIMIT), ("checks", 256))),
+                        "owner Paperless acknowledgement differs")
+                expected.update({key: result[key] for key in
+                                 ("binding_sha256", "sequence", "calls", "read_bytes", "checks")})
+            require(result == expected,
+                    "owner guard acknowledgement differs")
+            require(owner_clock() < deadline, "owner guard acknowledgement late")
+            if paperless:
+                channel.sendall(("ack " + challenge + "\n").encode())
+                require(channel.recv(130) == ("ok " + challenge + "\n").encode(),
+                        "owner Paperless acknowledgement incomplete")
+                require(owner_clock() < deadline, "owner Paperless acknowledgement late")
+            return result
+    finally:
+        os.close(descriptor)
+
+
+def owner_expiry_observation_path(value: dict[str, Any]) -> pathlib.Path:
+    # Private decision data survives original-owner directory disposal. It grants
+    # no runtime or recovery authority and selects no caller-supplied path.
+    directory = pathlib.Path(value["directory"])
+    require(directory.parent == pathlib.Path("/tmp") and re.fullmatch(
+        r"boxferry-docker-core\.[0-9a-f]{8}", directory.name) is not None,
+        "owner expiry observation path differs")
+    return directory.with_name(directory.name + ".expiry.json")
+
+
+def owner_expiry_decision(value: dict[str, Any], digest: str, lease: Any, sequence: int,
+                          *, guard_identity: dict[str, Any], cancelled: bool, parent_live: bool,
+                          clock: float, wall_ms: int) -> dict[str, Any] | None:
+    # Attribute the selected branch, never infer a cause from later cleanup time.
+    # Existing cancellation, owner loss and global expiry retain priority.
+    if (cancelled or not parent_live or clock >= value["execution_deadline"]
+            or lease is None or lease.closed
+            or (clock < lease.cutoff and wall_ms < lease.wall_cutoff)):
+        return None
+    return {"schema": 1, "decision": "guard-selected-lease-expiry",
+            "owner_pid": value["parent_pid"], "owner_start": value["parent_start"],
+            "guard_pid": guard_identity["pid"], "guard_start": guard_identity["start"],
+            "custody_sha256": digest, "guard_source_sha256": value["guard_source_sha256"],
+            "lease_binding_sha256": lease.binding_sha, "lease_sequence": sequence,
+            "lease_cutoff": lease.cutoff, "lease_wall_cutoff": lease.wall_cutoff,
+            "execution_deadline": value["execution_deadline"], "cleanup_deadline": value["cleanup_deadline"],
+            "decided_boottime": clock, "decided_wall_ms": wall_ms,
+            "owner_alive": True, "cancelled": False}
+
+
+def owner_save_expiry_observation(value: dict[str, Any], lease: Any, decision: dict[str, Any]) -> None:
+    raw = json.dumps(decision, sort_keys=True, separators=(",", ":")).encode()
+    require(len(raw) <= 4096 and lease.read_bytes + len(raw) <= 16 * 1024 * 1024,
+            "owner expiry observation exceeds original allowance")
+    # Charge the actual decision-data write; the observer also charges its read.
+    lease.read_bytes += len(raw)
+    path = owner_expiry_observation_path(value)
+    pending = path.with_name(path.name + ".pending")
+    descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        require(output.write(raw) == len(raw), "owner expiry observation write incomplete")
+        output.flush()
+        os.fsync(output.fileno())
+    # Publish only after successful write, flush and close. A failed close must
+    # not leave apparently qualifying decision data. Link never replaces an
+    # existing destination; the verifier requires the final single-link file.
+    os.link(pending, path, follow_symlinks=False)
+    pending.unlink()
+
+
+def guard_owner_parent(pid: int, start: int, path: pathlib.Path, digest: str) -> None:
+    value = owner_read(path, digest)
+    if "paperless_sources" in value:
+        owner_paperless_parent_root(value)
+    require((pid, start) == (value["parent_pid"], value["parent_start"])
+            and os.getsid(0) == os.getpid() and os.getpgrp() == os.getpid()
+            and os.getpid() != pid, "owner guard must own a separate session")
+    parent = verified_parent_fd(pid, start)
+    require(parent_alive(parent) and os.getsid(pid) == pid and os.getpgid(pid) == pid,
+            "owner parent session differs")
+    require(owner_clock() + 1 < value["execution_deadline"] <= owner_clock() + 3600,
+            "owner guard cutoff exhausted")
+    require(not os.path.lexists(value["cid_file"]), "owner create preceded guard acknowledgement")
+    directory = path.parent
+    # Collision absence is rechecked before the guard's before-create ACK.
+    for kind, name in (("container", value["outer_name"]), ("volume", value["volume_name"])):
+        require(owner_call(value, ["presence", kind, name], min(value["execution_deadline"], owner_clock() + 8))[0] == 1,
+                "owner create preceded guard acknowledgement")
+    held_work = {}
+    bound_cid = None
+    acknowledgement_failed = False
+    paperless_module = owner_paperless_module(value) if "paperless_sources" in value else None
+    paperless_lease = None
+    paperless_used = False
+    paperless_sequence = 0
+    paperless_challenges = set()
+    owner_work_snapshot(value, held_work)
+    lifecycle = {"cancelled": False, "recovering": False, "parent_fd": parent,
+                 "execution_deadline": value["execution_deadline"]}
+    old_handlers = {}
+    def interrupt(_number, _frame):
+        lifecycle["cancelled"] = True
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        old_handlers[number] = signal.signal(number, interrupt)
+    channel = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        channel.bind(str(directory / "owner-guard.sock"))
+        os.chmod(directory / "owner-guard.sock", 0o600)
+        channel.listen(1)
+        channel.settimeout(0.05)
+        guard_identity = {"pid": os.getpid(), "start": process_start(os.getpid()), "custody_sha256": digest}
+        owner_save(directory / "owner-ready.json", guard_identity)
+        while True:
+            if parent_alive(parent):
+                owner_work_snapshot(value, held_work)
+            decision_clock = owner_clock()
+            decision_wall_ms = time.time_ns() // 1_000_000
+            parent_live = parent_alive(parent)
+            cancelled = lifecycle["cancelled"]
+            paperless_expired = (paperless_lease is not None and not paperless_lease.closed
+                and (decision_clock >= paperless_lease.cutoff or decision_wall_ms >= paperless_lease.wall_cutoff))
+            if cancelled or not parent_live or decision_clock >= value["execution_deadline"] or paperless_expired:
+                decision = None
+                try:
+                    decision = owner_expiry_decision(value, digest, paperless_lease, paperless_sequence,
+                        guard_identity=guard_identity, cancelled=cancelled, parent_live=parent_live,
+                        clock=decision_clock, wall_ms=decision_wall_ms)
+                except Exception:
+                    # Optional diagnostic construction, including any future
+                    # fallible read, cannot divert original safety recovery.
+                    pass
+                lifecycle["recovering"] = True
+                owner_stop_work(value, held_work)
+                if paperless_lease is not None:
+                    paperless_lease.close()
+                if decision is not None:
+                    try:
+                        owner_save_expiry_observation(value, paperless_lease, decision)
+                    except Exception:
+                        # Missing observation refuses attribution; it must never
+                        # prevent the existing original-owner recovery.
+                        pass
+                cleanup_owner_custody(value, bound_cid=bound_cid)
+                require(not acknowledgement_failed, "owner acknowledgement failed; recovery closed")
+                return
+            try:
+                client, _address = channel.accept()
+            except socket.timeout:
+                continue
+            with client:
+                client.settimeout(min(0.2, max(0.001, value["execution_deadline"] - owner_clock())))
+                try:
+                    raw = client.recv(130)
+                except OSError:
+                    owner_lifecycle(lifecycle, value["execution_deadline"])
+                    if paperless_module is not None:
+                        raise OwnerRecoveryNeeded("owner Paperless frame incomplete") from None
+                    raise
+                owner_lifecycle(lifecycle, value["execution_deadline"])
+                match = re.fullmatch(rb"(pending|ready|close) ([0-9a-f]{64})\n", raw)
+                paperless_match = re.fullmatch(
+                    rb"(paperless-hold|paperless-check|paperless-close) ([0-9a-f]{64}) ([0-9]{1,3})\n", raw)
+                if paperless_match is not None:
+                    try:
+                        import struct
+                        peer, uid, gid = struct.unpack("3i", client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                        require(paperless_module is not None and uid == gid == 0 and os.getsid(peer) == pid
+                                and parent_alive(parent) and process_start(pid) == start,
+                                "owner Paperless client differs")
+                        # Pin the actual peer incarnation while serving this phase.
+                        client_fd = verified_parent_fd(peer, process_start(peer))
+                        try:
+                            phase, challenge, sequence = (part.decode() for part in paperless_match.groups())
+                            require(not acknowledgement_failed and int(sequence) == paperless_sequence,
+                                    "owner Paperless sequence differs")
+                            require(challenge not in paperless_challenges and len(paperless_challenges) < 256,
+                                    "owner Paperless challenge was reused")
+                            paperless_challenges.add(challenge)
+                            value = owner_read(path, digest)
+                            owner_lifecycle(lifecycle, value["execution_deadline"])
+                            if phase == "paperless-hold":
+                                require(not paperless_used and bound_cid is not None,
+                                        "owner Paperless hold cannot be renewed")
+                                paperless_used = True  # even partial acquisition consumes the only hold
+                                paperless_lease = paperless_module.Lease(
+                                    sys.modules[__name__], value, None, digest, lifecycle)
+                            else:
+                                require(paperless_lease is not None and not paperless_lease.closed,
+                                        "owner Paperless live lease differs")
+                            if phase == "paperless-close":
+                                paperless_lease.close()
+                                require(not paperless_lease.failed, "owner Paperless descriptor closure uncertain")
+                            elif phase == "paperless-check":
+                                paperless_lease.check()
+                            paperless_sequence += 1
+                            response = {"challenge": challenge, "custody_sha256": digest, "phase": phase,
+                                "execution_deadline": value["execution_deadline"], "cleanup_deadline": value["cleanup_deadline"],
+                                "binding_sha256": paperless_lease.binding_sha, "sequence": paperless_sequence,
+                                "calls": paperless_lease.calls, "read_bytes": paperless_lease.read_bytes,
+                                "checks": paperless_lease.checks}
+                            require(parent_alive(client_fd), "owner Paperless client exited")
+                            client.sendall(json.dumps(response, separators=(",", ":")).encode() + b"\n")
+                            require(client.recv(130) == ("ack " + challenge + "\n").encode()
+                                    and parent_alive(client_fd), "owner Paperless acknowledgement lost")
+                            owner_lifecycle(lifecycle, paperless_lease.cutoff)
+                            client.sendall(("ok " + challenge + "\n").encode())
+                        finally:
+                            os.close(client_fd)
+                    except Exception:
+                        acknowledgement_failed = True
+                        if paperless_lease is not None:
+                            paperless_lease.close()
+                        raise OwnerRecoveryNeeded("owner Paperless custody uncertain") from None
+                    continue
+                if paperless_module is not None and match is None:
+                    raise OwnerRecoveryNeeded("owner Paperless frame uncertain")
+                require(match is not None, "owner guard request differs")
+                phase, challenge = (item.decode() for item in match.groups())
+                if acknowledgement_failed and phase != "close":
+                    # A failed ACK cannot grant later application readiness.
+                    # Keep custody protected until closure, never abandon it.
+                    continue
+                # Recheck the sealed file/snapshot before every capability use.
+                value = owner_read(path, digest)
+                if phase == "close":
+                    owner_stop_work(value, held_work, keep_parent=True)
+                    if paperless_lease is not None:
+                        paperless_lease.close()
+                    cleanup_owner_custody(value, bound_cid=bound_cid)
+                else:
+                    owner_lifecycle(lifecycle, value["execution_deadline"])
+                    if phase == "ready":
+                        observed = owner_ready(value, lifecycle=lifecycle)
+                        require(bound_cid is None or observed == bound_cid, "owner completed CID changed")
+                        bound_cid = observed
+                    owner_lifecycle(lifecycle, value["execution_deadline"])
+                response = {"challenge": challenge, "custody_sha256": digest, "phase": phase,
+                            "execution_deadline": value["execution_deadline"],
+                            "cleanup_deadline": value["cleanup_deadline"]}
+                try:
+                    client.sendall(json.dumps(response, separators=(",", ":")).encode() + b"\n")
+                except OSError:
+                    acknowledgement_failed = True
+                    if phase == "close":
+                        raise
+                    owner_lifecycle(lifecycle, value["execution_deadline"])
+                    # SIGKILL delivery can precede pidfd exit readiness. A live
+                    # instant is not proof of future liveness: retain the guard
+                    # and original deadline rather than unwinding its custody.
+                    continue
+                if phase == "close":
+                    require(not acknowledgement_failed, "owner acknowledgement failed; recovery closed")
+                    return
+    except OwnerRecoveryNeeded:
+        # Valid lifecycle interruption anywhere in request/readiness handling
+        # enters recovery; changed source/custody still refuses native teardown.
+        if paperless_module is not None:
+            # Original process custody remains usable for quiescence even if a
+            # later pathname/source check refuses native resource authority.
+            lifecycle["recovering"] = True
+            owner_stop_work(value, held_work)
+            if paperless_lease is not None:
+                paperless_lease.close()
+        value = owner_read(path, digest)
+        lifecycle["recovering"] = True
+        if paperless_module is None:
+            owner_stop_work(value, held_work)
+        if paperless_lease is not None:
+            paperless_lease.close()
+        cleanup_owner_custody(value, bound_cid=bound_cid)
+        raise ContractError("owner readiness interrupted; recovery closed") from None
+    except Exception:
+        if paperless_module is not None:
+            lifecycle["recovering"] = True
+            owner_stop_work(value, held_work)
+            if paperless_lease is not None:
+                paperless_lease.close()
+        raise
+    finally:
+        if paperless_lease is not None:
+            paperless_lease.close()
+        channel.close()
+        os.close(parent)
+        for descriptor in held_work.values():
+            os.close(descriptor)
+        for number, handler in old_handlers.items():
+            signal.signal(number, handler)
 
 
 def git(root: pathlib.Path, *arguments: str) -> str:
@@ -2420,10 +3362,15 @@ def main() -> int:
     deadline = commands.add_parser("deadline-guard")
     deadline.add_argument("--parent-pid", type=int, required=True)
     deadline.add_argument("--parent-start", type=int, required=True)
-    deadline.add_argument("--execution-seconds", type=int, required=True)
-    deadline.add_argument("--cleanup-seconds", type=int, required=True)
+    deadline.add_argument("--execution-seconds", type=int)
+    deadline.add_argument("--cleanup-seconds", type=int)
     deadline.add_argument("--ready-file")
+    deadline.add_argument("--owner-custody", type=pathlib.Path)
+    deadline.add_argument("--owner-custody-sha256")
     args = parser.parse_args()
+    if args.command == "deadline-guard" and args.owner_custody is None:
+        if args.execution_seconds is None or args.cleanup_seconds is None:
+            parser.error("legacy deadline-guard requires --execution-seconds and --cleanup-seconds")
     try:
         if args.command in UNIX_HTTP_COMMANDS and any(value is not None for value in
                 (args.unix_http_helper, args.unix_http_revision, args.unix_http_sha256)):
@@ -2497,7 +3444,8 @@ def main() -> int:
             signal_parent(args.parent_pid, args.parent_start)
         elif args.command == "deadline-guard":
             guard_parent(args.parent_pid, args.parent_start,
-                         args.execution_seconds, args.cleanup_seconds, args.ready_file)
+                         args.execution_seconds, args.cleanup_seconds, args.ready_file,
+                         owner_custody=args.owner_custody, owner_custody_sha256=args.owner_custody_sha256)
         elif args.command == "artifact-identity":
             print(hashlib.sha256(read_private_artifact(args.artifact).encode("utf-8")).hexdigest())
         elif args.command == "catalogue":

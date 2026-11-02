@@ -322,7 +322,8 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         """Authored phase failures; no process, network, or real credential is used."""
         args = types.SimpleNamespace(
             trusted_root=self.trusted, admission_root=self.root / "private-helper-path-canary",
-            admission_revision="c" * 40, box_pr=77, box_sha="a" * 40, lens_pr=88, lens_sha="b" * 40)
+            admission_revision="c" * 40, box_pr=77, box_sha="a" * 40, lens_pr=88, lens_sha="b" * 40,
+            main_mechanism=False, trusted_sha=None)
         error = error if error is not None else RuntimeError(
             'secret-token-canary /private/path-canary {"api-payload-canary":"private"}')
         targets = {
@@ -1233,7 +1234,8 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         for kind, handler in handlers.items(): self.assertEqual(signal.getsignal(kind), handler)
 
     def test_execution_failure_phases_never_print_raw_private_errors_or_arguments(self):
-        args = types.SimpleNamespace(command="build", lane="debian11-rootful", output=None, build_artifact_id=None)
+        args = types.SimpleNamespace(command="build", lane="debian11-rootful", output=None, build_artifact_id=None,
+                                    case=None, checked_at=None)
         class Unprintable(Exception):
             def __str__(self): raise AssertionError("must never stringify private failures")
         for phase in ("build-layout", "build-context", "build-authorization", "build-copy", "volume-fixtures-build",
@@ -1287,7 +1289,7 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertIn("needs: [admission, lanes]", workflow)
         self.assertIn('test "$ADMISSION_RESULT" = success', workflow)
         self.assertIn('test "$LANES_RESULT" = success', workflow)
-        self.assertEqual(workflow.count("uses: ./trusted/.github/actions/reviewed-docker-admission"), 2)
+        self.assertEqual(workflow.split("\n  main-custody-admission:\n", 1)[0].count("uses: ./trusted/.github/actions/reviewed-docker-admission"), 2)
         self.assertEqual(workflow.count("persist-credentials: false"), workflow.count("uses: actions/checkout@"))
         for line in workflow.splitlines():
             if "uses: actions/" in line:
@@ -1298,6 +1300,8 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         configuration = json.loads((ROOT / ".github/renovate.json").read_text())
         matches = []
         for manager in configuration["customManagers"]:
+            if manager.get("description") != "Track the immutable DockerLens application admission commit":
+                continue
             if any(re.search(pattern[1:-1], path) for pattern in manager.get("managerFilePatterns", [])):
                 for pattern in manager["matchStrings"]:
                     python = re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", pattern)
@@ -1323,9 +1327,26 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         for source in (main, lane, worker, action):
             for forbidden in ("contents: write", "pull-requests: write", "id-token: write", "secrets: inherit"):
                 self.assertNotIn(forbidden, source)
-        self.assertEqual(set(primary), {"context-smoke", "admission", "lanes", "aggregate"})
+        self.assertEqual(set(primary), {"context-smoke", "admission", "lanes", "aggregate",
+                                        "main-custody-admission", "main-custody", "main-custody-evidence"})
         self.assertEqual(set(orchestration), {"context-smoke", "pre-build", "build", "seal", "native"})
         self.assertEqual(set(candidates), {"lanes"})
+        for name in ("admission", "aggregate"):
+            self.assertIn("inputs.task == 'volume-consumer'", primary[name])
+        for name, dependency in (("main-custody-admission", "context-smoke"),
+                                 ("main-custody", "main-custody-admission"),
+                                 ("main-custody-evidence", "main-custody")):
+            self.assertIn("    needs: " + dependency + "\n", primary[name])
+            self.assertIn("inputs.task == 'paperless-custody-mechanism'", primary[name])
+        for name in ("main-custody-admission", "main-custody-evidence"):
+            self.assertEqual(primary[name].count("source-kind: trusted-main-mechanism"), 1)
+            self.assertEqual(primary[name].count("uses: ./trusted/.github/actions/reviewed-docker-admission"), 1)
+        self.assertIn("mode: mechanism", primary["main-custody"])
+        self.assertIn("box_sha: ${{ github.sha }}", primary["main-custody"])
+        self.assertIn("checked_at: ${{ needs.main-custody-admission.outputs.checked_at }}", primary["main-custody"])
+        for forbidden in ("secrets:", "environment:", "always()", "continue-on-error:"):
+            self.assertNotIn(forbidden, primary["main-custody"])
+
         for block, dependency in ((primary["admission"], "context-smoke"), (primary["lanes"], "admission"),
                                   (primary["aggregate"], "[admission, lanes]"),
                                   (orchestration["build"], "pre-build"),
@@ -1350,7 +1371,7 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         for forbidden in ("secrets:", "secrets.", "environment:", "RELEASE_PLZ", "ADMISSION_TOKEN", "create-github-app-token"):
             self.assertNotIn(forbidden, worker)
         call = "uses: ./trusted/.github/actions/reviewed-docker-admission"
-        self.assertEqual(main.count(call) + 4 * lane.count(call), 10)
+        self.assertEqual(main.split("\n  main-custody-admission:\n", 1)[0].count(call) + 4 * lane.count(call), 10)
         self.assertEqual(primary["admission"].count(call), 1)
         self.assertEqual(primary["aggregate"].count(call), 1)
         for name in ("pre-build", "seal"):

@@ -6,6 +6,12 @@ name: Reviewed Docker consumer candidate worker
 on:
   workflow_call:
     inputs:
+      case:
+        default: ""
+        type: string
+      checked_at:
+        default: ""
+        type: string
       mode:
         required: true
         type: string
@@ -13,13 +19,13 @@ on:
         required: true
         type: string
       box_pr:
-        required: true
+        default: ""
         type: string
       box_sha:
         required: true
         type: string
       lens_pr:
-        required: true
+        default: ""
         type: string
       lens_sha:
         required: true
@@ -47,6 +53,8 @@ env:
   WORKER_MODE: ${{ inputs.mode }}
   BUILD_ARTIFACT_ID: ${{ inputs.artifact_id }}
   BUILD_BINDING_JSON: ${{ inputs.binding }}
+  CUSTODY_CASE: ${{ inputs.case }}
+  CUSTODY_CHECKED_AT: ${{ inputs.checked_at }}
 
 jobs:
   lanes:
@@ -91,14 +99,21 @@ jobs:
                       "GITHUB_RUN_ATTEMPT", "GITHUB_REF", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW_REF",
                       "GITHUB_WORKFLOW_SHA", "GITHUB_SHA"):
               module.auth.require(bool(os.environ.get(key)) and os.environ[key] == os.environ["EXPECTED_" + key])
-          module.auth.require(os.environ["WORKER_MODE"] in ("context", "build", "native")
+          module.auth.require(os.environ["WORKER_MODE"] in ("context", "build", "native", "mechanism")
                               and os.environ["LANE"] in module.auth.LANES
                               and Path.cwd() == module.transfer.WORKSPACE)
-          if os.environ["WORKER_MODE"] in ("context", "build"):
+          if os.environ["WORKER_MODE"] in ("context", "build", "mechanism"):
               module.auth.require(not os.environ["BUILD_ARTIFACT_ID"] and not os.environ["BUILD_BINDING_JSON"])
           else:
               module.transfer.artifact_id(os.environ["BUILD_ARTIFACT_ID"])
               module.auth.require(bool(os.environ["BUILD_BINDING_JSON"]))
+          if os.environ["WORKER_MODE"] == "mechanism":
+              policy = module.auth.custody_helper_policy(Path.cwd() / "trusted")
+              module.auth.require(not os.environ["BOX_PR"] and not os.environ["LENS_PR"]
+                                  and os.environ["BOX_SHA"] == os.environ["GITHUB_SHA"]
+                                  and os.environ["LENS_SHA"] == policy["revision"]
+                                  and os.environ["CUSTODY_CASE"] in module.auth.CUSTODY_CASES
+                                  and os.environ["LANE"] == "upstream-rootless")
           print("reviewed Docker consumer nested caller context verified; no candidate execution in this step")
           PY
       - name: Check out exact BoxFerry build source
@@ -194,3 +209,43 @@ jobs:
           if-no-files-found: error
           overwrite: false
           retention-days: 7
+      - name: Run fixed trusted-main six-volume custody mechanism
+        if: inputs.mode == 'mechanism'
+        env:
+          DOCKERLENS_OUTER_ENGINE: docker
+        run: |
+          set -euo pipefail
+          install -d -m 0700 staged
+          sudo env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME=/root PYTHONDONTWRITEBYTECODE=1 \
+            DOCKERLENS_OUTER_ENGINE=docker GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" \
+            GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
+            GITHUB_ACTOR="$GITHUB_ACTOR" GITHUB_TRIGGERING_ACTOR="$GITHUB_TRIGGERING_ACTOR" \
+            GITHUB_REPOSITORY_ID="$GITHUB_REPOSITORY_ID" GITHUB_JOB="$GITHUB_JOB" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            DOCKERLENS_NATIVE_CANDIDATE_SHA="$LENS_SHA" \
+            ImageOS="$ImageOS" ImageVersion="$ImageVersion" \
+            python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" mechanism \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/trusted" --lens-root "$PWD/lens-execution" \
+            --execution-root "$PWD/execution" --private "$PWD/private" --bundle-root "$PWD/build-bundle" \
+            --box-sha "$GITHUB_SHA" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --lane upstream-rootless --case "$CUSTODY_CASE" --checked-at "$CUSTODY_CHECKED_AT" --output "$PWD/staged/custody"
+      - name: Restore only sanitized mechanism record ownership
+        if: always() && inputs.mode == 'mechanism'
+        run: |
+          set -euo pipefail
+          if [[ -d staged/custody && ! -L staged/custody && -f staged/custody/mechanism.json && ! -L staged/custody/mechanism.json ]]; then
+            sudo chown -- "$(id -u):$(id -g)" staged/custody staged/custody/mechanism.json
+          fi
+      - name: Upload only bounded mechanism evidence
+        if: always() && inputs.mode == 'mechanism'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: paperless-custody-${{ inputs.case }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: staged/custody/mechanism.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1

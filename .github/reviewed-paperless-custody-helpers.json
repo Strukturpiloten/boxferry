@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "repository": "Strukturpiloten/docker-lens",
+  "revision": "ec58b844a46c881ea175bccae85a049f609b43c1",
+  "source_sha256": "8be8634360995d3cd42d9dfdaed3e0011666a7fe382f998371179fc5a38a4c0d",
+  "lock_sha256": "6191793199acbafeb7d6d8367794101a1893b3535856272b8c3f075ce393082a",
+  "files": {
+    "scripts/native-conformance.sh": "3d7a6e84c20b0ad00cebb5a389e0c0d7c9409217be2d5d2b5a8f1df83ca1b348",
+    "scripts/native-unix-http.py": "c5762b4d2debdab782299ff0be7185ed3cbc7b0b095208b24933adbc5c36ce08",
+    "scripts/native-outer-command.sh": "6b84e9905cfcbee22e7aa39bb2cc476b8f274f684e8b3fd15c3a52fd8fefa8cb",
+    "scripts/native-outer-runtime.sh": "10ab1d724dd16eca99830ded853dedd547226430ac95f9955bcd4885fd55f867",
+    "scripts/native-outer-observation.py": "43106af3b9c05696a028dfb59b8d85cf78f28bdb518fa9b87a59643112f610ff",
+    "scripts/native-presence.py": "cb7fe40f0687d8b9c4f998d00894767860ab94a3307f55e3907f0e1a98ab6b98",
+    "scripts/native-runner-apparmor.py": "b52f1724c11f008bb55d28f3a578cddf26377fdc2e53a37df9d044150eeb9468",
+    "scripts/native_outer_diagnostic_capture.py": "23202211ec3b58a70c1120b0395f43663e3cacff1948609a8fb0fe2dac012962"
+  }
+}
