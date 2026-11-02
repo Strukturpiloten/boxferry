@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -548,6 +549,79 @@ class FixedEntrypoint(unittest.TestCase):
         self.assertIn("main-custody-admission:", workflow)
         self.assertIn("main-custody-evidence:", workflow)
         self.assertEqual(workflow.count("source-kind: trusted-main-mechanism"), 2)
+
+
+class SocketMetadataContract(unittest.TestCase):
+    FIELDS = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink", "st_size",
+              "st_mtime_ns", "st_ctime_ns")
+
+    def test_both_consumers_use_exact_independent_nine_field_contract(self):
+        guard = load("socket_fingerprint_guard_contract", "lib/docker-paperless-volume-custody.py")
+        values = {"st_dev": 101, "st_ino": 202, "st_mode": mechanism.stat.S_IFSOCK | 0o660,
+            "st_uid": 303, "st_gid": 404, "st_nlink": 5, "st_size": 6,
+            "st_mtime_ns": 700000001, "st_ctime_ns": 800000002, "st_atime_ns": 1}
+        expected = (101, 202, mechanism.stat.S_IFSOCK | 0o660, 303, 404, 5, 6, 700000001, 800000002)
+        for fingerprint in (guard.socket_fingerprint, mechanism.socket_fingerprint):
+            self.assertEqual(fingerprint(types.SimpleNamespace(**values)), expected)
+            self.assertEqual(fingerprint(types.SimpleNamespace(**{**values, "st_atime_ns": 999999999})), expected)
+            for field in self.FIELDS:
+                with self.subTest(consumer=fingerprint.__module__, field=field):
+                    changed = {**values, field: values[field] ^ (0o020 if field == "st_mode" else 1)}
+                    self.assertNotEqual(fingerprint(types.SimpleNamespace(**changed)), expected)
+
+    @contextmanager
+    def connected_peer(self):
+        with tempfile.TemporaryDirectory(prefix="mechanism-peer-socket-") as temporary:
+            path = Path(temporary) / "docker.sock"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(path)); listener.listen(1)
+                original = path.lstat()
+                os.utime(path, ns=(1_000_000_000, original.st_mtime_ns))
+                caller = mechanism.Mechanism.__new__(mechanism.Mechanism)
+                caller.socket, caller.socket_stamp = path, path.lstat()
+                contract = mechanism.contract()
+                caller.inner_peer = {"pid": os.getpid(), "start": contract.process_start(os.getpid()),
+                    "uid": os.getuid(), "gid": os.getgid()}
+                caller.owner = {}
+                caller.boundary = mock.Mock()
+                caller.c = types.SimpleNamespace(verified_parent_fd=contract.verified_parent_fd,
+                    parent_alive=contract.parent_alive, owner_validate=mock.Mock())
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                    stream.settimeout(1); stream.connect(str(path))
+                    peer = caller.peer(stream)
+                    try:
+                        yield caller, peer
+                    finally:
+                        peer.close()
+
+    def test_actual_old_atime_connect_keeps_authenticated_launcher_peer(self):
+        with self.connected_peer() as (caller, peer):
+            peer.check()
+            after = caller.socket.lstat()
+            self.assertEqual(tuple(getattr(after, field) for field in self.FIELDS),
+                             tuple(getattr(caller.socket_stamp, field) for field in self.FIELDS))
+            caller.boundary.assert_called_once_with()
+            caller.c.owner_validate.assert_called_once_with(caller.owner)
+
+    def test_launcher_peer_security_field_or_path_change_refuses(self):
+        for field in self.FIELDS:
+            with self.subTest(field=field), self.connected_peer() as (caller, peer):
+                original_lstat = Path.lstat
+                def changed(path, *arguments, **keywords):
+                    info = original_lstat(path, *arguments, **keywords)
+                    if path == caller.socket:
+                        values = {name: getattr(info, name) for name in self.FIELDS}
+                        values[field] ^= 0o020 if field == "st_mode" else 1
+                        return types.SimpleNamespace(**values)
+                    return info
+                with mock.patch.object(Path, "lstat", new=changed):
+                    with self.assertRaises(mechanism.Refused):
+                        peer.check()
+        with self.connected_peer() as (caller, peer), socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as replacement:
+            caller.socket.rename(caller.socket.with_name("original.sock"))
+            replacement.bind(str(caller.socket)); replacement.listen(1)
+            with self.assertRaises(mechanism.Refused):
+                peer.check()
 
 
 class PrivateReadIntegrity(unittest.TestCase):

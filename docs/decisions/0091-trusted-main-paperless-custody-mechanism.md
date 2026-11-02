@@ -132,6 +132,16 @@ observation write and verifier read are charged within the original byte allowan
 
 ## Bounds and evidence
 
+Read-only Unix-socket connects can update the socket pathname's access clock.
+The guard acquisition and launcher peer checks therefore compare the same nine
+security fields: device, inode, full mode, UID, GID, link count, size, and
+nanosecond modification/change times. Only access time is excluded. Exact kernel
+peer credentials, original process identity, no-follow pathname/held-descriptor
+binding, call order and resource limits remain unchanged. Private regular-file
+reads keep `O_NOATIME` and their existing complete stat equality. The two socket
+checks use local pure tuples to avoid new runtime imports or authority reads;
+an independent cross-consumer regression fixes their common field contract.
+
 The Linux mechanism reads owned private files with `O_NOATIME` on the existing
 read descriptor. Reading must not change its own access timestamp: complete
 before/after descriptor and pathname stat equality remains mandatory, including

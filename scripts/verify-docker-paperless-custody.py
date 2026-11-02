@@ -40,6 +40,12 @@ def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def socket_fingerprint(info):
+    """Socket authority metadata; only the read-induced access clock is excluded."""
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def read_private(path, maximum=128 * 1024):
     need(path.is_absolute() and path.resolve(strict=True) == path)
     # Linux owned-private reads must not mutate their own access timestamp:
@@ -348,7 +354,7 @@ class Mechanism:
             def check(self):
                 caller.boundary()
                 caller.c.owner_validate(caller.owner)
-                need(caller.c.parent_alive(fd) and caller.socket.lstat() == caller.socket_stamp)
+                need(caller.c.parent_alive(fd) and socket_fingerprint(caller.socket.lstat()) == socket_fingerprint(caller.socket_stamp))
 
             def reserve_read(self, size):
                 self.check()

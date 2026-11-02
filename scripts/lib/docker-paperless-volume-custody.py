@@ -39,6 +39,12 @@ def need(condition):
         raise Refused("Paperless volume custody refused")
 
 
+def socket_fingerprint(info):
+    """Socket authority metadata; only the read-induced access clock is excluded."""
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def identity(fd):
     value = os.fstat(fd)
     return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode)
@@ -203,7 +209,7 @@ class Lease:
                 stream.connect(str(socket_path))
                 peer = struct.unpack("3i", stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
                 need(peer == (self.peer["pid"], self.peer["uid"], self.peer["gid"]))
-                need(before == socket_path.lstat())
+                need(socket_fingerprint(before) == socket_fingerprint(socket_path.lstat()))
                 result["socket"] = os.open("docker.sock", os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC,
                                            dir_fd=result["socket_directory"])
                 need(identity(result["socket"]) == (before.st_dev, before.st_ino, stat.S_IFSOCK))
