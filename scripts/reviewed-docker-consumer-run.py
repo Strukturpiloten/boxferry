@@ -83,6 +83,97 @@ def write(path: Path, value) -> None:
         stream.write(proof.encoded(value))
 
 
+def restore_mechanism_receipt(uid, gid):
+    """Hand off only the fixed producer receipt; never qualify its result.
+
+    All reads and mutations bind held descriptors to no-follow directory
+    entries. The root-owned directory is transferred last. An observed race or
+    partial handoff refuses upload; there is no retry or recursive repair.
+    """
+    try:
+        from contextlib import ExitStack
+
+        auth.require(os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 0
+                     and type(uid) is int and 0 < uid < 2**32 - 1
+                     and type(gid) is int and 0 < gid < 2**32 - 1)
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_gid,
+                                 item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        with ExitStack() as stack:
+            def opened(name, parent=None, *, directory=True):
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME
+                if directory:
+                    flags |= os.O_DIRECTORY
+                descriptor = os.open(name, flags, dir_fd=parent)
+                stack.callback(os.close, descriptor)
+                return descriptor
+
+            root = opened("/")
+            bindings = []
+            parent = root
+            for name in (*transfer.WORKSPACE.parts[1:], "staged", "custody"):
+                descriptor = opened(name, parent)
+                item = os.fstat(descriptor)
+                auth.require(stat.S_ISDIR(item.st_mode))
+                bindings.append([parent, name, descriptor, item])
+                parent = descriptor
+            staged, publication = bindings[-2][3], bindings[-1][3]
+            auth.require((staged.st_uid, staged.st_gid, stat.S_IMODE(staged.st_mode)) == (uid, gid, 0o700)
+                         and (publication.st_uid, publication.st_gid, stat.S_IMODE(publication.st_mode)) == (0, 0, 0o700))
+            receipt = opened("mechanism.json", parent, directory=False)
+            item = os.fstat(receipt)
+            auth.require(stat.S_ISREG(item.st_mode) and stat.S_IMODE(item.st_mode) == 0o600
+                         and item.st_uid == item.st_gid == 0 and item.st_nlink == 1
+                         and 0 < item.st_size <= transfer.MAX_JSON)
+            bindings.append([parent, "mechanism.json", receipt, item])
+
+            def recheck():
+                for directory, name, descriptor, expected in bindings:
+                    auth.require(identity(os.fstat(descriptor)) == identity(expected)
+                                 and identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) == identity(expected))
+                auth.require(os.listdir(parent) == ["mechanism.json"])
+
+            recheck()
+            raw = os.read(receipt, transfer.MAX_JSON + 1)
+            auth.require(len(raw) == item.st_size and not os.read(receipt, 1))
+            value = json.loads(raw, object_pairs_hook=auth.no_duplicates,
+                               parse_constant=lambda _value: auth.require(False))
+            auth.require(raw == proof.encoded(value))
+            result = value.get("result") if type(value) is dict else None
+            auth.require(result in {"checks-passed", "refused"})
+            auth.keys(value, ("schema", "scope", "result", "case", "context", "sdk", "applications_accepted",
+                              "full_driver", "target_recreation", "native_qualified",
+                              "observations" if result == "checks-passed" else "residuals"))
+            auth.require(type(value["schema"]) is int and value["schema"] == 1
+                         and value["scope"] == "paperless-custody-mechanism" and value["case"] in auth.CUSTODY_CASES
+                         and type(value["context"]) is dict and type(value["sdk"]) is dict
+                         and type(value["applications_accepted"]) is int and value["applications_accepted"] == 0
+                         and all(value[key] is False for key in ("full_driver", "target_recreation", "native_qualified")))
+            if result == "checks-passed":
+                auth.require(type(value["observations"]) is dict)
+            else:
+                auth.keys(value["residuals"], ("verification", "last_verified_phase", "owner_pid", "owner_start",
+                    "guard_pid", "guard_start", "core_id", "core_name", "storage_name", "private_directory",
+                    "expiry_observation", "expiry_observation_pending", "worker_teardown_authority"))
+                auth.require(value["residuals"]["verification"] == "incomplete"
+                             and value["residuals"]["worker_teardown_authority"] is False)
+            # The trusted producer validates successful evidence before writing;
+            # this envelope check confers no evidence/cleanup authority.
+            recheck()
+            for binding in (bindings[-1], bindings[-2]):
+                descriptor, before = binding[2], binding[3]
+                os.fchown(descriptor, uid, gid)
+                after = os.fstat(descriptor)
+                auth.require((after.st_uid, after.st_gid) == (uid, gid)
+                             and (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_size, after.st_mtime_ns)
+                             == (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_size, before.st_mtime_ns))
+                binding[3] = after
+                recheck()
+        return 0
+    except Exception:
+        print("reviewed mechanism receipt handoff rejected; no passing evidence", file=sys.stderr)
+        return 1
+
+
 def binary_digest(path: Path, root: Path) -> str:
     auth.require(path.is_absolute() and path.resolve(strict=True) == path and path.is_relative_to(root / "target"))
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)

@@ -551,6 +551,321 @@ class FixedEntrypoint(unittest.TestCase):
         self.assertEqual(workflow.count("source-kind: trusted-main-mechanism"), 2)
 
 
+class MechanismReceiptHandoff(unittest.TestCase):
+    """Real no-follow IO, with ownership emulation only on non-root hosts."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="mechanism-receipt-handoff-")
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.base.chmod(0o755)
+        checkout = ROOT.stat()
+        self.uid, self.gid = checkout.st_uid, checkout.st_gid
+        self.assertGreater(self.uid, 0)
+        self.assertGreater(self.gid, 0)
+        self.real_root = os.geteuid() == 0
+        self.staged = self.base / "staged"
+        self.publication = self.staged / "custody"
+        self.receipt = self.publication / "mechanism.json"
+        self.record = {"schema": 1, "scope": "paperless-custody-mechanism", "result": "checks-passed",
+            "case": "positive", "context": {}, "sdk": {}, "observations": {}, "applications_accepted": 0,
+            "full_driver": False, "target_recreation": False, "native_qualified": False}
+        self.raw = evidence.encoded(self.record)
+        self.staged.mkdir(mode=0o700)
+        self.publication.mkdir(mode=0o700)
+        self.receipt.write_bytes(self.raw)
+        self.receipt.chmod(0o600)
+        self.unrelated = self.base / "private"
+        self.unrelated.mkdir(mode=0o700)
+        (self.unrelated / "secret").write_bytes(b"never read")
+        self.changes = []
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(worker.transfer, "WORKSPACE", self.base))
+        if self.real_root:
+            os.chown(self.staged, self.uid, self.gid)
+            original_chown = os.fchown
+            def change(fd, uid, gid):
+                self.changes.append((os.fstat(fd).st_ino, uid, gid))
+                original_chown(fd, uid, gid)
+        else:
+            # Preserve real inode/mode/size/time metadata and no-follow lookups.
+            # Only root identity and ownership operations need emulation here.
+            original_stat, original_fstat = os.stat, os.fstat
+            original_open = os.open
+            # A normal user cannot request O_NOATIME on root's ancestors.
+            def privileged_open(name, flags, **kwargs):
+                try:
+                    return original_open(name, flags, **kwargs)
+                except PermissionError:
+                    self.assertTrue(flags & os.O_DIRECTORY)
+                    return original_open(name, flags & ~os.O_NOATIME, **kwargs)
+            stack.enter_context(mock.patch.object(worker.os, "open", side_effect=privileged_open))
+            self.owners = {self.publication.stat().st_ino: (0, 0), self.receipt.stat().st_ino: (0, 0)}
+            def owned(item):
+                fields = {name: getattr(item, name) for name in dir(item) if name.startswith("st_")}
+                fields["st_uid"], fields["st_gid"] = self.owners.get(item.st_ino, (item.st_uid, item.st_gid))
+                return types.SimpleNamespace(**fields)
+            stack.enter_context(mock.patch.object(worker.os, "stat", side_effect=lambda *a, **kw: owned(original_stat(*a, **kw))))
+            stack.enter_context(mock.patch.object(worker.os, "fstat", side_effect=lambda fd: owned(original_fstat(fd))))
+            for name in ("getuid", "geteuid", "getgid", "getegid"):
+                stack.enter_context(mock.patch.object(worker.os, name, return_value=0))
+            def change(fd, uid, gid):
+                inode = original_fstat(fd).st_ino
+                self.changes.append((inode, uid, gid))
+                self.owners[inode] = (uid, gid)
+        stack.enter_context(mock.patch.object(worker.os, "fchown", side_effect=change))
+
+    def handoff(self):
+        error = io.StringIO()
+        with redirect_stderr(error):
+            result = worker.restore_mechanism_receipt(self.uid, self.gid)
+        self.assertEqual(error.getvalue(), "" if result == 0 else
+            "reviewed mechanism receipt handoff rejected; no passing evidence\n")
+        return result
+
+    def test_fixed_receipt_is_transferred_before_publication_without_mode_changes(self):
+        before = {path: path.stat() for path in (self.staged, self.publication, self.receipt, self.unrelated)}
+        self.assertEqual(self.handoff(), 0)
+        self.assertEqual(self.changes, [(before[self.receipt].st_ino, self.uid, self.gid),
+                                        (before[self.publication].st_ino, self.uid, self.gid)])
+        for path in before:
+            self.assertEqual(path.stat().st_mode, before[path].st_mode)
+        self.assertEqual(self.receipt.read_bytes(), self.raw)
+        self.assertEqual(self.unrelated.stat(), before[self.unrelated])
+
+    def test_real_original_permission_condition_and_intended_runner_read(self):
+        if not self.real_root:
+            self.skipTest("real root permission regression also run explicitly under sudo")
+        def runner():
+            os.setgid(self.gid)
+            os.setuid(self.uid)
+        command = [sys.executable, "-c", "import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())", str(self.receipt)]
+        before = subprocess.run(command, capture_output=True, check=False, preexec_fn=runner)
+        self.assertNotEqual(before.returncode, 0)
+        self.assertIn(b"PermissionError", before.stderr)
+        self.assertEqual(self.handoff(), 0)
+        after = subprocess.run(command, capture_output=True, check=False, preexec_fn=runner)
+        self.assertEqual((after.returncode, after.stdout, after.stderr), (0, self.raw, b""))
+
+    def test_missing_symlink_hardlink_and_special_receipts_refuse(self):
+        self.receipt.unlink()
+        self.assertEqual(self.handoff(), 1)
+        self.receipt.symlink_to(self.unrelated / "secret")
+        self.assertEqual(self.handoff(), 1)
+        self.receipt.unlink()
+        os.link(self.unrelated / "secret", self.receipt)
+        self.assertEqual(self.handoff(), 1)
+        self.receipt.unlink()
+        self.receipt.mkdir(mode=0o600)
+        self.assertEqual(self.handoff(), 1)
+        self.receipt.rmdir()
+        os.mkfifo(self.receipt, 0o600)
+        self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_publication_symlink_and_unexpected_entry_refuse(self):
+        (self.publication / "extra").write_bytes(b"private")
+        self.assertEqual(self.handoff(), 1)
+        (self.publication / "extra").unlink()
+        moved = self.staged / "moved"
+        self.publication.rename(moved)
+        self.publication.symlink_to(moved, target_is_directory=True)
+        self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_wrong_modes_and_recipient_refuse_without_mutation(self):
+        for path, wrong, original in ((self.staged, 0o755, 0o700), (self.publication, 0o750, 0o700),
+                                       (self.receipt, 0o640, 0o600)):
+            path.chmod(wrong)
+            with self.subTest(path=path.name):
+                self.assertEqual(self.handoff(), 1)
+            path.chmod(original)
+        self.uid += 1
+        self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_wrong_root_ownership_refuses(self):
+        for path in (self.publication, self.receipt):
+            if self.real_root:
+                os.chown(path, self.uid, self.gid)
+            else:
+                self.owners[path.stat().st_ino] = (self.uid, self.gid)
+            self.assertEqual(self.handoff(), 1)
+            if self.real_root:
+                os.chown(path, 0, 0)
+            else:
+                self.owners[path.stat().st_ino] = (0, 0)
+        self.assertEqual(self.changes, [])
+
+    def test_empty_oversized_noncanonical_invalid_and_duplicate_json_refuse(self):
+        for raw in (b"", b"x" * (worker.transfer.MAX_JSON + 1), b"not json", b"{}\n",
+                    self.raw + b"\n", b'{"result":"refused","result":"checks-passed"}\n',
+                    self.raw.replace(b'"schema":1', b'"schema":NaN'),
+                    self.raw.replace(b'"native_qualified":false', b'"native_qualified":true')):
+            self.receipt.write_bytes(raw)
+            with self.subTest(size=len(raw)):
+                self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_refusal_receipt_remains_refused_and_cannot_grant_teardown(self):
+        self.record["result"] = "refused"
+        del self.record["observations"]
+        self.record["residuals"] = {key: None for key in ("last_verified_phase", "owner_pid", "owner_start",
+            "guard_pid", "guard_start", "core_id", "core_name", "storage_name", "private_directory",
+            "expiry_observation", "expiry_observation_pending")}
+        self.record["residuals"].update(verification="incomplete", worker_teardown_authority=True)
+        self.receipt.write_bytes(evidence.encoded(self.record))
+        self.assertEqual(self.handoff(), 1)
+        self.record["residuals"]["worker_teardown_authority"] = False
+        self.receipt.write_bytes(evidence.encoded(self.record))
+        self.assertEqual(self.handoff(), 0)
+        self.assertEqual(json.loads(self.receipt.read_bytes()), self.record)
+        with self.assertRaises(ValueError):
+            evidence.validate_mechanism(self.record, trusted=ROOT, revision=MAIN,
+                run_id="123", attempt="2", case="positive", actors=ACTORS)
+
+    def test_invalid_or_mixed_envelopes_do_not_transfer(self):
+        for key, value in (("schema", True), ("applications_accepted", False), ("scope", "foreign"),
+                           ("case", "foreign"), ("context", []), ("sdk", []), ("observations", []),
+                           ("residuals", {}), ("native_qualified", 0), ("target_recreation", True)):
+            changed = {**self.record, key: value}
+            self.receipt.write_bytes(evidence.encoded(changed))
+            with self.subTest(key=key):
+                self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_read_time_receipt_substitution_refuses(self):
+        original = os.read
+        def swapped(fd, size):
+            raw = original(fd, size)
+            if raw:
+                self.receipt.rename(self.publication / "original")
+                self.receipt.write_bytes(self.raw)
+                self.receipt.chmod(0o600)
+            return raw
+        with mock.patch.object(worker.os, "read", side_effect=swapped):
+            self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_read_time_ancestor_substitution_refuses(self):
+        original = os.read
+        def swapped(fd, size):
+            raw = original(fd, size)
+            if raw:
+                self.staged.rename(self.base / "original-staged")
+                self.staged.mkdir(mode=0o700)
+            return raw
+        with mock.patch.object(worker.os, "read", side_effect=swapped):
+            self.assertEqual(self.handoff(), 1)
+        self.assertEqual(self.changes, [])
+
+    def test_old_atimes_are_preserved_by_directory_listing_and_payload_read(self):
+        ancient = 1_000_000_000
+        for path in (self.publication, self.receipt):
+            item = path.stat()
+            os.utime(path, ns=(ancient, item.st_mtime_ns))
+        self.assertEqual(self.handoff(), 0)
+        self.assertEqual(self.publication.stat().st_atime_ns, ancient)
+        self.assertEqual(self.receipt.stat().st_atime_ns, ancient)
+
+    def test_handoff_time_directory_substitution_fails_before_directory_chown(self):
+        original = worker.os.fchown
+        def swapped(fd, uid, gid):
+            original(fd, uid, gid)
+            self.publication.rename(self.staged / "original")
+            self.publication.mkdir(mode=0o700)
+        with mock.patch.object(worker.os, "fchown", side_effect=swapped):
+            self.assertEqual(self.handoff(), 1)
+        self.assertEqual(len(self.changes), 1)
+
+    def test_hostile_errors_and_all_opened_descriptors_close(self):
+        original_open, original_close = os.open, os.close
+        for failed in ("open", "read", "fchown", "close"):
+            opened, closed = [], []
+            def tracked_open(*args, **kwargs):
+                fd = original_open(*args, **kwargs)
+                opened.append(fd)
+                if failed == "open" and len(opened) == 2:
+                    original_close(fd)
+                    closed.append(fd)
+                    raise OSError("PRIVATE_HOSTILE_PATH_TOKEN")
+                return fd
+            def tracked_close(fd):
+                closed.append(fd)
+                original_close(fd)
+                if failed == "close":
+                    raise OSError("PRIVATE_HOSTILE_PATH_TOKEN")
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(worker.os, "open", side_effect=tracked_open))
+                stack.enter_context(mock.patch.object(worker.os, "close", side_effect=tracked_close))
+                if failed in ("read", "fchown"):
+                    stack.enter_context(mock.patch.object(worker.os, failed, side_effect=OSError("PRIVATE_HOSTILE_PATH_TOKEN")))
+                self.assertEqual(self.handoff(), 1)
+            self.assertEqual(sorted(opened), sorted(closed))
+
+    def test_workflow_uses_credential_free_fixed_privileged_handoff_and_upload_gate(self):
+        text = (ROOT / ".github/workflows/reviewed-docker-consumer-worker.yml").read_text()
+        handoff = text.split("      - name: Restore only sanitized mechanism record ownership\n", 1)[1]
+        restore, upload = handoff.split("      - name: Upload only bounded mechanism evidence\n", 1)
+        self.assertIn("id: mechanism-receipt-handoff", restore)
+        self.assertIn("if: always() && inputs.mode == 'mechanism'", restore)
+        self.assertIn('sudo env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME=/root PYTHONDONTWRITEBYTECODE=1', restore)
+        self.assertIn('python3 -I -B - "$(id -u)" "$(id -g)"', restore)
+        self.assertIn('"/home/runner/work/boxferry/boxferry/trusted/scripts/reviewed-docker-consumer-run.py"', restore)
+        self.assertIn("module.restore_mechanism_receipt(int(sys.argv[1]), int(sys.argv[2]))", restore)
+        for denied in ("[[", "chown", "chmod", "GITHUB_TOKEN", "GH_TOKEN", "$PWD", "--output"):
+            self.assertNotIn(denied, restore)
+        self.assertIn("if: always() && inputs.mode == 'mechanism' && steps.mechanism-receipt-handoff.outcome == 'success'", upload)
+        self.assertIn("path: staged/custody/mechanism.json\n", upload)
+        self.assertIn("if-no-files-found: error", upload)
+
+        # Import/argument failures must also stay closed before the helper runs.
+        inline = restore.split("<<'PY'\n", 1)[1].rsplit("          PY\n", 1)[0]
+        inline = "\n".join(line[10:] for line in inline.splitlines())
+        error = io.StringIO()
+        with mock.patch.object(importlib.util, "spec_from_file_location", side_effect=OSError("PRIVATE_HOSTILE_TOKEN")), \
+             redirect_stderr(error), self.assertRaises(SystemExit) as stopped:
+            exec(compile(inline, "trusted-handoff-inline", "exec"), {})
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertEqual(error.getvalue(), "reviewed mechanism receipt handoff rejected; no passing evidence\n")
+
+    def test_fresh_handoff_interpreter_excludes_foreign_modules_and_disables_bytecode(self):
+        text = (ROOT / ".github/workflows/reviewed-docker-consumer-worker.yml").read_text()
+        restore = text.split("      - name: Restore only sanitized mechanism record ownership\n", 1)[1]
+        restore = restore.split("      - name: Upload only bounded mechanism evidence\n", 1)[0]
+        invocation = next(line.strip().split() for line in restore.splitlines()
+                          if line.strip().startswith("python3 "))
+        flags = invocation[1:4]
+        self.assertEqual(flags, ["-I", "-B", "-"])
+        shadow = self.base / "foreign-working-directory"
+        shadow.mkdir()
+        marker = shadow / "executed"
+        (shadow / "json.py").write_text(
+            f"open({str(marker)!r}, 'w').write('foreign executed')\nraise RuntimeError('foreign module')\n")
+        environment = {"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(shadow)}
+        source = ROOT / "scripts/reviewed-docker-consumer-run.py"
+        probe = ("import importlib.util,sys\n"
+                 f"spec=importlib.util.spec_from_file_location('trusted_receipt_handoff', {str(source)!r})\n"
+                 "module=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+                 "print(int(sys.flags.isolated), int(sys.dont_write_bytecode))\n")
+        # A fresh interpreter is essential: this process already imported json.
+        exposed = subprocess.run([sys.executable, "-B", "-"], input=probe, text=True,
+            cwd=shadow, env=environment, capture_output=True, check=False)
+        self.assertNotEqual(exposed.returncode, 0)
+        self.assertEqual(marker.read_text(), "foreign executed")
+        marker.unlink()
+        isolated = subprocess.run([sys.executable, *flags], input=probe, text=True,
+            cwd=shadow, env=environment, capture_output=True, check=False)
+        self.assertEqual((isolated.returncode, isolated.stdout, isolated.stderr), (0, "1 1\n", ""))
+        self.assertFalse(marker.exists())
+        self.assertFalse((shadow / "__pycache__").exists())
+        # -I ignores PYTHONDONTWRITEBYTECODE; the explicit -B is required.
+        without_b = subprocess.run([sys.executable, "-I", "-"],
+            input="import sys; print(int(sys.dont_write_bytecode))\n", text=True,
+            cwd=shadow, env=environment, capture_output=True, check=False)
+        self.assertEqual((without_b.returncode, without_b.stdout, without_b.stderr), (0, "0\n", ""))
+
+
 class SocketMetadataContract(unittest.TestCase):
     FIELDS = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink", "st_size",
               "st_mtime_ns", "st_ctime_ns")
