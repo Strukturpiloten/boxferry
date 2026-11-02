@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -40,7 +43,7 @@ class SourceAuthority(unittest.TestCase):
         self.main, self.sdk = self.base / "main", self.base / "sdk"
         self.main.mkdir()
         self.sdk.mkdir()
-        for name in auth.CUSTODY_BOX_FILES:
+        for name in auth.CUSTODY_MAIN_FILES:
             path = self.main / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(("authored main bytes " + name).encode())
@@ -82,7 +85,7 @@ class SourceAuthority(unittest.TestCase):
         box, dependency, held = auth.custody_sources(self.main, self.sdk, MAIN)
         self.assertEqual(box["revision"], MAIN)
         self.assertEqual(dependency, self.policy)
-        self.assertEqual(len(held), 32)
+        self.assertEqual(len(held), 27)
         target = self.base / "execution"
         auth.copy_closure(held, target)
         self.assertEqual({name: (target / name).read_bytes() for name in held}, held)
@@ -125,6 +128,215 @@ class SourceAuthority(unittest.TestCase):
         path.write_text(path.read_text().replace(SDK, "c" * 40))
         with self.assertRaises(ValueError):
             auth.custody_helper_policy(self.main)
+
+
+class TrackedMainAuthority(unittest.TestCase):
+    """Real tracked bytes and Git state; no main-source or Git mocks."""
+
+    CANDIDATE_ONLY = frozenset({
+        "crates/boxferry/examples/docker-host-metadata.rs",
+        "crates/boxferry/examples/docker-volume-fixture-rehearsal.rs",
+        "crates/boxferry/tests/docker_authored_bind_rehearsal.rs",
+        "crates/boxferry/tests/support/docker_volume_fixtures.rs",
+        "fixtures/conformance/docker-application/core-reacquire-expectations.json",
+    })
+
+    # Independent expected authority, rather than the implementation's set or
+    # a count/subset assertion: canonical guard14 + launcher + reviewed support12.
+    EXPECTED_GUARD_FILES = frozenset({
+        "scripts/lib/docker-paperless-transport.py",
+        "scripts/lib/docker-application-contract.py",
+        "scripts/lib/docker-paperless-volume-custody.py",
+        "scripts/lib/docker-core-artifact.py",
+        "scripts/lib/docker-application-schedule.py",
+        "scripts/lib/docker-application-expectations.py",
+        "scripts/lib/docker-paperless-application.sh",
+        "scripts/lib/paperless-application.sh",
+        "scripts/lib/paperless-application-probes.sh",
+        "fixtures/conformance/docker-application/expected-applications.json",
+        "fixtures/conformance/paperless-ngx-application/compose.yaml",
+        "fixtures/conformance/paperless-ngx-application/images.tsv",
+        "fixtures/conformance/paperless-ngx-application/providers.tsv",
+        "fixtures/conformance/paperless-ngx-application/document-probe.py",
+    })
+    EXPECTED_SUPPORT_FILES = frozenset({
+        "scripts/docker-application-conformance.sh",
+        "scripts/lib/bounded-native-read.py",
+        "fixtures/scenarios/nextcloud-application/compose.yaml",
+        "fixtures/scenarios/nextcloud-application/compose.acceptance.yaml",
+        "fixtures/scenarios/nextcloud-application/nextcloud.env.example",
+        "fixtures/conformance/docker-application/core-expectations.json",
+        "fixtures/conformance/docker-application/core.compose.yaml",
+        "fixtures/conformance/forgejo-application/compose.yaml",
+        "fixtures/conformance/nextcloud-application/compose.yaml",
+        "fixtures/conformance/immich-application/compose.yaml",
+        "fixtures/conformance/observability-application/compose.yaml",
+        "fixtures/conformance/supabase-application/compose.yaml",
+    })
+    EXPECTED_MAIN_FILES = EXPECTED_GUARD_FILES | EXPECTED_SUPPORT_FILES | {"scripts/verify-docker-paperless-custody.py"}
+
+    @staticmethod
+    def git(root, *arguments):
+        command = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "-c", "commit.gpgsign=false", "-c", "user.name=tracked-source-fixture",
+            "-c", "user.email=tracked-source-fixture@example.invalid", "-C", str(root), *arguments]
+        result = subprocess.run(command, capture_output=True, check=True, timeout=20,
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
+                 "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"})
+        return result.stdout.decode().strip()
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="custody-tracked-main-")
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.main = self.base / "main"
+        self.main.mkdir()
+        self.tracked = frozenset(name for name in self.git(ROOT, "ls-files", "--cached", "-z").split("\0") if name)
+        # Never fabricate a declared dependency: every copied path is an actual
+        # tracked working-tree file, including the pending source correction.
+        for name in self.tracked:
+            source, target = ROOT / name, self.main / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_symlink():
+                target.symlink_to(os.readlink(source))
+            else:
+                shutil.copy2(source, target)
+        self.git(self.main, "init", "--quiet")
+        self.revision = self.commit()
+        snapshot_tracked = frozenset(name for name in self.git(self.main, "ls-files", "--cached", "-z").split("\0") if name)
+        self.assertEqual(snapshot_tracked, self.tracked)
+
+    def commit(self, *, empty=False):
+        self.git(self.main, "add", "--all", "--force")
+        arguments = ["commit", "--quiet", "--no-gpg-sign", "-m", "tracked source fixture"]
+        if empty:
+            arguments.append("--allow-empty")
+        self.git(self.main, *arguments)
+        self.assertEqual(self.git(self.main, "status", "--porcelain", "--untracked-files=all"), "")
+        return self.git(self.main, "rev-parse", "HEAD")
+
+    def entrypoint(self, *, revision=None, copy=False):
+        # Import the production authority FROM the clean snapshot in a real
+        # isolated Python process. No fabricated module, Git reply or source gate.
+        program = """
+import importlib.util,json,pathlib,sys
+root=pathlib.Path(sys.argv[1])
+spec=importlib.util.spec_from_file_location('tracked_main_authority',root/'scripts/reviewed-docker-consumer-authorization.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+record,files=module.custody_main_source(root,sys.argv[2])
+if sys.argv[3]!='-':module.copy_closure(files,pathlib.Path(sys.argv[3]))
+print(json.dumps({'record':record,'files':sorted(files)},sort_keys=True))
+"""
+        return subprocess.run([sys.executable, "-I", "-B", "-c", program, str(self.main),
+            revision or self.revision, str(self.base / "execution") if copy else "-"],
+            capture_output=True, timeout=20, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+
+    def test_actual_clean_tracked_main_authenticates_and_copies_only_mechanism_closure(self):
+        result = self.entrypoint(copy=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        value = json.loads(result.stdout)
+        self.assertEqual(value["record"]["revision"], self.revision)
+        self.assertEqual(value["record"]["source_sha256"], auth.source_digest(ROOT))
+        selected = set(value["files"])
+        self.assertEqual(selected, self.EXPECTED_MAIN_FILES)
+        self.assertEqual(selected, set(value["record"]["files"]))
+        self.assertEqual(len(selected), 27)
+        self.assertTrue(auth.CUSTODY_SOURCE_FILES <= selected)
+        self.assertIn(auth.CUSTODY_LAUNCHER, selected)
+        self.assertTrue(self.CANDIDATE_ONLY.isdisjoint(selected))
+        execution = self.base / "execution"
+        copied = {str(path.relative_to(execution)) for path in execution.rglob("*") if path.is_file()}
+        self.assertEqual(copied, selected)
+        for name in selected:
+            self.assertEqual((execution / name).read_bytes(), (self.main / name).read_bytes())
+            self.assertEqual(value["record"]["files"][name], hashlib.sha256((self.main / name).read_bytes()).hexdigest())
+        program = """
+import importlib.util,json,pathlib,sys
+execution=pathlib.Path(sys.argv[1]).resolve(strict=True)
+spec=importlib.util.spec_from_file_location('copied_custody_launcher',execution/'scripts/verify-docker-paperless-custody.py')
+launcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(launcher)
+contract=launcher.contract()
+# Follow the imported module attributes, not sys.modules: these source helpers
+# use explicit specs and are not all registered as conventional imports.
+modules={'launcher':launcher,'contract':contract,'core':contract.core_artifact,
+    'schedule':contract.core_artifact.schedule,'expectations':contract.core_artifact.schedule.topology,
+    'bounded_read':contract.native_read}
+assert launcher.ROOT==execution and contract.REPOSITORY_ROOT==execution
+origins={name:str(pathlib.Path(module.__file__).resolve(strict=True).relative_to(execution))
+    for name,module in modules.items()}
+print(json.dumps(origins,sort_keys=True))
+"""
+        launch = subprocess.run([sys.executable, "-I", "-B", "-c", program, str(execution)],
+            capture_output=True, timeout=20, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+        self.assertEqual(launch.returncode, 0, launch.stderr.decode())
+        self.assertEqual(json.loads(launch.stdout), {
+            "launcher": "scripts/verify-docker-paperless-custody.py",
+            "contract": "scripts/lib/docker-application-contract.py",
+            "core": "scripts/lib/docker-core-artifact.py",
+            "schedule": "scripts/lib/docker-application-schedule.py",
+            "expectations": "scripts/lib/docker-application-expectations.py",
+            "bounded_read": "scripts/lib/bounded-native-read.py",
+        })
+        self.assertEqual(self.git(self.main, "status", "--porcelain", "--untracked-files=all"), "")
+
+    def test_candidate_only_data_presence_does_not_expand_mechanism_authority(self):
+        # Deliberate unused data is added only AFTER the genuine snapshot. This
+        # neither pads required main members nor assumes future candidate files
+        # remain absent from the tracked project tree.
+        self.assertTrue(self.CANDIDATE_ONLY.isdisjoint(self.EXPECTED_MAIN_FILES))
+        for name in self.CANDIDATE_ONLY:
+            path = self.main / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"deliberately unconsumed candidate-only test data\n")
+        self.revision = self.commit()
+        self.assertTrue(all((self.main / name).is_file() for name in self.CANDIDATE_ONLY))
+        result = self.entrypoint(copy=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        value = json.loads(result.stdout)
+        self.assertEqual(set(value["files"]), self.EXPECTED_MAIN_FILES)
+        self.assertEqual(set(value["record"]["files"]), self.EXPECTED_MAIN_FILES)
+        execution = self.base / "execution"
+        copied = {str(path.relative_to(execution)) for path in execution.rglob("*") if path.is_file()}
+        self.assertEqual(copied, self.EXPECTED_MAIN_FILES)
+        self.assertTrue(self.CANDIDATE_ONLY.isdisjoint(copied))
+
+    def missing_member_refuses_even_in_clean_new_commit(self, name):
+        (self.main / name).unlink()
+        self.revision = self.commit()
+        result = self.entrypoint(copy=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"FileNotFoundError", result.stderr)
+        self.assertFalse((self.base / "execution").exists())
+
+    def test_missing_original_guard_member_refuses_without_availability_filtering(self):
+        self.missing_member_refuses_even_in_clean_new_commit("scripts/lib/docker-paperless-transport.py")
+
+    def test_missing_main_import_support_refuses_without_padding(self):
+        self.missing_member_refuses_even_in_clean_new_commit("scripts/lib/bounded-native-read.py")
+
+    def test_untracked_source_refuses_before_copy(self):
+        (self.main / "scripts/untracked-source.py").write_text("unexpected source\n")
+        result = self.entrypoint(copy=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"Rejection", result.stderr)
+        self.assertFalse((self.base / "execution").exists())
+
+    def test_changed_actual_head_refuses_even_when_tracked_content_is_identical(self):
+        old_revision = self.revision
+        new_revision = self.commit(empty=True)
+        self.assertNotEqual(old_revision, new_revision)
+        result = self.entrypoint(revision=old_revision, copy=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"Rejection", result.stderr)
+        self.assertFalse((self.base / "execution").exists())
+
+    def test_candidate_and_legacy_closures_keep_their_original_members(self):
+        self.assertEqual(len(auth.BOX_FILES), 23)
+        self.assertEqual(len(auth.CUSTODY_BOX_FILES), 32)
+        self.assertEqual(auth.CUSTODY_BOX_FILES, auth.BOX_FILES | auth.CUSTODY_SOURCE_FILES | {auth.CUSTODY_LAUNCHER})
+        self.assertTrue(self.CANDIDATE_ONLY <= auth.BOX_FILES)
+        self.assertTrue(self.CANDIDATE_ONLY <= auth.CUSTODY_BOX_FILES)
+        self.assertTrue(self.CANDIDATE_ONLY.isdisjoint(auth.CUSTODY_MAIN_FILES))
 
 
 class MainActorAuthority(unittest.TestCase):
@@ -308,6 +520,9 @@ class FixedEntrypoint(unittest.TestCase):
         owner = mechanism.contract()
         self.assertEqual(set(owner.PAPERLESS_SOURCES), auth.CUSTODY_SOURCE_FILES)
         self.assertEqual(len(auth.CUSTODY_BOX_FILES), 32)
+        self.assertEqual(len(auth.BOX_FILES), 23)
+        self.assertEqual(len(auth.CUSTODY_MAIN_FILES), 27)
+        self.assertLessEqual(auth.CUSTODY_SOURCE_FILES, auth.CUSTODY_MAIN_FILES)
         self.assertIn("scripts/lib/docker-paperless-transport.py", auth.CUSTODY_BOX_FILES)
 
     def test_canonical_registrations_and_renovate_extraction(self):

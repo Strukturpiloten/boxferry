@@ -33,10 +33,26 @@ Rust, semantic projection, scenario or loader changes. Main Cargo manifests,
 lockfiles, application schedule and catalogue remain unchanged. The original
 fourteen-path source authority remains complete, including passive
 `docker-paperless-transport.py`; its application constructor is never invoked by
-the mechanism. The existing twenty-three-file closure, those fourteen paths and
-one fixed launcher form exactly thirty-two files. The trusted worker authenticates
-that closure before root import. The guard reauthenticates its original roster
-and compiles retained module bytes; callback digests cannot authorize code.
+the mechanism. The legacy custody union remains thirty-two files, formed by
+the union of the original twenty-three candidate paths, fourteen guard paths and
+fixed launcher.
+That historical union is not the trusted-main mechanism closure.
+
+The first main mechanism attempt exposed an incorrect assumption in the original
+copy-closure decision: four candidate Rust example/test paths and the candidate
+core-reacquisition expectations file are absent from the actual tracked main
+tree. Requiring those files rejected clean main before native execution. Correct
+that boundary with a separate explicit twenty-seven-file main closure: the same
+fourteen guard paths, the fixed launcher and twelve reviewed main support paths.
+It neither filters by path existence nor depends on future candidate-list changes.
+Missing main members still refuse execution. The candidate twenty-three-file
+admission set and legacy thirty-two-file union remain unchanged.
+
+The trusted worker authenticates the explicit main closure before root import.
+The guard reauthenticates its original fourteen-path roster and compiles retained
+module bytes; callback digests cannot authorize code. A regression uses actual
+tracked source bytes in a clean temporary Git snapshot and the unmocked production
+main-source gate; fabricated declared-file fixtures alone are not this evidence.
 
 The immutable DockerLens helper dependency is
 `ec58b844a46c881ea175bccae85a049f609b43c1`. Its full source and lock digests and

@@ -78,6 +78,22 @@ CUSTODY_SOURCE_FILES = frozenset({
     "fixtures/conformance/paperless-ngx-application/document-probe.py",
 })
 CUSTODY_BOX_FILES = BOX_FILES | CUSTODY_SOURCE_FILES | {CUSTODY_LAUNCHER}
+# Trusted-main mechanism authority is explicit and independent of candidate-only
+# build/reacquisition files, including any future expansion of BOX_FILES.
+CUSTODY_MAIN_FILES = CUSTODY_SOURCE_FILES | {CUSTODY_LAUNCHER} | frozenset({
+    "scripts/docker-application-conformance.sh",
+    "scripts/lib/bounded-native-read.py",
+    "fixtures/scenarios/nextcloud-application/compose.yaml",
+    "fixtures/scenarios/nextcloud-application/compose.acceptance.yaml",
+    "fixtures/scenarios/nextcloud-application/nextcloud.env.example",
+    "fixtures/conformance/docker-application/core-expectations.json",
+    "fixtures/conformance/docker-application/core.compose.yaml",
+    "fixtures/conformance/forgejo-application/compose.yaml",
+    "fixtures/conformance/nextcloud-application/compose.yaml",
+    "fixtures/conformance/immich-application/compose.yaml",
+    "fixtures/conformance/observability-application/compose.yaml",
+    "fixtures/conformance/supabase-application/compose.yaml",
+})
 CUSTODY_CASES = ("positive", "replace-data", "replace-media", "replace-consume", "replace-export",
                  "replace-pgdata", "replace-redisdata", "owner-loss", "guard-loss", "expiry", "lost-ack")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -268,8 +284,8 @@ def custody_main_source(trusted: Path, revision: str):
     require(git(trusted, "rev-parse", "--show-toplevel") == str(trusted)
             and git(trusted, "rev-parse", "HEAD") == revision
             and git(trusted, "status", "--porcelain", "--untracked-files=all") == ""
-            and len(CUSTODY_BOX_FILES) == 32)
-    files = {name: read(trusted / name) for name in sorted(CUSTODY_BOX_FILES)}
+            and len(CUSTODY_MAIN_FILES) == 27)
+    files = {name: read(trusted / name) for name in sorted(CUSTODY_MAIN_FILES)}
     return {"revision": revision, "source_sha256": source_digest(trusted),
             "lock_sha256": hashlib.sha256(read(trusted / "Cargo.lock")).hexdigest(),
             "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}}, files
