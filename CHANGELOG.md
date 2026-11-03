@@ -5,6 +5,13 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Added
+
+- Preserve Compose `network_mode: host` and Quadlet container `Network=host` through typed,
+  source-aware neutral intent and reverse mappings. Diagnose conflicting named networks,
+  published ports and pod grouping; other network modes remain explicitly unsupported
+  ([#544](https://github.com/Strukturpiloten/boxferry/issues/544)).
+
 ## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/v0.9.0...v0.10.0) - 2026-10-27
 
 ### Changed

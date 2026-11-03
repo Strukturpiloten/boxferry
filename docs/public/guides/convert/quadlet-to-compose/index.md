@@ -2,6 +2,10 @@
 
 Use this route to reconstruct one canonical Compose document from a Quadlet document set.
 
+Container `Network=host` maps to Compose `network_mode: host`, retaining source provenance.
+Combining it with named networks, `PublishPort`, or `Pod` is invalid. Pod-level networking remains
+service-group runtime intent and is not converted into a service network mode.
+
 ## Prerequisites
 
 - One or more related Quadlet files.

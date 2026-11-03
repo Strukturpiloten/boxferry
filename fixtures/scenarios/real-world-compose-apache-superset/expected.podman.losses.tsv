@@ -2,7 +2,6 @@ BFC0004	services.db.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.nginx.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.redis.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.superset-node.ports[0]	unsupported	podman@5.4.0..6.1.0	1
-BFC0004	services.superset-tests-worker.network_mode	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.superset-websocket.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.superset.ports[0]	unsupported	podman@5.4.0..6.1.0	1
 BFC0004	services.superset.ports[1]	unsupported	podman@5.4.0..6.1.0	1
@@ -16,6 +15,7 @@ BFP0007	services.nginx.host_mappings	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.superset-init.dependencies[0].options	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.superset-init.dependencies[1].options	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.superset-tests-worker.dependencies[0].options	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.superset-tests-worker.network_mode	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.superset-worker.dependencies[0].options	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.superset.dependencies[0].options	unsupported	podman@5.4.0..6.1.0	1
 BFP0008	services.nginx	invalid	podman@5.4.0..6.1.0	1

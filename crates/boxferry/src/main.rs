@@ -2460,6 +2460,21 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                         "native_capabilities": ["quadlet.container.environment", "quadlet.container.volume", "systemd.section.pass-through"]
                     }
                 },
+                "service_network_modes": {
+                    "host": {
+                        "compose_import": "exact",
+                        "compose_export": "exact",
+                        "quadlet_import": "exact",
+                        "quadlet_export": "exact",
+                        "quadlet_minimum": minimum,
+                        "quadlet_maximum": maximum,
+                        "quadlet_native_capability": "quadlet.container.network",
+                        "quadlet_grouping": "separate-containers",
+                        "conflicts": ["named-network-attachments", "published-ports", "pod-grouping"],
+                        "podman_export": "unsupported"
+                    },
+                    "other_modes": "unsupported"
+                },
                 "podman": {
                     "input_capabilities": podman_inputs
                         .iter()
@@ -2473,32 +2488,7 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             }))?
         );
     } else if !presentation.quiet {
-        for route in route::routes() {
-            match route.target_selector {
-                TargetSelector::PodmanRange => println!(
-                    "{} -> {} (Podman {minimum} through {maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::PodmanMaximum => println!(
-                    "{} -> {} (newest reviewed Podman through {podman_maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::ComposeSpecification => println!(
-                    "{} -> {} (rolling Compose Specification)",
-                    route.source_name(),
-                    route.target_name()
-                ),
-            }
-            if presentation.verbose {
-                println!("fidelity: exact for {}", route.exact_boundary);
-                println!(
-                    "fidelity boundary: approximate {:?}; policy controlled {:?}",
-                    route.approximate_boundaries, route.policy_controlled_boundaries
-                );
-            }
-        }
+        print_route_capabilities(&minimum, &maximum, &podman_maximum, presentation.verbose);
         if presentation.verbose {
             println!("Podman input capabilities:");
             for input in &podman_inputs {
@@ -2526,6 +2516,35 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_route_capabilities(minimum: &str, maximum: &str, podman_maximum: &str, verbose: bool) {
+    for route in route::routes() {
+        match route.target_selector {
+            TargetSelector::PodmanRange => println!(
+                "{} -> {} (Podman {minimum} through {maximum})",
+                route.source_name(),
+                route.target_name()
+            ),
+            TargetSelector::PodmanMaximum => println!(
+                "{} -> {} (newest reviewed Podman through {podman_maximum})",
+                route.source_name(),
+                route.target_name()
+            ),
+            TargetSelector::ComposeSpecification => println!(
+                "{} -> {} (rolling Compose Specification)",
+                route.source_name(),
+                route.target_name()
+            ),
+        }
+        if verbose {
+            println!("fidelity: exact for {}", route.exact_boundary);
+            println!(
+                "fidelity boundary: approximate {:?}; policy controlled {:?}",
+                route.approximate_boundaries, route.policy_controlled_boundaries
+            );
+        }
+    }
 }
 
 fn podman_input_capability_json(

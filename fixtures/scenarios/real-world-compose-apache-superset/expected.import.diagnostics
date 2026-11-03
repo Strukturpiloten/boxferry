@@ -5,5 +5,4 @@ BFC0004|services.superset.ports[0]
 BFC0004|services.superset.ports[1]
 BFC0004|services.superset-websocket.ports[0]
 BFC0004|services.superset-node.ports[0]
-BFC0004|services.superset-tests-worker.network_mode
 BFC0105|services.superset-node.environment.SCARF_ANALYTICS

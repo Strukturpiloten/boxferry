@@ -181,6 +181,15 @@ folded presentation hint required by some catalogue validators. Metadata does no
 or supply runtime settings. See [compatibility](../../../reference/compatibility/#vendor-metadata)
 for supported shapes, limits and privacy behavior.
 
+## Host networking
+
+Compose `network_mode: host` becomes `Network=host` on the service's `.container` unit. It
+uses the host network namespace directly and survives conversion back to Compose. Keep these
+services in separate container units: requesting pod grouping fails with an actionable diagnostic.
+Named-network attachments and published `ports` conflict with host networking and must be removed;
+`expose` declarations remain distinct from host publication. Other network modes remain explicit
+unsupported intent. Review the machine-readable `capabilities` output for the target boundary.
+
 ## Output policy
 
 - The default target covers Podman 5.4.0 through 6.1.2.

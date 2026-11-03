@@ -14,10 +14,10 @@ use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
     ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference,
     KernelParameter, Logging, LoggingOption, MetadataLabel, Mount, MountSource, Network, NetworkAttachment,
-    NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString, Protocol, Provenance, PullPolicy, ReloadAction,
-    ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecurityOption,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime,
-    SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
+    NetworkDriverOption, NetworkIpamConfig, NetworkMode, Port, ProtectedString, Protocol, Provenance, PullPolicy,
+    ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret,
+    SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+    ServiceGroupRuntime, SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 use quadlet_lens::model::{
     AuthoredContainerEnvironmentDirective, BuildKey, ContainerKey, EntryKind, ImageKey, NativeCommandDirective,
@@ -1981,6 +1981,7 @@ impl<'a> Mapping<'a> {
         if !state.health_origins.is_empty() {
             service.set_healthcheck(sourced_with_origins(state.healthcheck, &state.health_origins));
         }
+        self.validate_host_network(filename, &service_name, service, pod_groups);
         self.map_deferred_network_attachment_entries(
             filename,
             &service_name,
@@ -3406,6 +3407,32 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn validate_host_network(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &Service,
+        pod_groups: &BTreeMap<String, PodImportGroup>,
+    ) {
+        let Some(mode) = service.network_mode() else {
+            return;
+        };
+        let grouped = pod_groups.values().any(|group| {
+            group
+                .members
+                .iter()
+                .any(|member| member.value().as_str() == service_name)
+        });
+        if !service.networks().is_empty() || !service.ports().is_empty() || grouped {
+            self.invalid_model(
+                &format!("services.{service_name}.network_mode"),
+                filename,
+                "Network=host conflicts with named networks, PublishPort, or Pod; remove the conflicting declarations or select ordinary networking",
+                mode.origins().first().cloned(),
+            );
+        }
+    }
+
     fn map_network(
         &mut self,
         filename: &str,
@@ -3419,6 +3446,27 @@ impl<'a> Mapping<'a> {
         let Some(value) = self.direct_value(filename, &raw_subject, entry, origin.clone()) else {
             return;
         };
+        if value == "host" {
+            let duplicate = service.network_mode().is_some();
+            let mut mode = service
+                .network_mode()
+                .cloned()
+                .unwrap_or_else(|| Sourced::generated(NetworkMode::Host));
+            mode.add_origin(origin.clone());
+            let subject = format!("services.{service_name}.network_mode");
+            if duplicate {
+                self.invalid_model_with_origins(
+                    &subject,
+                    filename,
+                    "repeated Network=host declarations produce conflicting native network selections; retain exactly one host declaration",
+                    mode.origins(),
+                );
+            } else {
+                self.exact(subject, Some(origin));
+            }
+            service.set_network_mode(mode);
+            return;
+        }
         let (name, external) = match entry.value_kind() {
             ValueKind::UnitReference(UnitReferenceKind::Network) => {
                 let Some(name) = value.strip_suffix(".network") else {
@@ -4340,11 +4388,19 @@ impl<'a> Mapping<'a> {
     }
 
     fn invalid_model(&mut self, subject: &str, document: &str, reason: &str, origin: Option<Provenance>) {
+        if let Some(origin) = origin {
+            self.invalid_model_with_origins(subject, document, reason, &[origin]);
+        } else {
+            self.invalid_model_with_origins(subject, document, reason, &[]);
+        }
+    }
+
+    fn invalid_model_with_origins(&mut self, subject: &str, document: &str, reason: &str, origins: &[Provenance]) {
         if let Ok(mut outcome) =
             ConversionOutcome::loss(subject, ConversionKind::Invalid, self.codes.invalid_model.clone())
         {
-            if let Some(origin) = origin {
-                outcome = outcome.with_origin(origin);
+            for origin in origins {
+                outcome = outcome.with_origin(origin.clone());
             }
             self.outcomes.push(outcome);
         }

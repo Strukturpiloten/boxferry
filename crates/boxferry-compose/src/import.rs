@@ -16,7 +16,7 @@ use boxferry_model::{
     HealthcheckDuration as NeutralHealthcheckDuration, HealthcheckRetries as NeutralHealthcheckRetries, HostAddress,
     HostMapping, Identifier, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference, KernelParameter,
     Logging, LoggingOption, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment,
-    NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString, Protocol, Provenance,
+    NetworkDriverOption, NetworkIpamConfig, NetworkMode, Port, ProtectedString, Protocol, Provenance,
     PullPolicy as NeutralPullPolicy, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
     RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
     ServiceDependency, ServiceDependencyCondition, SourceBuildSecret, SourceBuildSetting, SourceSpan, Sourced,
@@ -28,10 +28,10 @@ use compose_lens::model::{
     Entrypoint as ComposeEntrypoint, EnvironmentFileFormatKind, ExposeItemKind, ExposeProtocol,
     HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
     HealthcheckTest, HealthcheckTestKind, HostnameKind, Labels, LimitValue, LongPort, LongVolumeMount, MemLimitKind,
-    MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort, PullPolicyKind, ResourceExternal,
-    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SecurityOptionKind,
-    SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit,
-    ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
+    MountType, NetworkDefinition, NetworkMode as ComposeNetworkMode, PidsLimitKind, Port as ComposePort,
+    PullPolicyKind, ResourceExternal, RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition,
+    SecurityOptionKind, SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShmSizeKind,
+    ShmSizeUnit, ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
     ProjectBuild, ProjectBuildAdditionalContexts, ProjectBuildArgs, ProjectBuildDefinition, ProjectBuildExtraHosts,
@@ -344,6 +344,7 @@ impl<'a> Mapping<'a> {
         if let Some(secrets) = native.secrets() {
             self.map_service_grants(&subject, "secrets", secrets, true, &mut service);
         }
+        self.map_network_mode(&subject, native, &mut service);
         if let Some(networks) = native.networks() {
             self.map_service_networks(
                 &subject,
@@ -2799,6 +2800,39 @@ impl<'a> Mapping<'a> {
         Some(value)
     }
 
+    fn map_network_mode(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        let Some(mode) = native.network_mode() else {
+            return;
+        };
+        let subject = format!("{service_subject}.network_mode");
+        if !matches!(mode.value(), ComposeNetworkMode::Host) {
+            self.unsupported_optional(
+                &subject,
+                "only host network mode has a reviewed neutral mapping",
+                mode.effective_source(),
+            );
+            return;
+        }
+        service.set_network_mode(self.sourced_provenance(NetworkMode::Host, mode.provenance()));
+        self.exact_provenance(&subject, mode.provenance());
+        if let Some(networks) = native.networks() {
+            self.invalid_value_optional(
+                &format!("{service_subject}.networks"),
+                "network_mode: host conflicts with networks; remove named-network attachments or select ordinary networking",
+                networks.effective_source(),
+            );
+        }
+        if let Some(ports) = native.ports()
+            && !ports.value().is_empty()
+        {
+            self.invalid_value_optional(
+                &format!("{service_subject}.ports"),
+                "network_mode: host conflicts with published ports; remove ports because the service uses host ports directly",
+                ports.effective_source(),
+            );
+        }
+    }
+
     fn map_service_networks(
         &mut self,
         service_subject: &str,
@@ -3830,7 +3864,6 @@ impl<'a> Mapping<'a> {
         report!(mem_reservation, "mem_reservation");
         report!(mem_swappiness, "mem_swappiness");
         report!(memswap_limit, "memswap_limit");
-        report!(network_mode, "network_mode");
         report!(oom_kill_disable, "oom_kill_disable");
         report!(oom_score_adj, "oom_score_adj");
         report!(pid, "pid");

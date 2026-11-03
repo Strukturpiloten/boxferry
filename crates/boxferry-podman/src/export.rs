@@ -585,6 +585,18 @@ impl<'a> Mapping<'a> {
 
     fn map_service(&mut self, service: &Service) {
         let subject = format!("services.{}", service.name().as_str());
+        if let Some(mode) = service.network_mode() {
+            let start = self.outcomes.len();
+            self.unsupported(
+                format!("{subject}.network_mode"),
+                "service network namespace selection has no reviewed Podman deployment mapping",
+            );
+            for outcome in &mut self.outcomes[start..] {
+                for origin in mode.origins() {
+                    *outcome = outcome.clone().with_origin(origin.clone());
+                }
+            }
+        }
         let Some(image) = service.image() else {
             self.error(
                 format!("{subject}.image"),

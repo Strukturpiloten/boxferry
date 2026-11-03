@@ -17,9 +17,9 @@ use boxferry_model::{
     Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, ExposedPort,
     GroupExitPolicy, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping, ImageAcquisition,
     ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, MetadataLabel, Mount, MountSource,
-    NetworkAttachment, NetworkDriverOption, Port, ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy,
-    ReloadAction, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroupRuntime, SourceBuildSetting, Sourced,
+    NetworkAttachment, NetworkDriverOption, NetworkMode, Port, ProtectedString, Protocol, Provenance, ProvenanceKind,
+    PullPolicy, ReloadAction, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel,
+    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroupRuntime, SourceBuildSetting, Sourced,
     StartupNotification, VolumeImageSource,
 };
 use quadlet_lens::{
@@ -483,6 +483,10 @@ impl<'a> Mapping<'a> {
             self.generation_failed = true;
             return;
         }
+        if !self.validate_host_networks() {
+            self.generation_failed = true;
+            return;
+        }
         let pod_plan = match self.exporter.grouping_policy {
             QuadletGroupingPolicy::SeparateContainers => None,
             QuadletGroupingPolicy::SinglePod => {
@@ -729,6 +733,29 @@ impl<'a> Mapping<'a> {
             &origins,
         );
         false
+    }
+
+    fn validate_host_networks(&mut self) -> bool {
+        let mut valid = true;
+        for service in self.application.services() {
+            let Some(mode) = service.value().network_mode() else {
+                continue;
+            };
+            if !service.value().networks().is_empty()
+                || !service.value().ports().is_empty()
+                || self.exporter.grouping_policy != QuadletGroupingPolicy::SeparateContainers
+            {
+                self.invalid(
+                    self.exporter.codes.grouping_invalid.clone(),
+                    &format!("services.{}.network_mode", service.value().name().as_str()),
+                    "host networking conflicts with attachments, published ports, or pod grouping",
+                    "remove named-network attachments and published ports, and retain separate container units for host-network services",
+                    mode.origins(),
+                );
+                valid = false;
+            }
+        }
+        valid
     }
 
     fn validate_single_pod_grouping(&mut self) -> bool {
@@ -2373,6 +2400,23 @@ impl<'a> Mapping<'a> {
         builder: &mut QuadletDocumentBuilder,
     ) {
         let Some(pod_name) = pod_name else {
+            if let Some(mode) = service.value().network_mode() {
+                let subject = format!("{service_subject}.network_mode");
+                match mode.value() {
+                    NetworkMode::Host => {
+                        if self.capability("quadlet.container.network", &subject, mode.origins())
+                            && self.push_container(builder, ContainerKey::Network, "host", &subject, mode.origins())
+                        {
+                            self.exact(subject, mode.origins());
+                        }
+                    }
+                    _ => self.unsupported(
+                        &subject,
+                        "network-mode variant is newer than this Quadlet adapter",
+                        mode.origins(),
+                    ),
+                }
+            }
             for network in service.value().networks() {
                 self.map_network_attachment(service_subject, network, builder);
             }

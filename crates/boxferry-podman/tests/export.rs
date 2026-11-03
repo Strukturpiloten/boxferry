@@ -15,6 +15,29 @@ use boxferry_podman::{
 use podman_lens::TargetExecutionContext;
 
 #[test]
+fn host_network_intent_is_explicitly_unsupported_with_source_evidence() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("host-network")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.set_network_mode(Sourced::from_source(boxferry_model::NetworkMode::Host, origin.clone()));
+    let mut application = Application::new(Identifier::new("adapter-test")?);
+    application.add_service(Sourced::generated(service))?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?
+        .with_execution_context(TargetExecutionContext::Rootless)
+        .plan(&application, &target)?;
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.network_mode")
+        .ok_or("network-mode loss expected")?;
+    assert_eq!(outcome.kind(), ConversionKind::Unsupported);
+    assert_eq!(outcome.origins(), &[origin]);
+    assert!(plan.authorize(LossPolicy::ExactOnly).output().is_none());
+    Ok(())
+}
+
+#[test]
 fn reviewed_catalogue_and_ceiling_resolution_are_exact() -> Result<(), Box<dyn Error>> {
     let reviewed = [
         version(5, 4, 0),

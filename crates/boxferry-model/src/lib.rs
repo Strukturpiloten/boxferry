@@ -17,11 +17,11 @@ pub use application::{
     Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable,
     ExposedPort, GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
     HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel,
-    ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, Protocol,
-    PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy,
-    RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Secret, SecretMaterial,
-    SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
-    ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
+    ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, NetworkMode,
+    Port, Protocol, PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
+    RestartPolicy, RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Secret,
+    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
+    ServiceGroup, ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 pub use image::ImageReference;
 pub use image_artifact::{

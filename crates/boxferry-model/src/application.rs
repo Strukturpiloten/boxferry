@@ -2792,6 +2792,17 @@ impl ServiceDependency {
     }
 }
 
+/// An explicit service network namespace selection, separate from named-network attachments.
+///
+/// Omission leaves the target's ordinary networking behavior unchanged. This selection applies
+/// only to the service; it never implies service-group namespace sharing or runtime settings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum NetworkMode {
+    /// Share the host network namespace.
+    Host,
+}
+
 /// One application service with ordered attachments and source provenance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Service {
@@ -2855,6 +2866,7 @@ pub struct Service {
     mounts: Vec<Sourced<Mount>>,
     config_grants: Vec<Sourced<ResourceGrant>>,
     secret_grants: Vec<Sourced<ResourceGrant>>,
+    network_mode: Option<Sourced<NetworkMode>>,
     networks: Vec<Sourced<NetworkAttachment>>,
     dependencies: Vec<Sourced<ServiceDependency>>,
 }
@@ -2934,9 +2946,24 @@ impl Service {
             mounts: Vec::new(),
             config_grants: Vec::new(),
             secret_grants: Vec::new(),
+            network_mode: None,
             networks: Vec::new(),
             dependencies: Vec::new(),
         }
+    }
+
+    /// Sets the explicit service network namespace selection, retaining its provenance.
+    ///
+    /// Adapters diagnose conflicts with attachments, published ports, or group runtime settings;
+    /// the model retains those declarations so conversion can explain the conflicting intent.
+    pub fn set_network_mode(&mut self, value: Sourced<NetworkMode>) {
+        self.network_mode = Some(value);
+    }
+
+    /// Returns the explicit network namespace selection; `None` does not imply host networking.
+    #[must_use]
+    pub const fn network_mode(&self) -> Option<&Sourced<NetworkMode>> {
+        self.network_mode.as_ref()
     }
 
     /// Returns the service name.

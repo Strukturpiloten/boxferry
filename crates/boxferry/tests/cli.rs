@@ -602,6 +602,14 @@ fn assert_verbose_capabilities_include_concise_summaries() -> Result<(), Box<dyn
     assert!(capabilities_json.status.success());
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
+    let host_mode = &capabilities_json["service_network_modes"]["host"];
+    assert_eq!(host_mode["compose_import"], "exact");
+    assert_eq!(host_mode["compose_export"], "exact");
+    assert_eq!(host_mode["quadlet_import"], "exact");
+    assert_eq!(host_mode["quadlet_export"], "exact");
+    assert_eq!(host_mode["quadlet_grouping"], "separate-containers");
+    assert_eq!(host_mode["podman_export"], "unsupported");
+    assert_eq!(capabilities_json["service_network_modes"]["other_modes"], "unsupported");
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
     assert_eq!(routes.len(), 9);
     let podman_inputs = capabilities_json["podman"]["input_capabilities"]
