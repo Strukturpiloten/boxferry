@@ -25,6 +25,24 @@ ROLES = ("data", "media", "consume", "export", "pgdata", "redisdata")
 CASES = ("positive", *("replace-" + role for role in ROLES), "owner-loss", "guard-loss", "expiry", "lost-ack")
 LIMIT = 1_048_576
 CHECK_BYTES = 5 * LIMIT + 34 * 4096 + 2 * 65536 + 16384 + 256 * 4096 + 42
+FAILURE_STAGES = (
+    "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
+    "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
+    "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+    "native-version", "native-info", "inner-volume-data", "inner-volume-media",
+    "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
+    "paperless-hold", "paperless-check", "held-publication",
+)
+
+
+def report_failure_stage(engine):
+    """Last entered bootstrap operation only; never a cause or recovery claim."""
+    try:
+        stage = engine.failure_stage
+        if type(stage) is str and stage in FAILURE_STAGES:
+            print(f"BOXFERRY_CUSTODY_FAILURE last_entered_stage={stage} reason=rejected", file=sys.stderr, flush=True)
+    except Exception:
+        pass  # Diagnostics must never replace the original failure/recovery.
 
 
 class Refused(ValueError):
@@ -185,6 +203,7 @@ class Mechanism:
         self.directory = None
         self.closed = False
         self.prepared = False
+        self.failure_stage = None
         self.phase_number = 0
         self.uncertain = False
 
@@ -287,31 +306,47 @@ class Mechanism:
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self.wait_file(directory / "owner-ready.json")
         self.legacy("pending")
+        self.failure_stage = "prepared-ack"
         self.phase("prepared")
+        self.failure_stage = "outer-pull"
         self.outer(["pull", image])
+        self.failure_stage = "outer-volume-create"
         self.outer(["volume-create", owner["volume_name"], owner["outer_owner"], token])
+        self.failure_stage = "outer-volume-path"
         need(self.outer(["volume-path", owner["volume_name"], owner["outer_owner"], token]).decode().strip() == owner["volume_path"])
+        self.failure_stage = "outer-data-prepare"
         self.outer(["prepare-data", image, "rootless", owner["volume_name"], owner["volume_path"], graph])
+        self.failure_stage = "apparmor-prepare"
         self.outer(["apparmor", "prepare", "upstream-rootless", runner["nonce"], owner["outer_name"], token, image])
+        self.failure_stage = "apparmor-load"
         self.outer(["apparmor", "load", "upstream-rootless", runner["nonce"]])
+        self.failure_stage = "outer-daemon-create"
         cid = self.outer(["create-daemon", owner["outer_name"], token, owner["outer_owner"], "bridge",
             owner["volume_name"], str(socket_dir), "/boxferry-core", "upstream-rootless", image,
             str(directory / "outer.log"), runner["nonce"]]).decode().strip()
+        self.failure_stage = "outer-daemon-identity"
         need(cid == c.owner_cid(owner))
         self.cid = cid
+        self.failure_stage = "daemon-socket-readiness"
         self.wait_file(socket_dir / "docker.sock")
+        self.failure_stage = "legacy-ready"
         self.legacy("ready")
         self.socket = socket_dir / "docker.sock"
+        self.failure_stage = "http-helper-bind"
         self.http = c.bind_unix_http(self.sdk / "scripts/native-unix-http.py", b["sdk"]["revision"],
                                    b["sdk"]["files"]["scripts/native-unix-http.py"])
+        self.failure_stage = "native-peer-bind"
         self.bind()
         # Explicit readiness, version and mapping are native prerequisites.
+        self.failure_stage = "native-version"
         version = self.request("GET", "/version", expected=200)
         need(version["Version"] == "29.8.1" and version["ApiVersion"] == "1.56")
+        self.failure_stage = "native-info"
         info = self.request("GET", "/v1.56/info", expected=200)
         need(info["DockerRootDir"] == "/home/docker/.local/share/docker"
              and any("rootless" in option for option in info["SecurityOptions"]))
         for role in ROLES:
+            self.failure_stage = "inner-volume-" + role
             self.create_role(role)
 
     def wait_file(self, path, *, guard_required=True):
@@ -453,10 +488,14 @@ class Mechanism:
     def run(self):
         print("MECHANISM: fixed owned fixture started; no application acceptance", flush=True)
         self.prepare()
+        self.failure_stage = "paperless-hold"
         self.volume_phase("paperless-hold")
+        self.failure_stage = "paperless-check"
         self.volume_phase("paperless-check")
         need(len(set(self.callback_pids)) == 2)
+        self.failure_stage = "held-publication"
         self.phase("held")  # Worker retains authentic incarnations before any loss.
+        self.failure_stage = None
         case = self.binding["case"]
         if case == "owner-loss":
             print("MECHANISM: authentic owner loss armed", flush=True)
@@ -535,9 +574,12 @@ def main():
     except Exception:
         if mechanism is not None:
             try:
-                mechanism.recover()
-            except Exception:
-                pass  # Failure remains failure; the trusted worker reports residuals.
+                report_failure_stage(mechanism)
+            finally:
+                try:
+                    mechanism.recover()
+                except Exception:
+                    pass  # Failure remains failure; the trusted worker reports residuals.
         print("fixed custody mechanism refused; no native acceptance", file=sys.stderr)
         return 1
 
