@@ -171,6 +171,20 @@ daemon and callback incarnations, actual object identities, counters and cleanup
 Refused records identify only already retained resource obligations. Raw logs,
 proc data and custody remain private. Scope is always mechanism-only: zero
 applications accepted, no full driver, target recreation or native SDK qualification.
+The post-producer receipt handoff inspects only the fixed staged custody directory
+and its single bounded canonical JSON receipt as root. It binds no-follow held
+descriptors to each pathname component, the original runner-owned `0700` staged
+parent, root-owned `0700` publication directory and root-owned single-link `0600`
+regular receipt. A closed metadata envelope preserves success versus refusal;
+it does not repeat native proof validation or grant cleanup authority. Ownership
+transfers on the held receipt descriptor first and publication descriptor last,
+with metadata/path rechecks and unchanged modes. Missing records, substitutions,
+extra entries, invalid metadata or partial handoffs refuse without retry. Only a
+successful handoff permits upload, even when the producer failed and retained a
+refusal record. The credential-free trusted-main helper uses an isolated Python
+interpreter with explicit bytecode suppression (`-I -B`), excluding working-directory
+and Python environment module authority. It emits only a fixed error;
+it neither widens traversal modes nor reads private logs or bindings.
 
 Offline tests and the complete exact-source gate remain mandatory. The manual
 mechanism task is not future Docker/full-application automation. Main/PR/Release
