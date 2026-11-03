@@ -296,7 +296,7 @@ class MechanismFailureDiagnostic:
     STAGES = (
         "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
         "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
-        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind", "apparmor-verify",
         "native-version", "native-info", "inner-volume-data", "inner-volume-media",
         "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
         "paperless-hold", "paperless-check", "held-publication",

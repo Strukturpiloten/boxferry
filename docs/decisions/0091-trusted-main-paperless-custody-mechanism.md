@@ -103,6 +103,14 @@ the original archive-save restriction, other calls and parent mask remain unchan
 This corrects a demonstrated producer/reader mode mismatch, without claiming the
 unobserved mode caused an earlier native failure. No chmod repair or reader
 permission relaxation is permitted.
+After authenticated peer readiness and before version discovery, the owner also
+runs the existing canonical `apparmor verify` for its original lane and nonce.
+This verifies the bound daemon's effective label/cgroup and completes the existing
+runner prerequisite; prepare/load/created alone leave its label unverified.
+The single bounded bridge invocation uses the original deadline and charges one
+call plus returned bytes within the unchanged 256-call/16-MiB allowance. Its
+failure refuses before version discovery, volume creation or hold. Cleanup still
+requires the original verified prerequisite receipt; no validator is relaxed.
 
 Each replacement control uses a fresh original owner/lease. The worker observes
 the old held object and the changed current role object before the failing check.
