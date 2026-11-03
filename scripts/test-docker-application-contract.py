@@ -5020,5 +5020,143 @@ fixture_pull_attempted=false
         self.assertIn("fixture-pull-attempted=false", result.stderr)
 
 
+class PrivateCIDCreationTests(unittest.TestCase):
+    """Real local creators; the native/source authorization boundary is mocked."""
+    CID = "d" * 64
+    CREATOR = "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('d'*64+'\\n'); print('d'*64)"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="private-cid-creation-")
+        self.addCleanup(temporary.cleanup)
+        self.base = pathlib.Path(temporary.name)
+        self.counter = 0
+        self.spawned = []
+
+    def spawn(self, arguments, *, caller, sources, archive=None, refuse=False, tamper=False):
+        self.counter += 1
+        directory = self.base / str(self.counter)
+        directory.mkdir(mode=0o700)
+        target = directory / "outer-create.cid"
+        parent = os.getsid(0)
+        value = {"directory": str(directory), "cid_file": str(target), "lane": "upstream-rootless",
+            "prefix": "cid-regression", "fixture_root": "/tmp/boxferry-fixture/cid-regression",
+            "parent_pid": parent, "parent_start": contract.process_start(parent),
+            "cleanup_deadline": contract.owner_clock() + 6}
+        if sources:
+            value["paperless_sources"] = {}
+        custody = directory / "owner-custody.json"
+        descriptor = os.open(custody, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(b"{}" if tamper else json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+        command = [sys.executable, "-I", "-B", "-c", self.CREATOR, str(target)]
+        validated = []
+        self.spawned = []
+        original_popen = subprocess.Popen
+        def authenticate(selected):
+            self.assertIs(selected, value)
+            if refuse:
+                raise contract.ContractError("source authority refused")
+            validated.append(True)
+            return command
+        def popen(*args, **kwargs):
+            self.assertEqual(validated, [True])
+            self.spawned.append(kwargs.copy())
+            return original_popen(*args, **kwargs)
+        selected = arguments(directory) if callable(arguments) else arguments
+        with mock.patch.object(contract, "owner_validate", side_effect=authenticate), \
+             mock.patch.object(contract.subprocess, "Popen", side_effect=popen):
+            status, raw = contract.owner_call(value, selected, contract.owner_clock() + 3,
+                paperless_caller=caller, paperless_archive_limit=archive)
+        self.assertEqual((status, raw), (0, (self.CID + "\n").encode()))
+        self.assertEqual(len(self.spawned), 1)
+        return {"path": str(target), "mode": stat.S_IMODE(target.stat().st_mode),
+            "cid": contract.owner_cid(value), "kwargs": self.spawned[0]}
+
+    def test_real_creation_under_parent_022_is_private_without_changing_parent_mask(self):
+        # The controlled mask belongs to this isolated test controller, never
+        # to the unittest runner or a global/native runtime environment.
+        program = (
+            "import importlib.util,json,sys\n"
+            "spec=importlib.util.spec_from_file_location('cid_creation_regression',sys.argv[1])\n"
+            "module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)\n"
+            "case=module.PrivateCIDCreationTests();case.setUp()\n"
+            "try:\n"
+            " before=case.spawn(['create-daemon'],caller=False,sources=True)\n"
+            " created=case.spawn(['create-daemon'],caller=True,sources=True)\n"
+            " after=case.spawn(['create-daemon'],caller=False,sources=True)\n"
+            " print(json.dumps({'before':[before['mode'],before['cid']],"
+            "'created':[created['mode'],created['cid']],'after':[after['mode'],after['cid']]}))\n"
+            "finally:case.doCleanups()\n")
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", program, str(pathlib.Path(__file__).resolve())],
+            env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"}, umask=0o022,
+            capture_output=True, text=True, check=False)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(json.loads(result.stdout), {"before": [0o644, None],
+            "created": [0o600, self.CID], "after": [0o644, None]})
+
+    def test_umask_selection_requires_caller_source_authority_and_exact_opcode(self):
+        for caller, sources, arguments in (
+            (False, False, ["create-daemon"]), (False, True, ["create-daemon"]),
+            (True, False, ["create-daemon"]), (True, True, ["observe", "volume", "owned"]),
+            (True, True, ["create-daemon-extra"]), (True, True, []), (True, True, ["create-daemon"]),
+        ):
+            with self.subTest(caller=caller, sources=sources, arguments=arguments):
+                result = self.spawn(arguments, caller=caller, sources=sources)
+                expected = caller and sources and arguments == ["create-daemon"]
+                self.assertEqual(result["kwargs"].get("umask"), 0o077 if expected else None)
+                self.assertNotIn("preexec_fn", result["kwargs"])
+                self.assertEqual(result["kwargs"].get("process_group"), 0 if caller else None)
+                self.assertEqual(result["kwargs"].get("start_new_session"), None if caller else True)
+
+    def test_existing_archive_restriction_keeps_preexec_and_private_child_mask(self):
+        references = [line.split("\t")[1] for line in (contract.REPOSITORY_ROOT /
+            "fixtures/conformance/paperless-ngx-application/images.tsv").read_text().splitlines()
+            if line and not line.startswith("#")]
+        result = self.spawn(lambda directory: ["image-save", references[0], str(directory / "busybox.tar")],
+            caller=True, sources=True, archive=4096)
+        self.assertEqual(result["kwargs"]["umask"], 0o077)
+        self.assertTrue(callable(result["kwargs"]["preexec_fn"]))
+        self.assertEqual(result["mode"], 0o600)
+
+    def test_failed_source_or_sealed_custody_authentication_never_spawns_creator(self):
+        for refusal, tamper in ((True, False), (False, True)):
+            with self.subTest(refusal=refusal, tamper=tamper), self.assertRaises(contract.ContractError):
+                self.spawn(["create-daemon"], caller=True, sources=True, refuse=refusal, tamper=tamper)
+            self.assertEqual(self.spawned, [])
+
+    def test_owner_cid_strict_modes_links_owner_types_and_path_guards_remain(self):
+        target = self.base / "outer-create.cid"
+        value = {"cid_file": str(target)}
+        target.write_text(self.CID + "\n")
+        for mode in (0o000, 0o400, 0o644, 0o660, 0o666, 0o755):
+            target.chmod(mode)
+            self.assertIsNone(contract.owner_cid(value))
+        target.chmod(0o600)
+        self.assertEqual(contract.owner_cid(value), self.CID)
+        with mock.patch.object(contract.os, "geteuid", return_value=target.stat().st_uid + 1):
+            self.assertIsNone(contract.owner_cid(value))
+        alias = self.base / "alias"
+        os.link(target, alias)
+        self.assertIsNone(contract.owner_cid(value))
+        alias.unlink()
+        target.unlink()
+        target.symlink_to(self.base / "missing")
+        self.assertIsNone(contract.owner_cid(value))
+        target.unlink()
+        target.mkdir(mode=0o600)
+        self.assertIsNone(contract.owner_cid(value))
+        target.rmdir()
+        os.mkfifo(target, 0o600)
+        self.assertIsNone(contract.owner_cid(value))
+        target.unlink()
+        self.assertIsNone(contract.owner_cid({"cid_file": "outer-create.cid"}))
+        target.write_bytes(b"D" * 64)
+        target.chmod(0o600)
+        self.assertIsNone(contract.owner_cid(value))
+        target.write_bytes(b"d" * 66)
+        with self.assertRaises(contract.ContractError):
+            contract.owner_cid(value)
+
+
 if __name__ == "__main__":
     unittest.main()
