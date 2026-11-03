@@ -602,6 +602,7 @@ fn assert_verbose_capabilities_include_concise_summaries() -> Result<(), Box<dyn
     assert!(capabilities_json.status.success());
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
+    assert_deployment_restart_capabilities(&capabilities_json);
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
     assert_eq!(routes.len(), 9);
     let podman_inputs = capabilities_json["podman"]["input_capabilities"]
@@ -670,6 +671,26 @@ fn assert_verbose_capabilities_include_concise_summaries() -> Result<(), Box<dyn
     );
 
     Ok(())
+}
+
+fn assert_deployment_restart_capabilities(capabilities_json: &serde_json::Value) {
+    let deployment = &capabilities_json["deployment_restart_policy"];
+    assert_eq!(deployment["compose_input"], true);
+    assert_eq!(
+        deployment["quadlet_input"],
+        "finite-canonical-digits-us-RestartSec-only; Restart-only-retains-legacy-container-policy"
+    );
+    assert_eq!(deployment["compose_output"], "unsupported-compose-lens-generation");
+    assert_eq!(
+        deployment["quadlet_output"]["conditions"],
+        serde_json::json!(["none", "on-failure", "any"])
+    );
+    assert_eq!(deployment["quadlet_output"]["omitted_delay"], "0us");
+    assert_eq!(deployment["quadlet_output"]["delay_precision"], "whole-microseconds");
+    assert_eq!(
+        deployment["quadlet_output"]["unsupported_constraints"],
+        serde_json::json!(["max_attempts", "window"])
+    );
 }
 
 fn assert_human_conversion_output_includes_concise_summary() -> Result<(), Box<dyn Error>> {

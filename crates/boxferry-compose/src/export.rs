@@ -971,6 +971,13 @@ impl<'a> Mapping<'a> {
             return None;
         }
         self.map_restart_policy(service, &mut generated, &service_subject);
+        if let Some(policy) = service.deployment_restart_policy() {
+            self.unsupported(
+                &format!("{service_subject}.deploy.restart_policy"),
+                "ComposeLens cannot generate deployment restart policies; keep deploy.restart_policy in a separately reviewed Compose source or select Quadlet output",
+                policy.origins(),
+            );
+        }
         self.map_command(service, &mut generated, &service_subject);
         self.map_released_container_settings(service, &mut generated, &service_subject);
         self.map_identity(service, &mut generated, &service_subject);

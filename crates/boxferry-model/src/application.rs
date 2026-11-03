@@ -1749,6 +1749,109 @@ impl RestartPolicy {
     }
 }
 
+/// Deployment-manager automatic restart condition, separate from container-runtime restart intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DeploymentRestartCondition {
+    /// Never restart automatically.
+    Never,
+    /// Restart after a failed termination.
+    OnFailure,
+    /// Restart after any termination.
+    Any,
+}
+
+/// Deployment duration field whose valid value exceeds the neutral representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DeploymentRestartDurationField {
+    /// Delay before a restart attempt.
+    Delay,
+    /// Window used to evaluate successful restarts.
+    Window,
+}
+
+/// Deployment-manager restart intent with independent field provenance.
+///
+/// An omitted delay requests immediate restart. A target with a different default must emit
+/// an explicit zero delay. Attempt counts and evaluation windows remain distinct constraints;
+/// exporters must reject the complete policy when they cannot preserve those constraints.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentRestartPolicy {
+    condition: Sourced<DeploymentRestartCondition>,
+    delay: Option<Sourced<std::time::Duration>>,
+    maximum_attempts: Option<Sourced<u64>>,
+    window: Option<Sourced<std::time::Duration>>,
+    unrepresented_durations: Vec<Sourced<DeploymentRestartDurationField>>,
+}
+
+impl DeploymentRestartPolicy {
+    /// Creates a deployment policy with an explicit effective condition and immediate restart delay.
+    #[must_use]
+    pub const fn new(condition: Sourced<DeploymentRestartCondition>) -> Self {
+        Self {
+            condition,
+            delay: None,
+            maximum_attempts: None,
+            window: None,
+            unrepresented_durations: Vec::new(),
+        }
+    }
+
+    /// Records a valid duration that could not enter the neutral duration representation.
+    ///
+    /// This preserves deployment-controller precedence without inventing a replacement duration.
+    /// Exporters must reject the complete policy when this collection is non-empty.
+    pub fn add_unrepresented_duration(&mut self, field: Sourced<DeploymentRestartDurationField>) {
+        self.unrepresented_durations.push(field);
+    }
+
+    /// Returns provenance-bearing duration fields requiring manual completion.
+    #[must_use]
+    pub fn unrepresented_durations(&self) -> &[Sourced<DeploymentRestartDurationField>] {
+        &self.unrepresented_durations
+    }
+
+    /// Returns the deployment-manager restart condition.
+    #[must_use]
+    pub const fn condition(&self) -> &Sourced<DeploymentRestartCondition> {
+        &self.condition
+    }
+
+    /// Sets the minimum delay before a restart attempt.
+    pub fn set_delay(&mut self, delay: Sourced<std::time::Duration>) {
+        self.delay = Some(delay);
+    }
+
+    /// Returns the authored delay; absence means immediate restart.
+    #[must_use]
+    pub const fn delay(&self) -> Option<&Sourced<std::time::Duration>> {
+        self.delay.as_ref()
+    }
+
+    /// Sets an independently evaluated attempt limit, including an explicitly authored zero.
+    pub fn set_maximum_attempts(&mut self, attempts: Sourced<u64>) {
+        self.maximum_attempts = Some(attempts);
+    }
+
+    /// Returns the attempt constraint without interpreting zero as an omitted field.
+    #[must_use]
+    pub const fn maximum_attempts(&self) -> Option<&Sourced<u64>> {
+        self.maximum_attempts.as_ref()
+    }
+
+    /// Sets the time window used to evaluate successful restarts.
+    pub fn set_window(&mut self, window: Sourced<std::time::Duration>) {
+        self.window = Some(window);
+    }
+
+    /// Returns the restart evaluation window.
+    #[must_use]
+    pub const fn window(&self) -> Option<&Sourced<std::time::Duration>> {
+        self.window.as_ref()
+    }
+}
+
 /// How a container runtime executes one service health check.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -2811,6 +2914,7 @@ pub struct Service {
     exposed_ports: Option<Vec<Sourced<ExposedPort>>>,
     exposed_ports_origins: Vec<Provenance>,
     restart_policy: Option<Sourced<RestartPolicy>>,
+    deployment_restart_policy: Option<Sourced<DeploymentRestartPolicy>>,
     healthcheck: Option<Sourced<Healthcheck>>,
     labels: Vec<Sourced<MetadataLabel>>,
     annotations: Option<Vec<Sourced<Annotation>>>,
@@ -2890,6 +2994,7 @@ impl Service {
             exposed_ports: None,
             exposed_ports_origins: Vec::new(),
             restart_policy: None,
+            deployment_restart_policy: None,
             healthcheck: None,
             labels: Vec::new(),
             annotations: None,
@@ -3126,6 +3231,18 @@ impl Service {
     #[must_use]
     pub const fn restart_policy(&self) -> Option<&Sourced<RestartPolicy>> {
         self.restart_policy.as_ref()
+    }
+
+    /// Sets deployment-manager restart intent, which takes precedence over container-runtime intent
+    /// when the selected target has a single restart controller.
+    pub fn set_deployment_restart_policy(&mut self, policy: Sourced<DeploymentRestartPolicy>) {
+        self.deployment_restart_policy = Some(policy);
+    }
+
+    /// Returns deployment-manager restart intent independently of container-runtime restart intent.
+    #[must_use]
+    pub const fn deployment_restart_policy(&self) -> Option<&Sourced<DeploymentRestartPolicy>> {
+        self.deployment_restart_policy.as_ref()
     }
 
     /// Sets the service health-check definition.
@@ -5539,5 +5656,39 @@ mod tests {
 
     fn id(value: &str) -> Result<Identifier, String> {
         Identifier::new(value).map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod deployment_restart_tests {
+    use super::{DeploymentRestartCondition, DeploymentRestartPolicy, Identifier, RestartPolicy, Service};
+    use crate::{Provenance, SourceId, Sourced};
+    use std::time::Duration;
+
+    #[test]
+    fn keeps_deployment_constraints_defaults_and_runtime_policy_independent() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let origin = Provenance::source(SourceId::new("restart.yaml")?);
+        let mut service = Service::new(Identifier::new("web")?);
+        service.set_restart_policy(Sourced::from_source(RestartPolicy::UnlessStopped, origin.clone()));
+        let mut policy = DeploymentRestartPolicy::new(Sourced::from_source(
+            DeploymentRestartCondition::OnFailure,
+            origin.clone(),
+        ));
+        assert!(policy.delay().is_none());
+        policy.set_delay(Sourced::from_source(Duration::from_micros(250), origin.clone()));
+        policy.set_maximum_attempts(Sourced::from_source(0, origin.clone()));
+        policy.set_window(Sourced::from_source(Duration::from_secs(30), origin.clone()));
+        service.set_deployment_restart_policy(Sourced::from_source(policy, origin.clone()));
+        assert_eq!(
+            service.restart_policy().map(Sourced::value),
+            Some(&RestartPolicy::UnlessStopped)
+        );
+        let policy = service.deployment_restart_policy().ok_or("deployment policy")?.value();
+        assert_eq!(policy.delay().map(Sourced::value), Some(&Duration::from_micros(250)));
+        assert_eq!(policy.maximum_attempts().map(Sourced::value), Some(&0));
+        assert_eq!(policy.window().map(Sourced::value), Some(&Duration::from_secs(30)));
+        assert_eq!(policy.condition().origins(), &[origin]);
+        Ok(())
     }
 }

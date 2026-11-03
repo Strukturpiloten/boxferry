@@ -63,7 +63,8 @@ pub use boxferry_engine::{
 };
 pub use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildAttestation, BuildContext,
-    BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial, Device, Entrypoint,
+    BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial,
+    DeploymentRestartCondition, DeploymentRestartDurationField, DeploymentRestartPolicy, Device, Entrypoint,
     EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort,
     GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
     HostAddressKind, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment,

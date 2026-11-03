@@ -119,3 +119,19 @@ Embedded callers must mark every native interpolation overlay with
 `ComposeSource::with_interpolation_applied()`, including empty-provider and escape-only overlays.
 Those results remain literal and are never rescanned. Deferral requires a merge with no overlay;
 the input processing stage is explicit caller context, independent of provenance and sensitivity.
+
+## Deployment restart policy
+
+Compose `deploy.restart_policy` conditions and representable delays can generate Quadlet
+`Restart=` and `RestartSec=`. Deployment policy takes precedence over service `restart`.
+Restarting conditions require approximation authorization for systemd service semantics;
+attempt limits and evaluation windows remain unsupported. Delay conversion rejects overflow
+and precision loss. See `boxferry capabilities` for exact defaults, precision and boundaries.
+
+Quadlet policies with finite canonical `RestartSec=<digits>us` values retain deployment intent
+through Quadlet reimport. Other authored timespans such as `5s` remain explicitly unsupported until
+QuadletLens provides native duration decoding. Values exceeding neutral duration precision/range
+remain unsupported and keep deployment policy precedence; they never reactivate service `restart`.
+Compose and Podman output explicitly report deployment policies as unsupported; the current
+ComposeLens generation API cannot emit `deploy.restart_policy`. Keep that policy in a separately
+reviewed Compose source when choosing Compose output.
