@@ -1069,7 +1069,7 @@ class BootstrapStageDiagnostics(unittest.TestCase):
         self.assertLessEqual(len(parser.pending), parser.MAX_LINE)
 
     @contextmanager
-    def launcher(self, fault=None):
+    def launcher(self, fault=None, *, version_response=None):
         with tempfile.TemporaryDirectory(prefix="bootstrap-diagnostic-") as temporary, ExitStack() as stack:
             base = Path(temporary)
             engine = mechanism.Mechanism.__new__(mechanism.Mechanism)
@@ -1124,6 +1124,8 @@ class BootstrapStageDiagnostics(unittest.TestCase):
             def request(method, path, **_keywords):
                 self.assertEqual(method, "GET")
                 enter("native-version" if path == "/version" else "native-info")
+                if path == "/version" and version_response is not None:
+                    return version_response
                 return {"Version": "29.8.1", "ApiVersion": "1.56"} if path == "/version" else {
                     "DockerRootDir": "/home/docker/.local/share/docker", "SecurityOptions": ["rootless"]}
             def volume_phase(phase):
@@ -1188,6 +1190,19 @@ class BootstrapStageDiagnostics(unittest.TestCase):
                     "fixed custody mechanism refused; no native acceptance\n")
                 self.assertEqual([stage for stage, _actual in events if stage != "recover"], list(self.EXPECTED_STAGES))
                 self.assertIsNone(engine.failure_stage)
+
+    def test_exact_native_version_and_api_guards_still_refuse_before_info(self):
+        for value in ({"Version": "29.8.2", "ApiVersion": "1.56"},
+                      {"Version": "29.8.1", "ApiVersion": "1.55"},
+                      {"Version": "29.8.1"}):
+            with self.subTest(value=value), self.launcher(version_response=value) as (_engine, events):
+                error = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(error):
+                    self.assertEqual(mechanism.main(), 1)
+                self.assertNotIn("native-info", [stage for stage, _actual in events])
+                self.assertEqual(events[-1], ("recover", "native-version"))
+                self.assertEqual(error.getvalue(), self.marker("native-version").decode() +
+                    "fixed custody mechanism refused; no native acceptance\n")
 
     def test_emit_error_cannot_prevent_original_recovery_or_replace_failure(self):
         for failure in (self.HostileError("emit-private-canary"), MemoryError("emit-private-canary")):
@@ -1381,6 +1396,84 @@ class BootstrapStageDiagnostics(unittest.TestCase):
             self.assertEqual(worker.signal.getsignal(worker.signal.SIGTERM), original_handler)
             self.assertEqual(error.getvalue(), "")
             emitted.assert_not_called()
+
+
+class MechanismRequestContract(unittest.TestCase):
+    """Authored helper contract; no SDK source or sibling runtime dependency."""
+    def engine(self, *, status=200, raw=b'{}', failure=None):
+        engine = mechanism.Mechanism.__new__(mechanism.Mechanism)
+        engine.socket = Path("/tmp/authored-custody-contract.sock")
+        engine.c = types.SimpleNamespace(owner_clock=lambda: 100)
+        engine.deadline = 107
+        engine.calls = engine.bytes = 0
+        def request(socket_path, *_arguments, **_keywords):
+            self.assertIs(type(socket_path), str, "held helper accepts a string socket argument")
+            if failure is not None:
+                raise failure
+            return status, raw
+        engine.http = types.SimpleNamespace(request=mock.Mock(side_effect=request))
+        return engine
+
+    def test_path_state_and_exact_request_arguments_caps_deadline_body_and_peer(self):
+        for method, path, body, status, raw, expected in (
+            ("GET", "/version", None, 200, b'{"Version":"29.8.1","ApiVersion":"1.56"}',
+                {"Version": "29.8.1", "ApiVersion": "1.56"}),
+            ("POST", "/v1.56/volumes/create", b'{"Name":"fixed-owned"}', 201, b'{"Name":"fixed-owned"}',
+                {"Name": "fixed-owned"}),
+            ("DELETE", "/v1.56/volumes/fixed-owned", None, 204, b"", None),
+        ):
+            with self.subTest(method=method):
+                engine = self.engine(status=status, raw=raw)
+                original_path = engine.socket
+                self.assertEqual(engine.request(method, path, body, expected=status), expected)
+                self.assertIs(engine.socket, original_path)
+                self.assertIsInstance(engine.socket, Path)
+                engine.http.request.assert_called_once_with(str(original_path), method, path, body,
+                    timeout=7, max_response_bytes=1_048_576, max_request_bytes=1_048_576,
+                    content_type="application/json" if body is not None else None, peer_lease=engine.peer)
+                self.assertEqual((engine.calls, engine.bytes), (1, len(raw)))
+
+    def test_helper_argument_and_lease_failures_propagate_without_counter_changes(self):
+        for label, method, path, body in (
+            ("argument", "GET", "/invalid path", None),
+            ("lease-check", "GET", "/version", None),
+            ("lease-close", "POST", "/v1.56/volumes/create", b"{}"),
+        ):
+            failure = BootstrapStageDiagnostics.HostileError("private-helper-" + label)
+            engine = self.engine(failure=failure)
+            original_path = engine.socket
+            with self.subTest(label=label), self.assertRaises(type(failure)) as stopped:
+                engine.request(method, path, body, expected=200)
+            self.assertIs(stopped.exception, failure)
+            self.assertEqual((engine.calls, engine.bytes), (0, 0))
+            self.assertIs(engine.socket, original_path)
+            self.assertEqual(engine.http.request.call_args.args[:4], (str(original_path), method, path, body))
+            self.assertEqual(engine.http.request.call_args.kwargs["peer_lease"], engine.peer)
+
+    def test_unexpected_status_and_invalid_json_keep_original_observed_byte_charges(self):
+        for status, raw, expected_error in ((500, b'{"private":"canary"}', mechanism.Refused),
+                                            (200, b"not-json", json.JSONDecodeError)):
+            engine = self.engine(status=status, raw=raw)
+            with self.subTest(status=status), self.assertRaises(expected_error):
+                engine.request("GET", "/version", expected=200)
+            self.assertEqual((engine.calls, engine.bytes), (1, len(raw)))
+            engine.http.request.assert_called_once()
+
+    def test_budget_and_deadline_refuse_before_helper_and_last_allowed_call_is_retained(self):
+        for calls, size, deadline in ((256, 0, 107), (0, 15 * 1_048_576, 107), (0, 0, 100)):
+            engine = self.engine()
+            engine.calls, engine.bytes, engine.deadline = calls, size, deadline
+            with self.subTest(calls=calls, size=size, deadline=deadline), self.assertRaises(mechanism.Refused):
+                engine.request("GET", "/version", expected=200)
+            engine.http.request.assert_not_called()
+            self.assertEqual((engine.calls, engine.bytes), (calls, size))
+        engine = self.engine(raw=b"{}")
+        engine.calls = 255
+        self.assertEqual(engine.request("GET", "/version", expected=200), {})
+        self.assertEqual((engine.calls, engine.bytes), (256, 2))
+        with self.assertRaises(mechanism.Refused):
+            engine.request("GET", "/version", expected=200)
+        engine.http.request.assert_called_once()
 
 
 class MechanismDiagnostics(unittest.TestCase):
