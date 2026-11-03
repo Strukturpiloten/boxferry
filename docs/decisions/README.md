@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0094](0094-deployment-restart-conditions-and-delays.md) separates deployment restart
+conditions and delays from container-runtime restart policy, with explicit native generation limits.
+
 [ADR 0091](0091-trusted-main-paperless-custody-mechanism.md) owns the fixed
 trusted-main six-volume custody mechanism, preserving product and application
 acceptance boundaries and existing candidate admission.

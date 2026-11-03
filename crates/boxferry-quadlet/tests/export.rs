@@ -3093,3 +3093,103 @@ fn podman_target(maximum: Option<PlatformVersion>) -> Result<TargetProfile, Box<
 const fn version(major: u64, minor: u64, patch: u64) -> PlatformVersion {
     PlatformVersion::new(major, minor, patch)
 }
+
+#[test]
+fn maps_deployment_restart_conditions_delays_and_precedence_across_target_bounds() -> Result<(), Box<dyn Error>> {
+    use boxferry_model::{DeploymentRestartCondition, DeploymentRestartPolicy};
+    use std::time::Duration;
+    for target in [version(5, 4, 0), version(6, 1, 2)] {
+        for (condition, restart) in [
+            (DeploymentRestartCondition::Never, "no"),
+            (DeploymentRestartCondition::OnFailure, "on-failure"),
+            (DeploymentRestartCondition::Any, "always"),
+        ] {
+            for delay in [
+                None,
+                Some(Duration::ZERO),
+                Some(Duration::from_millis(250)),
+                Some(Duration::from_millis(62_125)),
+            ] {
+                let mut service = image_service("web")?;
+                service.set_restart_policy(sourced(RestartPolicy::UnlessStopped)?);
+                let mut policy = DeploymentRestartPolicy::new(sourced(condition)?);
+                if let Some(delay) = delay {
+                    policy.set_delay(sourced(delay)?);
+                }
+                service.set_deployment_restart_policy(sourced(policy)?);
+                let mut application = Application::new(id("restart")?);
+                application.add_service(sourced(service)?)?;
+                let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(target))?)?;
+                let exact = matches!(condition, DeploymentRestartCondition::Never);
+                assert_eq!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked(), !exact);
+                let result = plan.authorize(LossPolicy::AllowApproximate);
+                let text = result
+                    .output()
+                    .ok_or("output")?
+                    .file("web.container")
+                    .ok_or("container")?
+                    .text();
+                assert_eq!(text.matches("Restart=").count(), 1);
+                assert!(text.contains(&format!("Restart={restart}\n")));
+                assert!(text.contains(&format!("RestartSec={}us\n", delay.unwrap_or_default().as_micros())));
+                let imported = QuadletImporter::new()?.import(&parse_source(
+                    id("restart")?,
+                    [QuadletDocumentInput::new(
+                        "web.container",
+                        QuadletSourceId::new(715),
+                        text,
+                    )],
+                )?);
+                let policy = imported.application().ok_or("application")?.services()[0]
+                    .value()
+                    .deployment_restart_policy()
+                    .ok_or("deployment policy")?
+                    .value();
+                assert_eq!(policy.condition().value(), &condition);
+                assert_eq!(
+                    policy.delay().map(|value| *value.value()),
+                    Some(delay.unwrap_or_default())
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn never_weakens_deployment_constraints_or_rounds_unrepresentable_restart_delays() -> Result<(), Box<dyn Error>> {
+    use boxferry_model::{DeploymentRestartCondition, DeploymentRestartPolicy};
+    use std::time::Duration;
+    for case in ["attempts", "zero-attempts", "window", "nanoseconds", "overflow"] {
+        let mut service = image_service("web")?;
+        service.set_restart_policy(sourced(RestartPolicy::Always)?);
+        let mut policy = DeploymentRestartPolicy::new(sourced(DeploymentRestartCondition::OnFailure)?);
+        match case {
+            "attempts" => policy.set_maximum_attempts(sourced(3)?),
+            "zero-attempts" => policy.set_maximum_attempts(sourced(0)?),
+            "window" => policy.set_window(sourced(Duration::from_secs(20))?),
+            "nanoseconds" => policy.set_delay(sourced(Duration::from_nanos(100))?),
+            _ => policy.set_delay(sourced(Duration::MAX)?),
+        }
+        service.set_deployment_restart_policy(sourced(policy)?);
+        let mut application = Application::new(id("restart")?);
+        application.add_service(sourced(service)?)?;
+        let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 1, 2)))?)?;
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        );
+        assert!(plan.clone().authorize(LossPolicy::AllowApproximate).is_blocked());
+        let result = plan.authorize(LossPolicy::AllowPartial);
+        let text = result
+            .output()
+            .ok_or("output")?
+            .file("web.container")
+            .ok_or("container")?
+            .text();
+        assert!(!text.contains("Restart="), "{case}: {text}");
+        assert!(!text.contains("RestartSec="), "{case}: {text}");
+    }
+    Ok(())
+}

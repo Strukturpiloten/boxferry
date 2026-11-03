@@ -11,8 +11,8 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, NativeFinding, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Entrypoint, EnvironmentValue, MountSource, ProtectedString, PullPolicy, ResourceOwnership,
-    RestartPolicy, Service,
+    Application, Command, DeploymentRestartPolicy, Entrypoint, EnvironmentValue, MountSource, ProtectedString,
+    Provenance, PullPolicy, ResourceOwnership, RestartPolicy, Service, Sourced,
 };
 use podman_lens::artifact::deployment_v1;
 use podman_lens::{
@@ -596,7 +596,7 @@ impl<'a> Mapping<'a> {
         let image_result = (|| {
             let id = self.resource_id(ResourceKind::Image, &image_name)?;
             let source = ImageSource::new(image.value().as_str())?;
-            let policy = match service.pull_policy().map(boxferry_model::Sourced::value) {
+            let policy = match service.pull_policy().map(Sourced::value) {
                 Some(PullPolicy::Always) => ImagePullPolicy::Always,
                 Some(PullPolicy::Never) => ImagePullPolicy::Never,
                 Some(PullPolicy::Missing) | None => ImagePullPolicy::Missing,
@@ -781,7 +781,13 @@ impl<'a> Mapping<'a> {
                 value,
             ))?;
         }
-        if let Some(restart) = service.restart_policy() {
+        if let Some(policy) = service.deployment_restart_policy() {
+            self.unsupported_with_origins(
+                format!("services.{}.deploy.restart_policy", service.name().as_str()),
+                "Podman container restart options cannot preserve deployment-manager restart conditions, delays, or constraints; select Quadlet output",
+                &deployment_restart_origins(policy),
+            );
+        } else if let Some(restart) = service.restart_policy() {
             let policy = match restart.value() {
                 RestartPolicy::Never => podman_lens::RestartPolicy::No,
                 RestartPolicy::Always => podman_lens::RestartPolicy::Always,
@@ -1071,6 +1077,15 @@ impl<'a> Mapping<'a> {
     }
 
     fn unsupported(&mut self, subject: impl Into<String>, summary: impl Into<String>) {
+        self.unsupported_with_origins(subject, summary, &[]);
+    }
+
+    fn unsupported_with_origins(
+        &mut self,
+        subject: impl Into<String>,
+        summary: impl Into<String>,
+        origins: &[Provenance],
+    ) {
         let subject = subject.into();
         let summary = summary.into();
         self.diagnostics.push(
@@ -1111,6 +1126,9 @@ impl<'a> Mapping<'a> {
             ConversionKind::Unsupported,
             self.exporter.codes.unsupported.clone(),
         ) {
+            let outcome = origins
+                .iter()
+                .fold(outcome, |outcome, origin| outcome.with_origin(origin.clone()));
             self.outcomes.push(outcome);
         } else {
             self.intent = None;
@@ -1295,6 +1313,30 @@ const fn resource_kind_name(kind: ResourceKind) -> &'static str {
 
 fn expose(values: &[ProtectedString]) -> Vec<&str> {
     values.iter().map(ProtectedString::expose).collect()
+}
+
+fn deployment_restart_origins(policy: &Sourced<DeploymentRestartPolicy>) -> Vec<Provenance> {
+    let mut origins = policy.origins().to_vec();
+    origins.extend_from_slice(policy.value().condition().origins());
+    if let Some(delay) = policy.value().delay() {
+        origins.extend_from_slice(delay.origins());
+    }
+    if let Some(attempts) = policy.value().maximum_attempts() {
+        origins.extend_from_slice(attempts.origins());
+    }
+    if let Some(window) = policy.value().window() {
+        origins.extend_from_slice(window.origins());
+    }
+    for field in policy.value().unrepresented_durations() {
+        origins.extend_from_slice(field.origins());
+    }
+    let mut unique_origins = Vec::new();
+    for origin in origins {
+        if !unique_origins.contains(&origin) {
+            unique_origins.push(origin);
+        }
+    }
+    unique_origins
 }
 
 #[cfg(test)]

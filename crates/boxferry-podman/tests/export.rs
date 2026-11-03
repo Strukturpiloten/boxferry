@@ -1586,3 +1586,48 @@ fn assert_context_fields(diagnostic: &boxferry_engine::Diagnostic, expected: &[&
 const fn version(major: u64, minor: u64, patch: u64) -> PlatformVersion {
     PlatformVersion::new(major, minor, patch)
 }
+
+#[test]
+fn reports_deployment_restart_as_unsupported_without_using_the_overridden_runtime_policy() -> Result<(), Box<dyn Error>>
+{
+    use boxferry_model::{DeploymentRestartCondition, DeploymentRestartPolicy, RestartPolicy};
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.set_restart_policy(Sourced::generated(RestartPolicy::Always));
+    let policy_origin = Provenance::source(SourceId::new("policy.yaml")?);
+    let condition_origin = Provenance::source(SourceId::new("condition.yaml")?);
+    let delay_origin = Provenance::source(SourceId::new("delay.yaml")?);
+    let mut policy = DeploymentRestartPolicy::new(Sourced::from_source(
+        DeploymentRestartCondition::OnFailure,
+        condition_origin.clone(),
+    ));
+    policy.set_delay(Sourced::from_source(
+        std::time::Duration::from_secs(5),
+        delay_origin.clone(),
+    ));
+    service.set_deployment_restart_policy(Sourced::from_source(policy, policy_origin.clone()));
+    let mut application = Application::new(Identifier::new("restart")?);
+    application.add_service(Sourced::generated(service))?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?
+        .with_execution_context(TargetExecutionContext::Rootless)
+        .plan(&application, &target)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.deploy.restart_policy"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.deploy.restart_policy")
+        .ok_or("deployment outcome")?;
+    assert_eq!(outcome.origins(), &[policy_origin, condition_origin, delay_origin]);
+    assert!(plan.clone().authorize(LossPolicy::AllowApproximate).is_blocked());
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let output = result.output().ok_or("partial output")?;
+    assert!(!output.commands_shell().contains("--restart=always"));
+    assert!(!output.deployment_json().contains("\"restart_policy\": \"always\""));
+    Ok(())
+}

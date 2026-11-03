@@ -2556,3 +2556,204 @@ fn assert_core_execution_context(service: &Service) {
         Some(&true)
     );
 }
+
+#[test]
+fn imports_deployment_restart_separately_with_defaults_and_exact_duration_arithmetic() -> Result<(), Box<dyn Error>> {
+    use boxferry_model::DeploymentRestartCondition;
+    use std::time::Duration;
+    for (condition, delay, expected_condition, expected_delay) in [
+        ("none", "0", DeploymentRestartCondition::Never, Duration::ZERO),
+        (
+            "on-failure",
+            "250ms",
+            DeploymentRestartCondition::OnFailure,
+            Duration::from_millis(250),
+        ),
+        (
+            "any",
+            "1m2.125s",
+            DeploymentRestartCondition::Any,
+            Duration::from_millis(62_125),
+        ),
+        (
+            "any",
+            "100ns",
+            DeploymentRestartCondition::Any,
+            Duration::from_nanos(100),
+        ),
+    ] {
+        let id = ComposeSourceId::new(710);
+        let text = format!(
+            "services:\n  web:\n    image: example.invalid/web:1\n    restart: unless-stopped\n    deploy:\n      restart_policy:\n        condition: {condition}\n        delay: '{delay}'\n"
+        );
+        let source = ComposeSource::new(
+            merged_project([(id, "restart.yaml", text.as_str())])?,
+            Identifier::new("restart")?,
+        )?
+        .with_source_id(id, SourceId::new("restart.yaml")?);
+        let result = ComposeImporter::new()?.import(&source);
+        assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+        let service = result.application().ok_or("application")?.services()[0].value();
+        assert_eq!(
+            service.restart_policy().map(boxferry_model::Sourced::value),
+            Some(&RestartPolicy::UnlessStopped)
+        );
+        let policy = service.deployment_restart_policy().ok_or("deployment policy")?;
+        assert_eq!(*policy.value().condition().value(), expected_condition);
+        assert_eq!(policy.value().delay().map(|value| *value.value()), Some(expected_delay));
+        assert!(!policy.origins().is_empty());
+        assert!(!policy.value().condition().origins().is_empty());
+        assert!(policy.value().delay().is_some_and(|value| !value.origins().is_empty()));
+        assert!(
+            !result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() != ConversionKind::Exact)
+        );
+    }
+    let id = ComposeSourceId::new(711);
+    let source = ComposeSource::new(
+        merged_project([(
+            id,
+            "defaults.yaml",
+            "services:\n  web:\n    image: example.invalid/web:1\n    deploy:\n      restart_policy: {}\n",
+        )])?,
+        Identifier::new("restart")?,
+    )?
+    .with_source_id(id, SourceId::new("defaults.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let policy = result.application().ok_or("application")?.services()[0]
+        .value()
+        .deployment_restart_policy()
+        .ok_or("deployment policy")?
+        .value();
+    assert_eq!(policy.condition().value(), &DeploymentRestartCondition::Any);
+    assert!(policy.delay().is_none());
+    assert!(
+        policy
+            .condition()
+            .origins()
+            .iter()
+            .any(|origin| origin.kind() == boxferry_model::ProvenanceKind::ImplementationDefault)
+    );
+    Ok(())
+}
+
+#[test]
+fn retains_deployment_attempt_and_window_constraints_and_reports_unrelated_deploy_fields() -> Result<(), Box<dyn Error>>
+{
+    let id = ComposeSourceId::new(712);
+    let source = ComposeSource::new(merged_project([(id, "constraints.yaml", "services:\n  web:\n    image: example.invalid/web:1\n    deploy:\n      replicas: 2\n      restart_policy:\n        condition: on-failure\n        delay: 5s\n        max_attempts: 3\n        window: 1m30s\n")])?, Identifier::new("restart")?)?
+        .with_source_id(id, SourceId::new("constraints.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let policy = result.application().ok_or("application")?.services()[0]
+        .value()
+        .deployment_restart_policy()
+        .ok_or("deployment policy")?
+        .value();
+    assert_eq!(policy.maximum_attempts().map(|value| *value.value()), Some(3));
+    assert_eq!(
+        policy.window().map(|value| *value.value()),
+        Some(std::time::Duration::from_secs(90))
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.deploy.replicas"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    assert!(
+        !result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.deploy")
+    );
+    Ok(())
+}
+
+#[test]
+fn rejects_unresolved_negative_and_malformed_deployment_restart_values() -> Result<(), Box<dyn Error>> {
+    for field in [
+        "condition: ${CONDITION}",
+        "condition: sometimes",
+        "delay: -1s",
+        "delay: ${DELAY}",
+        "max_attempts: -1",
+        "window: invalid",
+    ] {
+        let id = ComposeSourceId::new(713);
+        let text = format!(
+            "services:\n  web:\n    image: example.invalid/web:1\n    deploy:\n      restart_policy:\n        {field}\n"
+        );
+        let source = ComposeSource::new(
+            merged_project([(id, "invalid.yaml", text.as_str())])?,
+            Identifier::new("restart")?,
+        )?
+        .with_source_id(id, SourceId::new("invalid.yaml")?);
+        let result = ComposeImporter::new()?.import(&source);
+        assert!(
+            result.application().ok_or("application")?.services()[0]
+                .value()
+                .deployment_restart_policy()
+                .is_none(),
+            "{field}"
+        );
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Invalid),
+            "{field}: {:#?}",
+            result.outcomes()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn retains_deployment_precedence_for_valid_unrepresentable_durations() -> Result<(), Box<dyn Error>> {
+    use boxferry_model::DeploymentRestartDurationField;
+    for (field, expected) in [
+        (
+            "delay: 999999999999999999999999h",
+            DeploymentRestartDurationField::Delay,
+        ),
+        ("delay: 0.1ns", DeploymentRestartDurationField::Delay),
+        (
+            "window: 999999999999999999999999h",
+            DeploymentRestartDurationField::Window,
+        ),
+    ] {
+        let id = ComposeSourceId::new(723);
+        let text = format!(
+            "services:\n  web:\n    image: example.invalid/web:1\n    restart: always\n    deploy:\n      restart_policy:\n        {field}\n"
+        );
+        let source = ComposeSource::new(
+            merged_project([(id, "duration.yaml", text.as_str())])?,
+            Identifier::new("restart")?,
+        )?
+        .with_source_id(id, SourceId::new("duration.yaml")?);
+        let result = ComposeImporter::new()?.import(&source);
+        let policy = result.application().ok_or("application")?.services()[0]
+            .value()
+            .deployment_restart_policy()
+            .ok_or("deployment policy")?;
+        assert_eq!(policy.value().unrepresented_durations().len(), 1);
+        assert_eq!(policy.value().unrepresented_durations()[0].value(), &expected);
+        assert!(!policy.value().unrepresented_durations()[0].origins().is_empty());
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        );
+        assert!(
+            !result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Invalid)
+        );
+    }
+    Ok(())
+}

@@ -1054,3 +1054,190 @@ fn security_option_lines(text: Option<&str>) -> Vec<&str> {
         })
         .collect()
 }
+
+#[test]
+fn deployment_restart_survives_compose_merge_quadlet_reimport_and_fixed_points() -> Result<(), Box<dyn Error>> {
+    use boxferry::{DeploymentRestartCondition, ExportAdapter};
+    let base = ComposeSourceId::new(720);
+    let overlay = ComposeSourceId::new(721);
+    let loaded = LoadedProject::load([
+        DocumentInput::new(
+            base,
+            DocumentOrigin::new("base.yaml", "base.yaml"),
+            "---\nname: restart\nservices:\n  web:\n    image: example.invalid/web:1\n    restart: unless-stopped\n    deploy:\n      restart_policy:\n        condition: on-failure\n        delay: 5s\n",
+        ),
+        DocumentInput::new(
+            overlay,
+            DocumentOrigin::new("override.yaml", "override.yaml"),
+            "---\nservices:\n  web:\n    deploy:\n      restart_policy:\n        delay: 1m2.125s\n",
+        ),
+    ])?;
+    let merged = merge_project(&loaded, None);
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project")?.clone(),
+        Identifier::new("restart")?,
+    )?
+    .with_source_id(base, SourceId::new("base.yaml")?)
+    .with_source_id(overlay, SourceId::new("override.yaml")?);
+    let version = PlatformVersion::new(6, 1, 2);
+    let target = TargetProfile::new("podman", version, Some(version))?;
+    let result = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowApproximate,
+    )?;
+    assert!(result.outcomes().iter().any(|outcome| outcome.subject()
+        == "services.web.deploy.restart_policy.condition"
+        && outcome.kind() == ConversionKind::Approximate));
+    let output = result.output().ok_or("output")?;
+    let text = output.file("web.container").ok_or("container")?.text();
+    assert!(text.contains("Restart=on-failure\nRestartSec=62125000us\n"));
+    let imported = reimport_port_output(output)?;
+    let application = imported.application().ok_or("application")?;
+    let policy = application.services()[0]
+        .value()
+        .deployment_restart_policy()
+        .ok_or("policy")?
+        .value();
+    assert_eq!(policy.condition().value(), &DeploymentRestartCondition::OnFailure);
+    assert_eq!(
+        policy.delay().map(|value| *value.value()),
+        Some(std::time::Duration::from_millis(62_125))
+    );
+    let next = QuadletExporter::new()?
+        .plan(application, &target)?
+        .authorize(LossPolicy::AllowApproximate);
+    assert_eq!(
+        next.output()
+            .ok_or("next output")?
+            .file("web.container")
+            .ok_or("next container")?
+            .text(),
+        text
+    );
+    let original = ComposeImporter::new()?.import(&source);
+    let original_policy = original.application().ok_or("application")?.services()[0]
+        .value()
+        .deployment_restart_policy()
+        .ok_or("policy")?
+        .value();
+    assert!(
+        original_policy
+            .condition()
+            .origins()
+            .iter()
+            .any(|origin| origin.source_id().as_str() == "base.yaml")
+    );
+    assert!(original_policy.delay().is_some_and(|delay| {
+        delay
+            .origins()
+            .iter()
+            .any(|origin| origin.source_id().as_str() == "override.yaml")
+    }));
+    Ok(())
+}
+
+#[test]
+fn deployment_limits_block_quadlet_restart_even_with_a_legacy_fallback() -> Result<(), Box<dyn Error>> {
+    for constraint in ["max_attempts: 3", "window: 30s", "max_attempts: 3\n        window: 30s"] {
+        let id = ComposeSourceId::new(722);
+        let text = format!(
+            "---\nservices:\n  web:\n    image: example.invalid/web:1\n    restart: always\n    deploy:\n      restart_policy:\n        condition: on-failure\n        delay: 5s\n        {constraint}\n"
+        );
+        let loaded = LoadedProject::load([DocumentInput::new(
+            id,
+            DocumentOrigin::new("limits.yaml", "limits.yaml"),
+            text,
+        )])?;
+        let merged = merge_project(&loaded, None);
+        let source = ComposeSource::new(
+            merged.project().ok_or("merged project")?.clone(),
+            Identifier::new("restart")?,
+        )?
+        .with_source_id(id, SourceId::new("limits.yaml")?);
+        let version = PlatformVersion::new(6, 1, 2);
+        let target = TargetProfile::new("podman", version, Some(version))?;
+        let blocked = convert(
+            &ComposeImporter::new()?,
+            &source,
+            &QuadletExporter::new()?,
+            &target,
+            LossPolicy::AllowApproximate,
+        )?;
+        assert!(blocked.is_blocked());
+        let partial = convert(
+            &ComposeImporter::new()?,
+            &source,
+            &QuadletExporter::new()?,
+            &target,
+            LossPolicy::AllowPartial,
+        )?;
+        let text = partial
+            .output()
+            .ok_or("partial output")?
+            .file("web.container")
+            .ok_or("container")?
+            .text();
+        assert!(!text.contains("Restart="));
+        assert!(!text.contains("RestartSec="));
+    }
+    Ok(())
+}
+
+#[test]
+fn unrepresentable_compose_restart_durations_preserve_deployment_precedence() -> Result<(), Box<dyn Error>> {
+    for field in [
+        "delay: 999999999999999999999999h",
+        "delay: 0.1ns",
+        "window: 999999999999999999999999h",
+    ] {
+        let id = ComposeSourceId::new(724);
+        let text = format!(
+            "---\nservices:\n  web:\n    image: example.invalid/web:1\n    restart: always\n    deploy:\n      restart_policy:\n        {field}\n"
+        );
+        let loaded = LoadedProject::load([DocumentInput::new(
+            id,
+            DocumentOrigin::new("duration.yaml", "duration.yaml"),
+            text,
+        )])?;
+        let merged = merge_project(&loaded, None);
+        let source = ComposeSource::new(
+            merged.project().ok_or("merged project")?.clone(),
+            Identifier::new("restart")?,
+        )?
+        .with_source_id(id, SourceId::new("duration.yaml")?);
+        let version = PlatformVersion::new(6, 1, 2);
+        let target = TargetProfile::new("podman", version, Some(version))?;
+        let result = convert(
+            &ComposeImporter::new()?,
+            &source,
+            &QuadletExporter::new()?,
+            &target,
+            LossPolicy::AllowPartial,
+        )?;
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        );
+        assert!(
+            !result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Invalid)
+        );
+        let text = result
+            .output()
+            .ok_or("partial output")?
+            .file("web.container")
+            .ok_or("container")?
+            .text();
+        assert!(!text.contains("Restart="));
+        assert!(!text.contains("RestartSec="));
+    }
+    Ok(())
+}

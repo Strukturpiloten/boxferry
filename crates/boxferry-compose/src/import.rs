@@ -1,6 +1,7 @@
 //! Compose-to-application mapping with explicit fidelity decisions.
 mod deferred;
 mod metadata;
+mod restart;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
@@ -284,6 +285,7 @@ impl<'a> Mapping<'a> {
 
         self.map_runtime_name(&subject, native, &mut service);
         self.map_restart_policy(&subject, native, &mut service);
+        self.map_deployment_restart_policy(&subject, native, &mut service);
         self.map_service_image(&subject, native, &mut service);
         if let Some(command) = native.command()
             && let Some(value) = Self::map_command(command.value(), command.is_sensitive())
@@ -3815,7 +3817,7 @@ impl<'a> Mapping<'a> {
         report!(models, "models");
         report!(gpus, "gpus");
         report!(develop, "develop");
-        report!(deploy, "deploy");
+
         report!(cpu_count, "cpu_count");
         report!(cpu_percent, "cpu_percent");
         report!(cpu_period, "cpu_period");

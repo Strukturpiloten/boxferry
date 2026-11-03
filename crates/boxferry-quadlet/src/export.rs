@@ -14,13 +14,13 @@ use boxferry_engine::{
 };
 use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildSettingValues, BuildSourceDeclaration,
-    Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, ExposedPort,
-    GroupExitPolicy, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping, ImageAcquisition,
-    ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, MetadataLabel, Mount, MountSource,
-    NetworkAttachment, NetworkDriverOption, Port, ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy,
-    ReloadAction, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroupRuntime, SourceBuildSetting, Sourced,
-    StartupNotification, VolumeImageSource,
+    Command, Config, DeploymentRestartCondition, DeploymentRestartPolicy, Device, Entrypoint, EnvironmentFile,
+    EnvironmentFileFormat, EnvironmentValue, ExposedPort, GroupExitPolicy, Healthcheck, HealthcheckCommand,
+    HostAddressKind, HostMapping, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild,
+    ImageBuildSetting, MetadataLabel, Mount, MountSource, NetworkAttachment, NetworkDriverOption, Port,
+    ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy, ReloadAction, ResourceGrant, ResourceOwnership,
+    RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
+    ServiceGroupRuntime, SourceBuildSetting, Sourced, StartupNotification, VolumeImageSource,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
@@ -2170,7 +2170,12 @@ impl<'a> Mapping<'a> {
         self.map_released_container_settings(subject, service.value(), builder);
         self.map_extended_container_settings(subject, service.value(), grouped, builder);
         self.report_grouped_dns(subject, service.value(), grouped);
-        if let Some(restart_policy) = service.value().restart_policy() {
+        if let Some(policy) = service.value().deployment_restart_policy() {
+            self.map_deployment_restart_policy(subject, policy, builder);
+            if let Some(runtime_policy) = service.value().restart_policy() {
+                self.exact(format!("{subject}.restart_policy"), runtime_policy.origins());
+            }
+        } else if let Some(restart_policy) = service.value().restart_policy() {
             self.map_restart_policy(subject, restart_policy, builder);
         }
         if let Some(healthcheck) = service.value().healthcheck() {
@@ -2271,6 +2276,83 @@ impl<'a> Mapping<'a> {
             runtime_name.origins(),
         ) {
             self.exact(runtime_subject, runtime_name.origins());
+        }
+    }
+
+    fn map_deployment_restart_policy(
+        &mut self,
+        service_subject: &str,
+        policy: &Sourced<DeploymentRestartPolicy>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.deploy.restart_policy");
+        let value = policy.value();
+        if !value.unrepresented_durations().is_empty() {
+            let mut origins = policy.origins().to_vec();
+            for field in value.unrepresented_durations() {
+                origins.extend_from_slice(field.origins());
+            }
+            self.unsupported(&subject, "deployment restart duration exceeds the neutral precision or range; choose an exactly representable duration before generating restart directives", &origins);
+            return;
+        }
+        if value.maximum_attempts().is_some() || value.window().is_some() {
+            let mut origins = policy.origins().to_vec();
+            if let Some(attempts) = value.maximum_attempts() {
+                origins.extend_from_slice(attempts.origins());
+            }
+            if let Some(window) = value.window() {
+                origins.extend_from_slice(window.origins());
+            }
+            self.unsupported(&subject, "deployment restart attempt limits and success-evaluation windows have no equivalent in Restart=/RestartSec=; remove these constraints only after reviewing the desired behavior", &origins);
+            return;
+        }
+        let restart = match value.condition().value() {
+            DeploymentRestartCondition::Never => "no",
+            DeploymentRestartCondition::OnFailure => "on-failure",
+            DeploymentRestartCondition::Any => "always",
+            _ => {
+                self.unsupported(&subject, "unrecognized deployment restart condition", policy.origins());
+                return;
+            }
+        };
+        let delay = value.delay().map_or(std::time::Duration::ZERO, |delay| *delay.value());
+        // systemd timespans have microsecond precision; reject instead of rounding away intent.
+        if !delay.subsec_nanos().is_multiple_of(1_000) || delay.as_micros() >= u128::from(u64::MAX) {
+            self.unsupported(&format!("{subject}.delay"), "RestartSec requires a finite duration representable in whole microseconds; choose an exactly representable delay", value.delay().map_or(policy.origins(), Sourced::origins));
+            return;
+        }
+        if !self.capability("systemd.service.restart", &subject, policy.origins())
+            || !self.capability("systemd.section.pass-through", &subject, policy.origins())
+        {
+            return;
+        }
+        if !self.push_systemd(
+            builder,
+            SystemdSection::Service,
+            "Restart",
+            restart,
+            &format!("{subject}.condition"),
+            value.condition().origins(),
+        ) {
+            return;
+        }
+        let delay_text = format!("{}us", delay.as_micros());
+        let delay_origins = value.delay().map_or(policy.origins(), Sourced::origins);
+        if !self.push_systemd(
+            builder,
+            SystemdSection::Service,
+            "RestartSec",
+            &delay_text,
+            &format!("{subject}.delay"),
+            delay_origins,
+        ) {
+            return;
+        }
+        self.exact(format!("{subject}.delay"), delay_origins);
+        if matches!(value.condition().value(), DeploymentRestartCondition::Never) {
+            self.exact(format!("{subject}.condition"), value.condition().origins());
+        } else {
+            self.restart_approximation(&format!("{subject}.condition"), "systemd manages the complete service, including signals, timeouts and independent start-rate limits; review those differences from deployment-task restart behavior", value.condition().origins());
         }
     }
 

@@ -13,12 +13,13 @@ mod provenance;
 mod value;
 
 pub use application::{
-    Annotation, Application, ArtifactDependency, ArtifactDependencyNode, Command, Config, ConfigMaterial, Device,
-    Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable,
-    ExposedPort, GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
-    HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel,
-    ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, Protocol,
-    PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy,
+    Annotation, Application, ArtifactDependency, ArtifactDependencyNode, Command, Config, ConfigMaterial,
+    DeploymentRestartCondition, DeploymentRestartDurationField, DeploymentRestartPolicy, Device, Entrypoint,
+    EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort,
+    GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
+    HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError,
+    Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, Protocol, PullPolicy,
+    ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy,
     RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Secret, SecretMaterial,
     SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
     ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,

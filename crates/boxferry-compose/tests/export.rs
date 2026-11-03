@@ -1618,3 +1618,40 @@ const fn expected_supported_document() -> &'static str {
         "  data: {}\n",
     )
 }
+
+#[test]
+fn reports_deployment_restart_output_as_unsupported_without_conflating_container_restart() -> Result<(), Box<dyn Error>>
+{
+    use boxferry_model::{DeploymentRestartCondition, DeploymentRestartPolicy};
+    let mut application = Application::new(Identifier::new("restart")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.set_restart_policy(Sourced::generated(RestartPolicy::Never));
+    let mut policy = DeploymentRestartPolicy::new(Sourced::generated(DeploymentRestartCondition::OnFailure));
+    policy.set_delay(Sourced::generated(std::time::Duration::from_secs(5)));
+    let origin = Provenance::source(SourceId::new("deployment.compose.yaml")?);
+    service.set_deployment_restart_policy(Sourced::from_source(policy, origin.clone()));
+    application.add_service(Sourced::generated(service))?;
+    let plan = ComposeExporter::new()?.plan(
+        &application,
+        &exact_target(COMPOSE_SPECIFICATION_TARGET, COMPOSE_SPECIFICATION_PROFILE_REVISION)?,
+    )?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.deploy.restart_policy"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.deploy.restart_policy")
+        .ok_or("deployment outcome")?;
+    assert_eq!(outcome.origins(), &[origin]);
+    assert!(plan.clone().authorize(LossPolicy::AllowApproximate).is_blocked());
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let text = result.output().ok_or("output")?.text();
+    assert!(!text.contains("deploy:"));
+    assert!(text.contains("restart: \"no\""));
+    Ok(())
+}

@@ -11,6 +11,9 @@ The root [`tests/`](../../../tests/README.md) directory documents cross-crate sc
 
 `public_api.rs` protects the core and additive facade surfaces. `compose_to_quadlet.rs` owns the
 first public end-to-end golden conversion when both document-adapter features are enabled.
+`compose_to_quadlet.rs` also owns deployment restart precedence, merged-field provenance,
+canonical delay reimport/fixed points, and refusal to weaken attempt/window or duration constraints.
+Adapter import/export tests own their format boundaries; `cli.rs` checks machine capability evidence.
 `document_route_matrix.rs` owns deterministic all-four-pair public facade, CLI,
 validate-without-writing, chained conversion, discovery, fixed-point, path-consistency, policy,
 diagnostic, and redaction boundaries using `fixtures/conversion/document-route-matrix/`.

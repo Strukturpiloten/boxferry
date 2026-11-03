@@ -2460,6 +2460,22 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                         "native_capabilities": ["quadlet.container.environment", "quadlet.container.volume", "systemd.section.pass-through"]
                     }
                 },
+                "deployment_restart_policy": {
+                    "compose_input": true,
+                    "compose_output": "unsupported-compose-lens-generation",
+                    "podman_output": "unsupported",
+                    "quadlet_output": {
+                        "conditions": ["none", "on-failure", "any"],
+                        "condition_fidelity": {"none": "exact", "on-failure": "approximate", "any": "approximate"},
+                        "delay_precision": "whole-microseconds",
+                        "omitted_condition": "any",
+                        "omitted_delay": "0us",
+                        "precedence": "deployment-policy-before-container-runtime-policy",
+                        "unsupported_constraints": ["max_attempts", "window"],
+                        "native_capabilities": ["systemd.service.restart", "systemd.section.pass-through"]
+                    },
+                    "quadlet_input": "finite-canonical-digits-us-RestartSec-only; Restart-only-retains-legacy-container-policy"
+                },
                 "podman": {
                     "input_capabilities": podman_inputs
                         .iter()
@@ -2473,32 +2489,7 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             }))?
         );
     } else if !presentation.quiet {
-        for route in route::routes() {
-            match route.target_selector {
-                TargetSelector::PodmanRange => println!(
-                    "{} -> {} (Podman {minimum} through {maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::PodmanMaximum => println!(
-                    "{} -> {} (newest reviewed Podman through {podman_maximum})",
-                    route.source_name(),
-                    route.target_name()
-                ),
-                TargetSelector::ComposeSpecification => println!(
-                    "{} -> {} (rolling Compose Specification)",
-                    route.source_name(),
-                    route.target_name()
-                ),
-            }
-            if presentation.verbose {
-                println!("fidelity: exact for {}", route.exact_boundary);
-                println!(
-                    "fidelity boundary: approximate {:?}; policy controlled {:?}",
-                    route.approximate_boundaries, route.policy_controlled_boundaries
-                );
-            }
-        }
+        print_route_capabilities(&minimum, &maximum, &podman_maximum, presentation.verbose);
         if presentation.verbose {
             println!("Podman input capabilities:");
             for input in &podman_inputs {
@@ -2526,6 +2517,35 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_route_capabilities(minimum: &str, maximum: &str, podman_maximum: &str, verbose: bool) {
+    for route in route::routes() {
+        match route.target_selector {
+            TargetSelector::PodmanRange => println!(
+                "{} -> {} (Podman {minimum} through {maximum})",
+                route.source_name(),
+                route.target_name()
+            ),
+            TargetSelector::PodmanMaximum => println!(
+                "{} -> {} (newest reviewed Podman through {podman_maximum})",
+                route.source_name(),
+                route.target_name()
+            ),
+            TargetSelector::ComposeSpecification => println!(
+                "{} -> {} (rolling Compose Specification)",
+                route.source_name(),
+                route.target_name()
+            ),
+        }
+        if verbose {
+            println!("fidelity: exact for {}", route.exact_boundary);
+            println!(
+                "fidelity boundary: approximate {:?}; policy controlled {:?}",
+                route.approximate_boundaries, route.policy_controlled_boundaries
+            );
+        }
+    }
 }
 
 fn podman_input_capability_json(

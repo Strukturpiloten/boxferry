@@ -2412,3 +2412,92 @@ fn imports_typed_volume_settings_and_retains_resets_and_raw_evidence() -> Result
 fn identifier(value: &str) -> Result<Identifier, String> {
     Identifier::new(value).map_err(|error| error.to_string())
 }
+
+#[test]
+fn imports_restart_delays_with_source_provenance_and_a_no_restart_default() -> Result<(), Box<dyn std::error::Error>> {
+    use boxferry_model::DeploymentRestartCondition;
+    use std::time::Duration;
+    for (restart, duration, expected, delay) in [
+        (
+            "Restart=on-failure\n",
+            "62125000us",
+            DeploymentRestartCondition::OnFailure,
+            Duration::from_millis(62_125),
+        ),
+        (
+            "Restart=always\n",
+            "250000us",
+            DeploymentRestartCondition::Any,
+            Duration::from_millis(250),
+        ),
+        ("Restart=no\n", "0us", DeploymentRestartCondition::Never, Duration::ZERO),
+        ("", "1us", DeploymentRestartCondition::Never, Duration::from_micros(1)),
+    ] {
+        let text = format!("[Container]\nImage=example.invalid/web:1\n[Service]\n{restart}RestartSec={duration}\n");
+        let source = parse_source(
+            identifier("restart").map_err(std::io::Error::other)?,
+            [QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(716),
+                text,
+            )],
+        )?;
+        let result = QuadletImporter::new()?.import(&source);
+        let service = result.application().ok_or("application")?.services()[0].value();
+        assert!(service.restart_policy().is_none());
+        let policy = service.deployment_restart_policy().ok_or("deployment policy")?;
+        assert_eq!(policy.value().condition().value(), &expected);
+        assert_eq!(policy.value().delay().map(|value| *value.value()), Some(delay));
+        assert!(!policy.origins().is_empty());
+        assert!(policy.value().delay().is_some_and(|value| !value.origins().is_empty()));
+        assert_eq!(
+            result
+                .outcomes()
+                .iter()
+                .filter(|outcome| outcome.kind() == ConversionKind::Approximate)
+                .count(),
+            usize::from(expected != DeploymentRestartCondition::Never)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rejects_unsupported_and_duplicate_systemd_restart_delay_combinations() -> Result<(), Box<dyn std::error::Error>> {
+    for settings in [
+        "Restart=on-failure\nRestartSec=-1s\n",
+        "Restart=always\nRestartSec=infinity\n",
+        "Restart=always\nRestartSec=0.0000001s\n",
+        "Restart=always\nRestartSec=18446744073709551615us\n",
+        "Restart=always\nRestartSec=18446744073709551616us\n",
+        "Restart=always\nRestartSec=5s\n",
+        "Restart=always\nRestartSec=1min 2.125s\n",
+        "Restart=always\nRestartSec=250ms\n",
+        "Restart=always\nRestartSec=0\n",
+        "Restart=on-success\nRestartSec=1000000us\n",
+        "Restart=always\nRestart=on-failure\nRestartSec=1000000us\n",
+        "Restart=always\nRestartSec=1000000us\nRestartSec=2000000us\n",
+    ] {
+        let text = format!("[Container]\nImage=example.invalid/web:1\n[Service]\n{settings}");
+        let source = parse_source(
+            identifier("restart").map_err(std::io::Error::other)?,
+            [QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(717),
+                text,
+            )],
+        )?;
+        let result = QuadletImporter::new()?.import(&source);
+        let service = result.application().ok_or("application")?.services()[0].value();
+        assert!(service.restart_policy().is_none(), "{settings}");
+        assert!(service.deployment_restart_policy().is_none(), "{settings}");
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| matches!(outcome.kind(), ConversionKind::Invalid | ConversionKind::Unsupported)),
+            "{settings}"
+        );
+    }
+    Ok(())
+}

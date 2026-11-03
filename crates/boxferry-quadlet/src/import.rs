@@ -1,6 +1,7 @@
 //! Quadlet-to-application mapping with explicit fidelity decisions.
 
 mod metadata;
+mod restart;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -1913,6 +1914,12 @@ impl<'a> Mapping<'a> {
     ) {
         let service_name = service.name().as_str().to_owned();
         let mut state = ContainerImportState::default();
+        let deployment_restart = document
+            .sections()
+            .iter()
+            .filter(|section| section.kind() == SectionKind::Service)
+            .flat_map(TypedSection::entries)
+            .any(|entry| entry.key().text() == "RestartSec");
 
         for section in document.sections() {
             if section.name().text().starts_with("X-") {
@@ -1942,6 +1949,7 @@ impl<'a> Mapping<'a> {
                     service,
                     section.entries(),
                     &mut state.restart_seen,
+                    deployment_restart,
                 ),
                 _ => {
                     for entry in section.entries() {
@@ -1949,6 +1957,9 @@ impl<'a> Mapping<'a> {
                     }
                 }
             }
+        }
+        if deployment_restart {
+            self.map_deployment_restart(filename, &service_name, service, document);
         }
         self.map_container_commands(filename, &service_name, service, document);
         self.map_container_environment(filename, &service_name, service, document);
@@ -2455,8 +2466,15 @@ impl<'a> Mapping<'a> {
         service: &mut Service,
         entries: &[TypedEntry],
         restart_seen: &mut bool,
+        deployment_restart: bool,
     ) {
         for entry in entries {
+            if deployment_restart
+                && entry.kind() == EntryKind::GenericSystemd
+                && matches!(entry.key().text(), "Restart" | "RestartSec")
+            {
+                continue;
+            }
             if entry.kind() != EntryKind::GenericSystemd || entry.key().text() != "Restart" {
                 self.unsupported_entry(filename, service_name, entry);
                 continue;
