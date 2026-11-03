@@ -362,7 +362,7 @@ class Mechanism:
     def request(self, method, path, body=None, *, expected):
         self.boundary()
         need(self.calls + 1 <= 256 and self.bytes + LIMIT + 1 <= 16 * LIMIT)
-        status, raw = self.http.request(self.socket, method, path, body, timeout=min(15, self.deadline - self.c.owner_clock()),
+        status, raw = self.http.request(str(self.socket), method, path, body, timeout=min(15, self.deadline - self.c.owner_clock()),
             max_response_bytes=LIMIT, max_request_bytes=LIMIT,
             content_type="application/json" if body is not None else None, peer_lease=self.peer)
         self.charge(1, len(raw))
