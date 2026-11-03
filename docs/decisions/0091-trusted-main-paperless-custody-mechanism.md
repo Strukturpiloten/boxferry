@@ -193,6 +193,21 @@ authorized here.
 
 ## Consequences
 
+For a refused bootstrap, the launcher retains only a fixed last-entered-stage
+name immediately before the original PREPARED acknowledgement and each operation
+through the first hold/check and HELD acknowledgement. It clears that marker after HELD.
+On failure it best-effort emits one allowlisted ASCII marker before original
+recovery; this identifies the entered operation, never the cause or recovery
+outcome. The worker parses only its already captured bounded stream, retaining
+a fixed-size partial-line buffer. Ordinary lines are ignored; malformed, unknown,
+oversized or duplicate marker lines and incomplete capture cannot attribute a
+stage. Only a nonaccepted actual child status may forward the fixed stage name;
+accepted statuses and successful execution remain silent even with injected
+marker bytes. Ordinary parser/emission faults cannot replace execution failure or recovery.
+Control exceptions retain cancellation priority; launcher recovery runs before
+a diagnostic `KeyboardInterrupt` or `SystemExit` propagates.
+This adds no private-log read, receipt field, runtime operation or cleanup authority.
+
 The manual task can establish only the bounded custody mechanism on the recorded
 main/helper pair. Source tests, the complete repository gate and actual native
 controls are separate evidence; none substitutes for another. Product and

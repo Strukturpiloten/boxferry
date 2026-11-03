@@ -1014,6 +1014,375 @@ class PrivateReadIntegrity(unittest.TestCase):
                 read.assert_not_called()
 
 
+class BootstrapStageDiagnostics(unittest.TestCase):
+    EXPECTED_STAGES = (
+        "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
+        "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
+        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+        "native-version", "native-info", "inner-volume-data", "inner-volume-media",
+        "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
+        "paperless-hold", "paperless-check", "held-publication",
+    )
+
+    class HostileError(Exception):
+        def __str__(self):
+            raise AssertionError("private exception text consulted")
+
+        def __repr__(self):
+            raise AssertionError("private exception representation consulted")
+
+    @staticmethod
+    def marker(stage):
+        return ("BOXFERRY_CUSTODY_FAILURE last_entered_stage=" + stage + " reason=rejected\n").encode("ascii")
+
+    def test_independent_stage_roster_and_every_chunk_boundary(self):
+        self.assertEqual(mechanism.FAILURE_STAGES, self.EXPECTED_STAGES)
+        self.assertEqual(worker.MechanismFailureDiagnostic.STAGES, self.EXPECTED_STAGES)
+        for stage in self.EXPECTED_STAGES:
+            raw = self.marker(stage)
+            for offset in range(len(raw) + 1):
+                parser = worker.MechanismFailureDiagnostic()
+                parser.feed(b"MECHANISM: fixed owned fixture started; no application acceptance\n")
+                parser.feed(raw[:offset])
+                parser.feed(raw[offset:])
+                parser.feed(b"fixed custody mechanism refused; no native acceptance\n")
+                self.assertEqual(parser.last_entered_stage(), stage)
+
+    def test_unknown_hostile_duplicate_and_unterminated_markers_never_attribute(self):
+        valid = self.marker("outer-pull")
+        hostile = (
+            self.marker("foreign"), valid[:-1], valid[:-1] + b"\r\n", b" " + valid,
+            b"\x00" + valid, valid.replace(b"rejected", b"/private/secret::error::canary"),
+            valid + valid, valid + self.marker("native-info"), valid + b"BOXFERRY_CUSTODY_FAIL",
+            self.marker("foreign") + valid, valid[:-1] + b"x" * 65536 + b"\n" + valid,
+        )
+        for raw in hostile:
+            with self.subTest(size=len(raw)):
+                parser = worker.MechanismFailureDiagnostic()
+                for offset in range(0, len(raw), 7):
+                    parser.feed(raw[offset:offset + 7])
+                    self.assertLessEqual(len(parser.pending), parser.MAX_LINE)
+                self.assertIsNone(parser.last_entered_stage())
+        parser = worker.MechanismFailureDiagnostic()
+        parser.feed(b"ordinary private output" * 65536 + b"\n" + valid)
+        self.assertEqual(parser.last_entered_stage(), "outer-pull")
+        self.assertLessEqual(len(parser.pending), parser.MAX_LINE)
+
+    @contextmanager
+    def launcher(self, fault=None):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-diagnostic-") as temporary, ExitStack() as stack:
+            base = Path(temporary)
+            engine = mechanism.Mechanism.__new__(mechanism.Mechanism)
+            engine.failure_stage = None
+            engine.binding_path = base / "binding.json"
+            engine.sdk = base / "sdk"
+            engine.binding = {"schema": 1, "case": "positive", "sdk": {"revision": SDK, "files": {
+                "scripts/native-conformance.sh": "1" * 64, "scripts/native-unix-http.py": "2" * 64}},
+                "box": {"files": {"scripts/lib/docker-application-contract.py": "3" * 64}},
+                "context": {"run_id": "123", "attempt": "1"}}
+            engine.deadline, engine.cleanup_deadline = 780, 900
+            engine.calls = engine.bytes = engine.sequence = engine.custody_calls = engine.custody_bytes = 0
+            engine.callback_pids, engine.callbacks = [], []
+            engine.guard = engine.owner = engine.path = engine.directory = None
+            engine.closed = engine.prepared = engine.uncertain = False
+            engine.phase_number = 0
+            events = []
+            def enter(stage):
+                events.append((stage, engine.failure_stage))
+                self.assertEqual(engine.failure_stage, stage)
+                if stage == fault:
+                    raise self.HostileError("private-path-body-argv-environment-canary")
+            def outer(arguments):
+                if arguments[0] == "preflight":
+                    self.assertIsNone(engine.failure_stage)
+                    return b"/owned-graph\n"
+                selected = {"pull": "outer-pull", "volume-create": "outer-volume-create",
+                    "volume-path": "outer-volume-path", "prepare-data": "outer-data-prepare",
+                    "create-daemon": "outer-daemon-create"}
+                stage = "apparmor-" + arguments[1] if arguments[0] == "apparmor" else selected[arguments[0]]
+                enter(stage)
+                if arguments[0] == "volume-path":
+                    return engine.owner["volume_path"].encode()
+                return b"original-cid" if arguments[0] == "create-daemon" else b""
+            def wait_file(path, **_keywords):
+                if path.name == "docker.sock":
+                    enter("daemon-socket-readiness")
+                else:
+                    self.assertIsNone(engine.failure_stage)
+            def legacy(phase):
+                if phase == "ready":
+                    enter("legacy-ready")
+                if phase == "close":
+                    shutil.rmtree(engine.directory)
+            def phase(stage):
+                if stage == "prepared":
+                    enter("prepared-ack")
+                elif stage == "held":
+                    enter("held-publication")
+                elif stage == "closed":
+                    self.assertIsNone(engine.failure_stage)
+            def request(method, path, **_keywords):
+                self.assertEqual(method, "GET")
+                enter("native-version" if path == "/version" else "native-info")
+                return {"Version": "29.8.1", "ApiVersion": "1.56"} if path == "/version" else {
+                    "DockerRootDir": "/home/docker/.local/share/docker", "SecurityOptions": ["rootless"]}
+            def volume_phase(phase):
+                if phase != "paperless-close":
+                    enter(phase)
+                    engine.callback_pids.append(len(engine.callback_pids) + 10)
+                else:
+                    self.assertIsNone(engine.failure_stage)
+                    if fault == "after-held":
+                        raise self.HostileError("later-control-private-canary")
+            guard = types.SimpleNamespace(poll=lambda: None, wait=lambda **_keywords: 0)
+            engine.c = types.SimpleNamespace(
+                OUTER_RUNTIME_FILES=(), PAPERLESS_SOURCES=(),
+                canonical_images=lambda *_args: {"upstream-rootless": "fixed-test-image"},
+                capture_outer_runtime=lambda *_args: None, process_start=lambda _pid: 100,
+                prepare_owner_custody=lambda _owner: (engine.directory / "owner-custody.json", "digest"),
+                owner_guard_command=lambda *_args: ["never-executed"],
+                owner_cid=lambda _owner: (enter("outer-daemon-identity"), "original-cid")[1],
+                bind_unix_http=lambda *_args: enter("http-helper-bind"),
+                owner_clock=lambda: 0)
+            engine.outer, engine.wait_file, engine.legacy, engine.phase = outer, wait_file, legacy, phase
+            engine.request, engine.volume_phase = request, volume_phase
+            engine.bind = lambda: enter("native-peer-bind")
+            engine.create_role = lambda role: enter("inner-volume-" + role)
+            recover = engine.recover
+            def recovery():
+                events.append(("recover", engine.failure_stage))
+                recover()
+            engine.recover = recovery
+            original_path = mechanism.Path
+            stack.enter_context(mock.patch.object(mechanism, "Path", side_effect=lambda value:
+                base if value == "/tmp" else original_path(value)))
+            stack.enter_context(mock.patch.object(mechanism.subprocess, "Popen", return_value=guard))
+            stack.enter_context(mock.patch.object(mechanism, "Mechanism", return_value=engine))
+            stack.enter_context(mock.patch.object(sys, "argv", ["mechanism", "run", "--binding", str(engine.binding_path)]))
+            yield engine, events
+
+    def test_every_bootstrap_operation_reports_before_original_recovery(self):
+        for stage in self.EXPECTED_STAGES:
+            with self.subTest(stage=stage), self.launcher(stage) as (engine, events):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                original_report = mechanism.report_failure_stage
+                def reported(actual):
+                    events.append(("report", actual.failure_stage))
+                    original_report(actual)
+                with mock.patch.object(mechanism, "report_failure_stage", side_effect=reported), \
+                     redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(mechanism.main(), 1)
+                self.assertEqual(stderr.getvalue(), self.marker(stage).decode() +
+                    "fixed custody mechanism refused; no native acceptance\n")
+                self.assertEqual(events[-2:], [("report", stage), ("recover", stage)])
+                self.assertNotIn("private", stdout.getvalue())
+                self.assertFalse(engine.closed)
+
+    def test_success_and_post_held_failure_never_report_stale_bootstrap_stage(self):
+        for fault in (None, "after-held"):
+            with self.subTest(fault=fault), self.launcher(fault) as (engine, events):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(mechanism.main(), 0 if fault is None else 1)
+                self.assertEqual(stderr.getvalue(), "" if fault is None else
+                    "fixed custody mechanism refused; no native acceptance\n")
+                self.assertEqual([stage for stage, _actual in events if stage != "recover"], list(self.EXPECTED_STAGES))
+                self.assertIsNone(engine.failure_stage)
+
+    def test_emit_error_cannot_prevent_original_recovery_or_replace_failure(self):
+        for failure in (self.HostileError("emit-private-canary"), MemoryError("emit-private-canary")):
+            with self.subTest(kind=type(failure).__name__), self.launcher("outer-pull") as (_engine, events):
+                original_print = print
+                def broken(*values, **keywords):
+                    if values and type(values[0]) is str and values[0].startswith("BOXFERRY_CUSTODY_FAILURE"):
+                        raise failure
+                    return original_print(*values, **keywords)
+                with mock.patch("builtins.print", side_effect=broken), redirect_stdout(io.StringIO()), \
+                     redirect_stderr(io.StringIO()):
+                    self.assertEqual(mechanism.main(), 1)
+                self.assertEqual(events[-1], ("recover", "outer-pull"))
+        for stage in (None, "unknown\n::error::private", self.HostileError("private")):
+            error = io.StringIO()
+            with redirect_stderr(error):
+                mechanism.report_failure_stage(types.SimpleNamespace(failure_stage=stage))
+            self.assertEqual(error.getvalue(), "")
+
+    def execute_child(self, raw, status=1, *, accepted=(0,), diagnostics=True, maximum=4096, chunks=None):
+        temporary = tempfile.TemporaryDirectory(prefix="diagnostic-capture-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        source = "import os,time; "
+        for chunk in [raw] if chunks is None else chunks:
+            source += f"os.write(1, {chunk!r}); time.sleep(.02); "
+        source += "os.kill(os.getpid(), 9)" if status == -9 else f"raise SystemExit({status})"
+        output, error = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(error), \
+             mock.patch.object(worker, "child_environment", return_value={"PATH": os.defpath, "HOME": str(root)}):
+            try:
+                result = worker.execute([sys.executable, "-I", "-B", "-c", source], root=root,
+                    log=root / "private.log", seconds=3, cleanup_seconds=.2,
+                    accepted_statuses=accepted, mechanism_diagnostics=diagnostics, maximum=maximum)
+            except ValueError:
+                result = None
+        self.assertEqual(output.getvalue(), "")
+        return result, error.getvalue(), (root / "private.log").read_bytes()
+
+    def test_real_captured_failure_forwards_only_fixed_stage_without_log_reread(self):
+        raw = b"private-token-path-argv-body-canary\n" + self.marker("native-info")
+        with mock.patch.object(worker.auth, "read", side_effect=AssertionError("failure log reread")):
+            result, error, captured = self.execute_child(raw)
+        self.assertIsNone(result)
+        self.assertEqual(captured, raw)
+        self.assertEqual(error, "mechanism launcher rejected: last_entered_stage=native-info reason=rejected\n")
+
+    def test_accepted_statuses_and_disabled_diagnostics_never_forward_injected_marker(self):
+        raw = self.marker("outer-pull")
+        for status, accepted, diagnostics in ((0, (0,), True), (-9, (-9,), True), (1, (0,), False)):
+            with self.subTest(status=status, diagnostics=diagnostics):
+                result, error, captured = self.execute_child(raw, status, accepted=accepted, diagnostics=diagnostics)
+                self.assertEqual(error, "")
+                self.assertEqual(captured, raw)
+                self.assertEqual(result, raw if status in accepted else None)
+
+    def test_unknown_duplicate_missing_and_over_budget_output_never_forward(self):
+        for raw, maximum in ((b"private-output\n", 4096), (self.marker("unknown"), 4096),
+                             (self.marker("outer-pull") * 2, 4096), (self.marker("outer-pull"), 10)):
+            with self.subTest(size=len(raw), maximum=maximum):
+                with mock.patch.object(worker.auth, "read", side_effect=AssertionError("failure log reread")):
+                    result, error, captured = self.execute_child(raw, maximum=maximum)
+                self.assertIsNone(result)
+                self.assertEqual(error, "")
+                self.assertLessEqual(len(captured), maximum)
+
+    def test_parser_faults_do_not_mask_original_execution_refusal(self):
+        for method in ("__init__", "feed", "emit"):
+            for failure in (self.HostileError("private-parser-canary"), MemoryError("private-parser-canary")):
+                with self.subTest(method=method, kind=type(failure).__name__), \
+                     mock.patch.object(worker.MechanismFailureDiagnostic, method, side_effect=failure):
+                    result, error, _captured = self.execute_child(self.marker("outer-pull"))
+                self.assertIsNone(result)
+                self.assertEqual(error, "")
+
+        for failure in (self.HostileError("print-private-canary"), MemoryError("print-private-canary")):
+            original_print = print
+            def broken(*values, **keywords):
+                if values and type(values[0]) is str and values[0].startswith("mechanism launcher rejected:"):
+                    raise failure
+                return original_print(*values, **keywords)
+            with self.subTest(kind=type(failure).__name__), mock.patch("builtins.print", side_effect=broken):
+                result, error, _captured = self.execute_child(self.marker("outer-pull"))
+            self.assertIsNone(result)
+            self.assertEqual(error, "")
+
+    def test_final_emission_sigint_and_system_exit_propagate_after_handler_restore(self):
+        original_print = print
+        saved_handler = worker.signal.getsignal(worker.signal.SIGINT)
+        worker.signal.signal(worker.signal.SIGINT, worker.signal.default_int_handler)
+        try:
+            for kind in ("sigint", "system-exit"):
+                control = SystemExit(77)
+                emitted = []
+                def interrupted(*values, **keywords):
+                    if values and type(values[0]) is str and values[0].startswith("mechanism launcher rejected:"):
+                        self.assertIs(worker.signal.getsignal(worker.signal.SIGINT), worker.signal.default_int_handler)
+                        emitted.append(kind)
+                        if kind == "sigint":
+                            os.kill(os.getpid(), worker.signal.SIGINT)
+                        raise control
+                    return original_print(*values, **keywords)
+                expected = KeyboardInterrupt if kind == "sigint" else SystemExit
+                with self.subTest(kind=kind), mock.patch("builtins.print", side_effect=interrupted), \
+                     mock.patch.object(worker.auth, "read", side_effect=AssertionError("failure log reread")), \
+                     self.assertRaises(expected) as stopped:
+                    self.execute_child(self.marker("prepared-ack"))
+                if kind == "system-exit":
+                    self.assertIs(stopped.exception, control)
+                self.assertEqual(emitted, [kind])
+                self.assertIs(worker.signal.getsignal(worker.signal.SIGINT), worker.signal.default_int_handler)
+        finally:
+            worker.signal.signal(worker.signal.SIGINT, saved_handler)
+
+    def test_producer_control_exceptions_run_original_recovery_once_before_propagating(self):
+        original_print = print
+        for control in (KeyboardInterrupt(), SystemExit(78)):
+            with self.subTest(kind=type(control).__name__), self.launcher("outer-pull") as (engine, events):
+                def interrupted(*values, **keywords):
+                    if values and type(values[0]) is str and values[0].startswith("BOXFERRY_CUSTODY_FAILURE"):
+                        raise control
+                    return original_print(*values, **keywords)
+                output, error = io.StringIO(), io.StringIO()
+                with mock.patch("builtins.print", side_effect=interrupted), redirect_stdout(output), \
+                     redirect_stderr(error), self.assertRaises(type(control)) as stopped:
+                    mechanism.main()
+                self.assertIs(stopped.exception, control)
+                self.assertEqual([event for event in events if event[0] == "recover"], [("recover", "outer-pull")])
+                self.assertFalse(engine.directory.exists())
+                self.assertEqual(error.getvalue(), "")
+
+    def test_truncated_duplicate_after_captured_marker_never_attributes(self):
+        marker = self.marker("outer-pull")
+        with mock.patch.object(worker.auth, "read", side_effect=AssertionError("failure log reread")):
+            result, error, captured = self.execute_child(b"", maximum=len(marker) + 10,
+                chunks=[marker, marker])
+        self.assertIsNone(result)
+        self.assertEqual(error, "")
+        self.assertEqual(captured, marker)
+
+    def test_incomplete_capture_preserves_original_observer_exception(self):
+        with tempfile.TemporaryDirectory(prefix="diagnostic-observer-") as temporary:
+            root = Path(temporary)
+            marker = self.marker("prepared-ack")
+            source = f"import os,time; os.write(1, {marker!r}); time.sleep(10)"
+            seen = []
+            original_feed = worker.MechanismFailureDiagnostic.feed
+            def feed(parser, raw):
+                original_feed(parser, raw)
+                seen.append(raw)
+            failure = self.HostileError("original-observer-private-canary")
+            def observe(_process):
+                if seen:
+                    raise failure
+            error = io.StringIO()
+            with mock.patch.object(worker.MechanismFailureDiagnostic, "feed", autospec=True, side_effect=feed), \
+                 mock.patch.object(worker.MechanismFailureDiagnostic, "emit") as emitted, \
+                 mock.patch.object(worker, "child_environment", return_value={"PATH": os.defpath, "HOME": str(root)}), \
+                 mock.patch.object(worker.auth, "read", side_effect=AssertionError("failure log reread")), \
+                 redirect_stderr(error), self.assertRaises(self.HostileError) as stopped:
+                worker.execute([sys.executable, "-I", "-B", "-c", source], root=root, log=root / "private.log",
+                    seconds=3, cleanup_seconds=.2, observe=observe, mechanism_diagnostics=True)
+            self.assertIs(stopped.exception, failure)
+            self.assertEqual(b"".join(seen), marker)
+            self.assertEqual(error.getvalue(), "")
+            emitted.assert_not_called()
+
+    def test_enabled_parser_preserves_cancellation_priority_and_silence(self):
+        with tempfile.TemporaryDirectory(prefix="diagnostic-cancellation-") as temporary:
+            root = Path(temporary)
+            marker = self.marker("outer-pull")
+            source = f"import os,time; os.write(1, {marker!r}); time.sleep(10)"
+            seen = []
+            original_feed = worker.MechanismFailureDiagnostic.feed
+            def feed(parser, raw):
+                original_feed(parser, raw)
+                seen.append(raw)
+            def observe(_process):
+                if seen:
+                    os.kill(os.getpid(), worker.signal.SIGTERM)
+                    seen.clear()
+            error = io.StringIO()
+            original_handler = worker.signal.getsignal(worker.signal.SIGTERM)
+            with mock.patch.object(worker.MechanismFailureDiagnostic, "feed", autospec=True, side_effect=feed), \
+                 mock.patch.object(worker.MechanismFailureDiagnostic, "emit") as emitted, \
+                 mock.patch.object(worker, "child_environment", return_value={"PATH": os.defpath, "HOME": str(root)}), \
+                 redirect_stderr(error), self.assertRaises(SystemExit) as stopped:
+                worker.execute([sys.executable, "-I", "-B", "-c", source], root=root, log=root / "private.log",
+                    seconds=3, cleanup_seconds=.2, observe=observe, mechanism_diagnostics=True)
+            self.assertEqual(stopped.exception.code, 128 + worker.signal.SIGTERM)
+            self.assertEqual(worker.signal.getsignal(worker.signal.SIGTERM), original_handler)
+            self.assertEqual(error.getvalue(), "")
+            emitted.assert_not_called()
+
+
 class MechanismDiagnostics(unittest.TestCase):
     class HostileError(Exception):
         def __str__(self):

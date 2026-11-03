@@ -291,14 +291,77 @@ def child_environment():
             "PYTHONDONTWRITEBYTECODE": "1", **runtime_environment(os.environ)}
 
 
+class MechanismFailureDiagnostic:
+    """Bounded metadata from captured bytes, never an execution authority."""
+    STAGES = (
+        "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
+        "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
+        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+        "native-version", "native-info", "inner-volume-data", "inner-volume-media",
+        "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
+        "paperless-hold", "paperless-check", "held-publication",
+    )
+    PREFIX = b"BOXFERRY_CUSTODY_FAILURE"
+    MARKERS = {b"BOXFERRY_CUSTODY_FAILURE last_entered_stage=" + stage.encode("ascii") + b" reason=rejected": stage
+               for stage in STAGES}
+    MAX_LINE = max(map(len, MARKERS))
+
+    def __init__(self):
+        self.pending = bytearray()
+        self.discard = False
+        self.invalid = False
+        self.stage = None
+
+    def feed(self, raw):
+        for value in raw:
+            if value == 10:
+                if not self.discard and self.PREFIX in self.pending:
+                    stage = self.MARKERS.get(bytes(self.pending))
+                    if stage is None or self.stage is not None:
+                        self.invalid = True
+                    else:
+                        self.stage = stage
+                self.pending.clear()
+                self.discard = False
+            elif not self.discard:
+                if len(self.pending) == self.MAX_LINE:
+                    if self.PREFIX in self.pending:
+                        self.invalid = True
+                    self.pending.clear()
+                    self.discard = True
+                else:
+                    self.pending.append(value)
+
+    def last_entered_stage(self):
+        if self.invalid or self.pending or self.discard:
+            return None
+        return self.stage
+
+    def emit(self):
+        try:
+            stage = self.last_entered_stage()
+            if type(stage) is str and stage in self.STAGES:
+                print(f"mechanism launcher rejected: last_entered_stage={stage} reason=rejected", file=sys.stderr)
+        except Exception:
+            pass
+
+
 def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 1024 * 1024,
-            cleanup_seconds=10, preserve_guard=False, observe=None, accepted_statuses=(0,)):
+            cleanup_seconds=10, preserve_guard=False, observe=None, accepted_statuses=(0,), mechanism_diagnostics=False):
     auth.require(seconds > 0)
     deadline = time.monotonic() + seconds
     failed = False
     cancelled = None
     cancellation_failure = False
     handlers = {}
+    status = None
+    diagnostic = None
+    diagnostic_complete = False
+    if mechanism_diagnostics:
+        try:
+            diagnostic = MechanismFailureDiagnostic()
+        except Exception:
+            pass
     def cancel(kind, _frame):
         nonlocal cancelled
         # Never raise inside Popen or cleanup, or re-enter a native TERM handler.
@@ -354,6 +417,7 @@ def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 10
                     for event, _ in selector.select(0.1):
                         raw = os.read(event.fileobj.fileno(), 65536)
                         if not raw:
+                            diagnostic_complete = True
                             selector.unregister(event.fileobj)
                             continue
                         total += len(raw)
@@ -361,6 +425,13 @@ def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 10
                             stop_work()
                         if not failed:
                             stream.write(raw)
+                            if diagnostic is not None:
+                                try:
+                                    diagnostic.feed(raw)
+                                except Exception:
+                                    diagnostic = None
+                        else:
+                            diagnostic = None
             finally:
                 if cancelled is not None:
                     stop_work(cancellation=True)
@@ -378,6 +449,12 @@ def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 10
     finally:
         for kind, handler in handlers.items():
             signal.signal(kind, handler)
+        if (diagnostic is not None and diagnostic_complete and status is not None and status not in accepted_statuses
+                and cancelled is None and not cancellation_failure):
+            try:
+                diagnostic.emit()
+            except Exception:
+                pass
     if cancellation_failure or (cancelled is not None and not failed and status == 0):
         raise SystemExit(128 + cancelled)
     auth.require(not failed and status in accepted_statuses)
@@ -936,7 +1013,8 @@ def mechanism(args, *, phase=None):
         mark("mechanism-execution")
         execute([sys.executable, str(source), "run", "--binding", str(path)], root=args.execution_root,
                 log=args.private / "mechanism.log", seconds=900, cleanup_seconds=125, preserve_guard=True,
-                observe=observe, accepted_statuses=(0,) if args.case in {"positive", "guard-loss"} else (-signal.SIGKILL,))
+                observe=observe, accepted_statuses=(0,) if args.case in {"positive", "guard-loss"} else (-signal.SIGKILL,),
+                mechanism_diagnostics=True)
         mark("mechanism-observer")
         observations = observer.finish()
         mark("mechanism-evidence")
