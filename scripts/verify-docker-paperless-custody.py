@@ -28,7 +28,7 @@ CHECK_BYTES = 5 * LIMIT + 34 * 4096 + 2 * 65536 + 16384 + 256 * 4096 + 42
 FAILURE_STAGES = (
     "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
     "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
-    "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+    "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind", "apparmor-verify",
     "native-version", "native-info", "inner-volume-data", "inner-volume-media",
     "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
     "paperless-hold", "paperless-check", "held-publication",
@@ -337,6 +337,8 @@ class Mechanism:
                                    b["sdk"]["files"]["scripts/native-unix-http.py"])
         self.failure_stage = "native-peer-bind"
         self.bind()
+        self.failure_stage = "apparmor-verify"
+        self.outer(["apparmor", "verify", "upstream-rootless", runner["nonce"]])
         # Explicit readiness, version and mapping are native prerequisites.
         self.failure_stage = "native-version"
         version = self.request("GET", "/version", expected=200)

@@ -1018,7 +1018,7 @@ class BootstrapStageDiagnostics(unittest.TestCase):
     EXPECTED_STAGES = (
         "prepared-ack", "outer-pull", "outer-volume-create", "outer-volume-path", "outer-data-prepare",
         "apparmor-prepare", "apparmor-load", "outer-daemon-create", "outer-daemon-identity",
-        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind",
+        "daemon-socket-readiness", "legacy-ready", "http-helper-bind", "native-peer-bind", "apparmor-verify",
         "native-version", "native-info", "inner-volume-data", "inner-volume-media",
         "inner-volume-consume", "inner-volume-export", "inner-volume-pgdata", "inner-volume-redisdata",
         "paperless-hold", "paperless-check", "held-publication",
@@ -1086,6 +1086,7 @@ class BootstrapStageDiagnostics(unittest.TestCase):
             engine.guard = engine.owner = engine.path = engine.directory = None
             engine.closed = engine.prepared = engine.uncertain = False
             engine.phase_number = 0
+            engine.outer_arguments = []
             events = []
             def enter(stage):
                 events.append((stage, engine.failure_stage))
@@ -1093,6 +1094,7 @@ class BootstrapStageDiagnostics(unittest.TestCase):
                 if stage == fault:
                     raise self.HostileError("private-path-body-argv-environment-canary")
             def outer(arguments):
+                engine.outer_arguments.append(arguments)
                 if arguments[0] == "preflight":
                     self.assertIsNone(engine.failure_stage)
                     return b"/owned-graph\n"
@@ -1203,6 +1205,64 @@ class BootstrapStageDiagnostics(unittest.TestCase):
                 self.assertEqual(events[-1], ("recover", "native-version"))
                 self.assertEqual(error.getvalue(), self.marker("native-version").decode() +
                     "fixed custody mechanism refused; no native acceptance\n")
+
+    def test_canonical_apparmor_verification_is_once_after_peer_bind_before_version_and_hold(self):
+        with self.launcher() as (engine, events):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(mechanism.main(), 0)
+            expected = ["apparmor", "verify", "upstream-rootless", engine.owner["runner_profile"]["nonce"]]
+            self.assertEqual([arguments for arguments in engine.outer_arguments if arguments[:2] == ["apparmor", "verify"]],
+                             [expected])
+            stages = [stage for stage, _actual in events]
+            self.assertEqual(stages[stages.index("native-peer-bind"):stages.index("native-version") + 1],
+                             ["native-peer-bind", "apparmor-verify", "native-version"])
+            self.assertLess(stages.index("apparmor-verify"), stages.index("paperless-hold"))
+        with self.launcher("apparmor-verify") as (_engine, events):
+            error = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(error):
+                self.assertEqual(mechanism.main(), 1)
+            stages = [stage for stage, _actual in events]
+            self.assertNotIn("native-version", stages)
+            self.assertNotIn("inner-volume-data", stages)
+            self.assertNotIn("paperless-hold", stages)
+            self.assertEqual(events[-1], ("recover", "apparmor-verify"))
+            self.assertEqual(error.getvalue(), self.marker("apparmor-verify").decode() +
+                             "fixed custody mechanism refused; no native acceptance\n")
+
+    def test_original_outer_charges_verification_and_preserves_status_caps_and_cutoff(self):
+        arguments = ["apparmor", "verify", "upstream-rootless", "a" * 32]
+        def engine(status=0, raw=b""):
+            value = mechanism.Mechanism.__new__(mechanism.Mechanism)
+            value.owner = {"original": "owner"}
+            value.deadline, value.cleanup_deadline = 120, 240
+            value.calls, value.bytes = 7, 31
+            value.c = types.SimpleNamespace(owner_clock=mock.Mock(return_value=100),
+                owner_call=mock.Mock(return_value=(status, raw)))
+            return value
+        value = engine()
+        self.assertEqual(value.outer(arguments), b"")
+        self.assertEqual((value.calls, value.bytes), (8, 31))
+        value.c.owner_call.assert_called_once_with(value.owner, arguments, 120,
+                                                   unprepared=False, paperless_caller=True)
+        self.assertEqual((value.deadline, value.cleanup_deadline), (120, 240))
+        value = engine(status=2, raw=b"bounded refusal")
+        with self.assertRaises(mechanism.Refused):
+            value.outer(arguments)
+        self.assertEqual((value.calls, value.bytes), (8, 31 + len(b"bounded refusal")))
+        for calls, size, cutoff in ((256, 31, 120), (7, 15 * 1_048_576, 120), (7, 31, 100)):
+            value = engine()
+            value.calls, value.bytes, value.deadline = calls, size, cutoff
+            with self.subTest(calls=calls, size=size, cutoff=cutoff), self.assertRaises(mechanism.Refused):
+                value.outer(arguments)
+            value.c.owner_call.assert_not_called()
+            self.assertEqual((value.calls, value.bytes, value.deadline, value.cleanup_deadline),
+                             (calls, size, cutoff, 240))
+        value = engine()
+        value.c.owner_clock.side_effect = [100, 120]
+        with self.assertRaises(mechanism.Refused):
+            value.outer(arguments)
+        self.assertEqual((value.calls, value.bytes, value.deadline, value.cleanup_deadline), (8, 31, 120, 240))
+        value.c.owner_call.assert_called_once()
 
     def test_emit_error_cannot_prevent_original_recovery_or_replace_failure(self):
         for failure in (self.HostileError("emit-private-canary"), MemoryError("emit-private-canary")):
