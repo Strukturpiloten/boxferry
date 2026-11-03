@@ -332,6 +332,9 @@ impl<'a> Mapping<'a> {
                 for entry in section.entries() {
                     let subject = match entry.kind() {
                         EntryKind::Container(ContainerKey::PodmanArgs) => {
+                            if reviewed_privileged_entry(document).is_some() {
+                                continue;
+                            }
                             Some(RetainedNativeEvidenceSubject::QuadletServicePodmanArgs(name.clone()))
                         }
                         EntryKind::Volume(VolumeKey::ContainersConfModule) => Some(
@@ -1949,6 +1952,11 @@ impl<'a> Mapping<'a> {
                     }
                 }
             }
+        }
+        if let Some((entry, value)) = reviewed_privileged_entry(document) {
+            let origin = self.entry_origin(entry);
+            service.set_privileged(Sourced::from_source(value, origin.clone()));
+            self.exact(format!("services.{service_name}.privileged"), Some(origin));
         }
         self.map_container_commands(filename, &service_name, service, document);
         self.map_container_environment(filename, &service_name, service, document);
@@ -5421,4 +5429,25 @@ fn parse_network_assignment(value: &str) -> Option<(&str, &str)> {
 fn parse_network_label(value: &str) -> Option<(&str, &str)> {
     let (name, value) = parse_network_assignment(value)?;
     (is_label_name(name)).then_some((name, value))
+}
+
+// This is a finite semantic promotion of two catalogue-evidenced literal forms, not an
+// argument parser. Mixed arguments, repetitions, resets and continuations remain opaque evidence.
+fn reviewed_privileged_entry(document: &QuadletDocument) -> Option<(&TypedEntry, bool)> {
+    let mut entries = document
+        .sections()
+        .iter()
+        .filter(|section| section.kind() == SectionKind::Container)
+        .flat_map(TypedSection::entries)
+        .filter(|entry| matches!(entry.kind(), EntryKind::Container(ContainerKey::PodmanArgs)));
+    let entry = entries.next()?;
+    if entries.next().is_some() || !entry.value().continuations().is_empty() {
+        return None;
+    }
+    let value = match entry.value().primary().text().trim() {
+        "--privileged" => true,
+        "--privileged=false" => false,
+        _ => return None,
+    };
+    Some((entry, value))
 }

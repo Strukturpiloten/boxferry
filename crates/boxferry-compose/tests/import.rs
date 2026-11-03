@@ -2556,3 +2556,62 @@ fn assert_core_execution_context(service: &Service) {
         Some(&true)
     );
 }
+
+#[test]
+fn privileged_merge_preserves_explicit_false_and_all_source_origins() -> Result<(), Box<dyn Error>> {
+    let base_id = ComposeSourceId::new(300);
+    let override_id = ComposeSourceId::new(301);
+    let project = merged_project([
+        (
+            base_id,
+            "base.yaml",
+            "services:\n  web:\n    image: example.invalid/web:1\n    privileged: true\n",
+        ),
+        (
+            override_id,
+            "override.yaml",
+            "services:\n  web:\n    privileged: false\n",
+        ),
+    ])?;
+    let source = ComposeSource::new(project, Identifier::new("privileged")?)?
+        .with_source_id(base_id, SourceId::new("base.yaml")?)
+        .with_source_id(override_id, SourceId::new("override.yaml")?);
+    let imported = ComposeImporter::new()?.import(&source);
+    let privileged = imported.application().ok_or("application")?.services()[0]
+        .value()
+        .privileged()
+        .ok_or("explicit false")?;
+    assert!(!privileged.value());
+    assert_eq!(
+        privileged
+            .origins()
+            .iter()
+            .map(|origin| origin.source_id().as_str())
+            .collect::<Vec<_>>(),
+        ["base.yaml", "override.yaml"]
+    );
+    Ok(())
+}
+
+#[test]
+fn unresolved_privileged_expression_is_invalid_instead_of_becoming_false() -> Result<(), Box<dyn Error>> {
+    let project = merged_project([(
+        ComposeSourceId::new(302),
+        "privileged.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    privileged: ${PRIVILEGED}\n",
+    )])?;
+    let imported = ComposeImporter::new()?.import(&ComposeSource::new(project, Identifier::new("privileged")?)?);
+    assert!(
+        imported.application().ok_or("application")?.services()[0]
+            .value()
+            .privileged()
+            .is_none()
+    );
+    assert!(
+        imported
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.privileged" && outcome.kind() == ConversionKind::Invalid)
+    );
+    Ok(())
+}

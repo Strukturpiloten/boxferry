@@ -2823,6 +2823,7 @@ pub struct Service {
     supplementary_groups: Vec<Sourced<ProtectedString>>,
     working_directory: Option<Sourced<ProtectedString>>,
     read_only_root_filesystem: Option<Sourced<bool>>,
+    privileged: Option<Sourced<bool>>,
     hostname: Option<Sourced<ProtectedString>>,
     dns_servers: Option<Vec<Sourced<ProtectedString>>>,
     dns_servers_origins: Vec<Provenance>,
@@ -2902,6 +2903,7 @@ impl Service {
             supplementary_groups: Vec::new(),
             working_directory: None,
             read_only_root_filesystem: None,
+            privileged: None,
             hostname: None,
             dns_servers: None,
             dns_servers_origins: Vec::new(),
@@ -3254,6 +3256,19 @@ impl Service {
     #[must_use]
     pub const fn working_directory(&self) -> Option<&Sourced<ProtectedString>> {
         self.working_directory.as_ref()
+    }
+
+    /// Sets the explicitly authored privileged-container choice, retaining its provenance.
+    ///
+    /// An explicit `false` is distinct from leaving the setting unspecified.
+    pub fn set_privileged(&mut self, privileged: Sourced<bool>) {
+        self.privileged = Some(privileged);
+    }
+
+    /// Returns the explicit privileged-container choice, or `None` when unspecified.
+    #[must_use]
+    pub const fn privileged(&self) -> Option<&Sourced<bool>> {
+        self.privileged.as_ref()
     }
 
     /// Sets the explicit read-only root-filesystem choice.
