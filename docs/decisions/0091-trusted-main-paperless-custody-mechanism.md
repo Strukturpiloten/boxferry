@@ -96,6 +96,13 @@ metadata traversal uses only the fixed actual daemon proc-root transition and
 no-follow components; it retains no storage directory and enters no namespace.
 No broker, guest helper, extra holder, mount, descriptor-transfer channel or guard
 operation is added.
+The authenticated root Paperless `create-daemon` bridge invocation alone selects
+subprocess umask `077`, so its canonical CID artifact is created private enough
+for the existing exact-`0600` owner reader. The mask is local to that child;
+the original archive-save restriction, other calls and parent mask remain unchanged.
+This corrects a demonstrated producer/reader mode mismatch, without claiming the
+unobserved mode caused an earlier native failure. No chmod repair or reader
+permission relaxation is permitted.
 
 Each replacement control uses a fresh original owner/lease. The worker observes
 the old held object and the changed current role object before the failing check.

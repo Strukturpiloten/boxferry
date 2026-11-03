@@ -1085,13 +1085,19 @@ def owner_call(value: dict[str, Any], arguments: list[str], deadline: float, *, 
                 "owner sealed custody changed")
     owner_lifecycle(lifecycle, deadline)
     require(owner_clock() + 0.1 < deadline, "owner cleanup deadline exhausted")
+    # The canonical CID producer must create the private artifact accepted by
+    # owner_cid. Select only after the original source/session/custody checks;
+    # legacy and other operations retain their existing inherited mask.
+    private_creation = (paperless_caller and "paperless_sources" in value
+                        and arguments[:1] == ["create-daemon"])
     # Guard-owned operations retain their independent sessions. Paperless work
     # stays visible to the original owner's whole-session watchdog; a distinct
     # PGID still lets the existing unreaped-leader quiescence cover every child.
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE,
                                **({"process_group": 0} if paperless_caller else {"start_new_session": True}),
-                               **({"preexec_fn": archive_limit, "umask": 0o077} if archive_limit is not None else {}))
+                               **({"preexec_fn": archive_limit} if archive_limit is not None else {}),
+                               **({"umask": 0o077} if archive_limit is not None or private_creation else {}))
     selector = selectors.DefaultSelector()
     output = bytearray()
     total = 0
