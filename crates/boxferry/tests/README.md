@@ -22,6 +22,9 @@ generated result to a same-format fixed point. The remaining route, CLI, report,
 repository-policy tests exercise focused Compose/Quadlet behaviors and their public orchestration
 boundary.
 
+`privileged.rs` owns omitted/false/true privileged intent across Compose and Quadlet, source
+provenance, finite target boundaries, opaque argument refusal, and Podman export loss policy.
+
 `vendor_metadata.rs` owns inert metadata type/scope round trips, folded text, native wire records,
 carrier ownership/conflicts, fresh provenance, privacy refusal and explicit Podman losses.
 

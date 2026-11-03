@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0092](0092-typed-privileged-container-intent.md) adds provenance-bearing privileged
+container intent and a finite typed Quadlet argument mapping while retaining opaque argument boundaries.
+
 [ADR 0091](0091-trusted-main-paperless-custody-mechanism.md) owns the fixed
 trusted-main six-volume custody mechanism, preserving product and application
 acceptance boundaries and existing candidate admission.

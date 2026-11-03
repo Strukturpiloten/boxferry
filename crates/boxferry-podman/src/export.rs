@@ -980,6 +980,13 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unmapped_service_fields(&mut self, service: &Service, subject: &str) {
+        if let Some(privileged) = service.privileged() {
+            self.unsupported_with_origins(
+                format!("{subject}.privileged"),
+                "privileged execution has no reviewed PodmanLens deployment mapping yet",
+                privileged.origins(),
+            );
+        }
         for (field, present) in [
             ("execution_environment", service.execution_environment().is_some()),
             ("rootfs", service.rootfs().is_some()),
@@ -1071,6 +1078,15 @@ impl<'a> Mapping<'a> {
     }
 
     fn unsupported(&mut self, subject: impl Into<String>, summary: impl Into<String>) {
+        self.unsupported_with_origins(subject, summary, &[]);
+    }
+
+    fn unsupported_with_origins(
+        &mut self,
+        subject: impl Into<String>,
+        summary: impl Into<String>,
+        origins: &[boxferry_model::Provenance],
+    ) {
         let subject = subject.into();
         let summary = summary.into();
         self.diagnostics.push(
@@ -1111,6 +1127,9 @@ impl<'a> Mapping<'a> {
             ConversionKind::Unsupported,
             self.exporter.codes.unsupported.clone(),
         ) {
+            let outcome = origins
+                .iter()
+                .fold(outcome, |outcome, origin| outcome.with_origin(origin.clone()));
             self.outcomes.push(outcome);
         } else {
             self.intent = None;

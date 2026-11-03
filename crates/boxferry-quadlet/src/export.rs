@@ -2540,6 +2540,23 @@ impl<'a> Mapping<'a> {
                 builder,
             );
         }
+        if let Some(privileged) = service.privileged() {
+            let subject = format!("{service_subject}.privileged");
+            // Generate only the reviewed fixed flag from typed intent, never retained raw arguments.
+            let value = if *privileged.value() {
+                "--privileged"
+            } else {
+                "--privileged=false"
+            };
+            if self.capability(
+                "quadlet.container.podman-args.privileged",
+                &subject,
+                privileged.origins(),
+            ) && self.push_container(builder, ContainerKey::PodmanArgs, value, &subject, privileged.origins())
+            {
+                self.exact(subject, privileged.origins());
+            }
+        }
         if let Some(read_only) = service.read_only_root_filesystem() {
             let subject = format!("{service_subject}.read_only_root_filesystem");
             let value = if *read_only.value() { "true" } else { "false" };

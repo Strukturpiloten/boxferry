@@ -1183,6 +1183,20 @@ impl<'a> Mapping<'a> {
                 working_directory.provenance(),
             );
         }
+        if let Some(privileged) = native.privileged() {
+            let subject = format!("{service_subject}.privileged");
+            match privileged.value() {
+                BooleanValue::Literal(value) => {
+                    service.set_privileged(self.sourced_provenance(*value, privileged.provenance()));
+                    self.exact_provenance(subject, privileged.provenance());
+                }
+                BooleanValue::Expression(_) => self.invalid_value_optional(
+                    &subject,
+                    "privileged expression was not resolved",
+                    privileged.effective_source(),
+                ),
+            }
+        }
         if let Some(read_only) = native.read_only() {
             let subject = format!("{service_subject}.read_only_root_filesystem");
             match read_only.value() {
@@ -3806,7 +3820,6 @@ impl<'a> Mapping<'a> {
         report!(attach, "attach");
         report!(stdin_open, "stdin_open");
         report!(tty, "tty");
-        report!(privileged, "privileged");
         report!(use_api_socket, "use_api_socket");
         report!(label_files, "label_file");
         report!(external_links, "external_links");

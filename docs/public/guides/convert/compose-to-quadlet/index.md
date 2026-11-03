@@ -181,6 +181,18 @@ folded presentation hint required by some catalogue validators. Metadata does no
 or supply runtime settings. See [compatibility](../../../reference/compatibility/#vendor-metadata)
 for supported shapes, limits and privacy behavior.
 
+## Privileged containers
+
+An explicitly authored service `privileged: true` produces
+`[Container] PodmanArgs=--privileged`; `privileged: false` produces
+`PodmanArgs=--privileged=false`. Omission stays unspecified. Existing security options retain their
+values. This uses the native catalogue's finite Podman version evidence; it does not establish
+host privileges or runtime behavior, including on rootless Podman.
+
+Conversion back to Compose recognizes a sole literal privileged argument entry. Mixed arguments,
+repeated entries, resets, quoting and continuations stay protected native evidence and require a
+loss decision. Podman deployment artifacts currently report privileged intent as unsupported.
+
 ## Output policy
 
 - The default target covers Podman 5.4.0 through 6.1.2.

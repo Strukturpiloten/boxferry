@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Added
+
+- Preserve explicit Compose service `privileged: true` and `false` through the neutral model
+  and supported Quadlet argument forms, with provenance, reverse conversion and unsupported-target
+  diagnostics ([#543](https://github.com/Strukturpiloten/boxferry/issues/543)).
+
 ## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/v0.9.0...v0.10.0) - 2026-10-27
 
 ### Changed

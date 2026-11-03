@@ -1162,6 +1162,13 @@ impl<'a> Mapping<'a> {
                 Err(error) => self.generation_error(&field, &error, working_directory.origins()),
             }
         }
+        if let Some(privileged) = service.privileged() {
+            let field = format!("{subject}.privileged");
+            match generated.set_privileged(*privileged.value()) {
+                Ok(()) => self.exact(field, privileged.origins()),
+                Err(error) => self.generation_error(&field, &error, privileged.origins()),
+            }
+        }
         if let Some(read_only) = service.read_only_root_filesystem() {
             let field = format!("{subject}.read_only_root_filesystem");
             match generated.set_read_only(*read_only.value()) {
