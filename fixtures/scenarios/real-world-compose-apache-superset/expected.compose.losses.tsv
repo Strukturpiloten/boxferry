@@ -2,7 +2,6 @@ BFC0004	services.db.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.nginx.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.redis.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.superset-node.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
-BFC0004	services.superset-tests-worker.network_mode	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.superset-websocket.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.superset.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0004	services.superset.ports[1]	unsupported	compose-specification@1.0.0..1.0.0	1

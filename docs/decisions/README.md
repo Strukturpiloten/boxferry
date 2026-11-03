@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0093](0093-explicit-service-host-networking.md) defines typed service host-network intent,
+its Compose/Quadlet mappings, and conflict boundaries independent of service-group runtime settings.
+
 [ADR 0091](0091-trusted-main-paperless-custody-mechanism.md) owns the fixed
 trusted-main six-volume custody mechanism, preserving product and application
 acceptance boundaries and existing candidate admission.

@@ -12,7 +12,6 @@ BFC0004|services.superset.ports[0]
 BFC0004|services.superset.ports[1]
 BFC0004|services.superset-websocket.ports[0]
 BFC0004|services.superset-node.ports[0]
-BFC0004|services.superset-tests-worker.network_mode
 BFC0007|image_builds.superset-build
 BFC0007|image_builds.superset-websocket-build
 BFC0007|image_builds.superset-init-build

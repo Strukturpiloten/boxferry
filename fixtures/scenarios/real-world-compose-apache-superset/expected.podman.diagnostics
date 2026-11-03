@@ -16,7 +16,6 @@ BFC0004|services.superset.ports[0]
 BFC0004|services.superset.ports[1]
 BFC0004|services.superset-websocket.ports[0]
 BFC0004|services.superset-node.ports[0]
-BFC0004|services.superset-tests-worker.network_mode
 BFC0105|services.superset-node.environment.SCARF_ANALYTICS
 BFP0007|services.nginx.environment_files
 BFP0007|services.nginx.host_mappings
@@ -27,3 +26,4 @@ BFP0007|services.superset-init.dependencies[0].options
 BFP0007|services.superset-init.dependencies[1].options
 BFP0007|services.superset-worker.dependencies[0].options
 BFP0007|services.superset-tests-worker.dependencies[0].options
+BFP0007|services.superset-tests-worker.network_mode

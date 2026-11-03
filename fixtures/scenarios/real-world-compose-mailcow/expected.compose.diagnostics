@@ -19,7 +19,6 @@ BFC0004|services.postfix-mailcow.ports[2]
 BFC0004|services.nginx-mailcow.ports[0]
 BFC0004|services.nginx-mailcow.ports[1]
 BFC0004|services.netfilter-mailcow.privileged
-BFC0004|services.netfilter-mailcow.network_mode
 BFC0105|services.unbound-mailcow.environment.TZ
 BFC0105|services.unbound-mailcow.environment.SKIP_UNBOUND_HEALTHCHECK
 BFC0105|services.mysql-mailcow.environment.TZ

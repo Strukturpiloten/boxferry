@@ -1194,8 +1194,15 @@ fn decoded_native_forms_enter_the_model_while_deferred_forms_remain_explicit() -
             .iter()
             .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
             .count(),
-        3
+        2
     );
+    assert_eq!(
+        service.network_mode().map(boxferry_model::Sourced::value),
+        Some(&boxferry_model::NetworkMode::Host)
+    );
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.network_mode" && outcome.kind() == ConversionKind::Invalid
+    }));
     let debug = format!("{:?}", result.diagnostics());
     assert!(!debug.contains("private-command"));
     assert!(!debug.contains("private value"));

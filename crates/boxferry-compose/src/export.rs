@@ -10,9 +10,9 @@ use boxferry_engine::{
 };
 use boxferry_model::{
     Application, Command, Config, ConfigMaterial, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax,
-    EnvironmentValue, HostAddressKind, MountSource, Network, ProtectedString, Protocol, Provenance, ProvenanceKind,
-    PullPolicy, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
-    Sourced, Volume,
+    EnvironmentValue, HostAddressKind, MountSource, Network, NetworkMode, ProtectedString, Protocol, Provenance,
+    ProvenanceKind, PullPolicy, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption,
+    SelinuxRelabel, Service, Sourced, Volume,
 };
 use compose_lens::{
     model::{MemLimitUnit, ShmSizeUnit},
@@ -24,9 +24,10 @@ use compose_lens::{
         GeneratedLongDevice, GeneratedMemLimit, GeneratedMount, GeneratedNetworkAttachment, GeneratedNetworkDefinition,
         GeneratedNetworkDriverOption, GeneratedNetworkDriverOptionValue, GeneratedPidsLimit, GeneratedPort,
         GeneratedProtocol, GeneratedPullPolicy, GeneratedResource, GeneratedRestartPolicy,
-        GeneratedSecretFileDefinition, GeneratedSelinux, GeneratedService, GeneratedShmSize, GeneratedString,
-        GeneratedSysctl, GeneratedSysctls, GeneratedTmpfs, GeneratedUlimit, GeneratedUlimits,
-        GeneratedVolumeDefinition, GeneratedVolumeDriverOption, GeneratedVolumeDriverOptionValue, GenerationError,
+        GeneratedSecretFileDefinition, GeneratedSelinux, GeneratedService, GeneratedServiceRuntimeField,
+        GeneratedShmSize, GeneratedString, GeneratedSysctl, GeneratedSysctls, GeneratedTmpfs, GeneratedUlimit,
+        GeneratedUlimits, GeneratedVolumeDefinition, GeneratedVolumeDriverOption, GeneratedVolumeDriverOptionValue,
+        GenerationError,
     },
     source::SourceId,
     validation::{
@@ -983,6 +984,7 @@ impl<'a> Mapping<'a> {
         self.map_host_mappings(service, &mut generated, &service_subject);
         self.map_ports(service, &mut generated, &service_subject);
         self.map_mounts(service, &mut generated, &service_subject);
+        self.map_network_mode(service, &mut generated, &service_subject);
         self.map_network_attachments(service, &mut generated, &service_subject);
         self.map_service_metadata(service.name(), &mut generated);
         self.report_unimplemented_service_fields(service, &service_subject);
@@ -1436,6 +1438,38 @@ impl<'a> Mapping<'a> {
                 }
                 Err(error) => self.generation_error(&subject, &error, mount.origins()),
             }
+        }
+    }
+
+    fn map_network_mode(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        let Some(mode) = service.network_mode() else {
+            return;
+        };
+        let subject = format!("{service_subject}.network_mode");
+        if !matches!(mode.value(), NetworkMode::Host) {
+            self.unsupported(
+                &subject,
+                "network-mode variant is newer than this Compose adapter",
+                mode.origins(),
+            );
+            return;
+        }
+        if !service.networks().is_empty() || !service.ports().is_empty() {
+            self.invalid(
+                self.exporter.codes.generation.clone(),
+                &subject,
+                "host networking conflicts with attachments or published ports",
+                "remove named-network attachments and published ports, or select ordinary networking",
+                mode.origins(),
+            );
+            self.generation_failed = true;
+            return;
+        }
+        match GeneratedString::plain("host")
+            .and_then(|value| generated.add_runtime_field(GeneratedServiceRuntimeField::NetworkMode(value)))
+        {
+            Ok(()) => self.exact(subject, mode.origins()),
+            Err(error) => self.generation_error(&subject, &error, mode.origins()),
         }
     }
 
