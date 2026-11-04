@@ -109,6 +109,85 @@ class DependencyTests(unittest.TestCase):
         name, version = url.rsplit("/", 2)[1:]
         return cargo_metadata(name, version, YOUNG)
 
+    def standalone(self, root: Path, version: str) -> None:
+        directory = root / ".devcontainer"
+        directory.mkdir(exist_ok=True)
+        (directory / "Dockerfile").write_text(
+            "# renovate: datasource=crate depName=cargo-semver-checks\n"
+            f"ARG CARGO_SEMVER_CHECKS_VERSION={version}\n"
+        )
+
+    def test_standalone_tool_uses_its_own_publication_age_and_integrity(self) -> None:
+        self.standalone(self.base, "0.50.0")
+        self.standalone(self.head, "0.51.0")
+        seen = []
+
+        def fetch(url: str) -> bytes:
+            seen.append(url)
+            return cargo_metadata("cargo-semver-checks", "0.51.0", YOUNG)
+
+        report = self.check(fetch)
+        self.assertEqual(seen, ["https://crates.io/api/v1/crates/cargo-semver-checks/0.51.0"])
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(report["results"][0]["integrity"], [HASH])
+        self.assertFalse(report["first_party_exempt"])
+        boundary = NOW + timedelta(hours=71)  # YOUNG was published one hour before NOW.
+        waiting = check_dependencies(
+            self.base, self.head, now=boundary - timedelta(seconds=1), fetch=fetch
+        )
+        self.assertEqual(waiting["status"], "waiting")
+        mature = check_dependencies(self.base, self.head, now=boundary, fetch=fetch)
+        self.assertEqual(mature["status"], "pass")
+
+    def test_unchanged_standalone_tool_does_not_reset_age_or_fetch(self) -> None:
+        self.standalone(self.base, "0.50.0")
+        self.standalone(self.head, "0.50.0")
+        report = self.check(lambda _: self.fail("unchanged standalone version fetched"))
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["results"], [])
+
+    def test_standalone_tool_cannot_inherit_first_party_update_exemption(self) -> None:
+        self.first_party()
+        self.standalone(self.base, "0.50.0")
+        self.standalone(self.head, "0.51.0")
+        report = self.check(self.any_cargo, context=self.context())
+        self.assertFalse(report["first_party_exempt"])
+        self.assertEqual(report["status"], "waiting")
+        # Existing whole-first-party/transitive exemption remains when tools do not change.
+        self.standalone(self.head, "0.50.0")
+        report = self.check(self.any_cargo, context=self.context())
+        self.assertTrue(report["first_party_exempt"])
+        self.assertEqual(report["status"], "pass")
+
+    def test_standalone_tool_requires_exact_metadata_without_quarantine_fallback(self) -> None:
+        self.standalone(self.head, "0.51.0")
+        cases = [
+            cargo_metadata("other", "0.51.0"),
+            cargo_metadata("cargo-semver-checks", "0.50.0"),
+            cargo_metadata("cargo-semver-checks", "0.51.0", None),
+            cargo_metadata("cargo-semver-checks", "0.51.0", "future"),
+            cargo_metadata("cargo-semver-checks", "0.51.0", "2026-11-03T12:00:01Z"),
+            cargo_metadata("cargo-semver-checks", "0.51.0", digest="not-checksum"),
+        ]
+        for metadata in cases:
+            with self.subTest(metadata=metadata):
+                report = self.check(lambda _, data=metadata: data)
+                self.assertEqual(report["status"], "failure")
+                self.assertEqual(report["state"]["first_seen"], {})
+
+    def test_malformed_owned_standalone_declaration_fails_closed(self) -> None:
+        self.standalone(self.head, "0.51.0")
+        path = self.head / ".devcontainer/Dockerfile"
+        original = path.read_text()
+        for text in (
+            original + original,
+            original.replace("0.51.0", "latest"),
+            original.replace("depName=cargo-semver-checks", "depName=unrelated"),
+        ):
+            path.write_text(text)
+            report = self.check(lambda _: self.fail("malformed declaration reached registry"))
+            self.assertEqual(report["status"], "failure")
+
     def test_mature_version_passes_and_uses_exact_endpoint(self) -> None:
         self.cargo()
         seen = []

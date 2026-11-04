@@ -258,8 +258,16 @@ def _packages(root: Path) -> set[Package]:
         path = root / name
         if path.exists():
             result.update(parser(path))
+    from .cargo_tools import DOCKERFILE, declarations
+
+    declared = root / DOCKERFILE
+    if declared.exists() or declared.is_symlink() or declared.parent.is_symlink():
+        result.update(
+            Package("cargo-tool", name, version, CRATES_SOURCE, ())
+            for name, version in declarations(root).items()
+        )
     if len(result) > MAX_PACKAGES:
-        raise DependencyError("lock graph exceeds package bound")
+        raise DependencyError("lock graph and standalone Cargo tools exceed package bound")
     return result
 
 
@@ -312,10 +320,12 @@ def fetch_metadata(url: str, headers: Mapping[str, str] | None = None) -> bytes:
     return data
 
 
-def _metadata(package: Package, fetch: Fetch, now: datetime) -> tuple[str, list[datetime]]:
+def _metadata(
+    package: Package, fetch: Fetch, now: datetime
+) -> tuple[str, list[datetime], tuple[str, ...]]:
     name = urllib.parse.quote(package.name, safe="")
     version = urllib.parse.quote(package.version, safe="")
-    if package.ecosystem == "cargo":
+    if package.ecosystem in {"cargo", "cargo-tool"}:
         url = f"https://crates.io/api/v1/crates/{name}/{version}"
     elif package.ecosystem == "npm":
         url = f"https://registry.npmjs.org/{name}/{version}"
@@ -326,13 +336,18 @@ def _metadata(package: Package, fetch: Fetch, now: datetime) -> tuple[str, list[
         raise DependencyError("version metadata exceeds byte bound or is not bytes")
     data = json.loads(raw)
     times: list[Any]
-    if package.ecosystem == "cargo":
+    integrity = package.integrity
+    if package.ecosystem in {"cargo", "cargo-tool"}:
         record = data["version"]
         if record.get("crate") != package.name or record.get("num") != package.version:
             raise DependencyError("Cargo metadata identity mismatch")
-        if _sha256(record.get("checksum")) != package.integrity[0]:
+        digest = _sha256(record.get("checksum"))
+        if package.ecosystem == "cargo" and digest != package.integrity[0]:
             raise DependencyError("Cargo checksum differs from authoritative version metadata")
+        integrity = (digest,)
         times = [record.get("created_at")]
+        if package.ecosystem == "cargo-tool" and times[0] is None:
+            raise DependencyError("standalone Cargo tool requires canonical publication timestamp")
     elif package.ecosystem == "npm":
         if data.get("name") != package.name or data.get("version") != package.version:
             raise DependencyError("npm metadata identity mismatch")
@@ -352,7 +367,7 @@ def _metadata(package: Package, fetch: Fetch, now: datetime) -> tuple[str, list[
         times = [artifacts[digest].get("upload_time_iso_8601") for digest in package.integrity]
     present = [_instant(value, now) for value in times if value is not None]
     # Any absent artifact timestamp requires independent observation quarantine.
-    return url, present if len(present) == len(times) else []
+    return url, present if len(present) == len(times) else [], integrity
 
 
 def _manifests(root: Path) -> dict[str, dict[str, Any]]:
@@ -419,6 +434,10 @@ def _first_party_scope(
     after: set[Package],
     context: DependencyContext | None,
 ) -> tuple[bool, str]:
+    if {p for p in before if p.ecosystem == "cargo-tool"} != {
+        p for p in after if p.ecosystem == "cargo-tool"
+    }:
+        return False, "standalone Cargo tool changes retain their own third-party age hold"
     if context is None:
         return False, "no trusted isolated pull-request context"
     if context.actor_login != "renovate[bot]" or context.actor_type != "Bot":
@@ -589,8 +608,9 @@ def check_dependencies(
             "age_evidence": None,
         }
         try:
-            url, timestamps = _metadata(package, bounded, instant)
+            url, timestamps, integrity = _metadata(package, bounded, instant)
             result["metadata_url"] = url
+            result["integrity"] = list(integrity)
             if exempt:
                 result.update(age_evidence="first-party-update-exemption", reason=reason)
             else:

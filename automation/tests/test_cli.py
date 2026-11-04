@@ -234,12 +234,21 @@ class Cli(unittest.TestCase):
         self.command("config", "user.name", "Fixture")
         (self.root / "Cargo.lock").write_text("locked baseline\n")
         (self.root / "private.txt").write_text("not dependency input\n")
+        (self.root / ".devcontainer").mkdir()
+        dockerfile = self.root / ".devcontainer/Dockerfile"
+        declared = (
+            "# renovate: datasource=crate depName=cargo-semver-checks\n"
+            "ARG CARGO_SEMVER_CHECKS_VERSION=0.51.0\n"
+        )
+        dockerfile.write_text(declared)
         self.command("add", "--all")
         self.command("commit", "--quiet", "-m", "baseline")
         revision = self.command("rev-parse", "HEAD")
         (self.root / "Cargo.lock").write_text("untrusted working copy\n")
+        dockerfile.write_text("untrusted Dockerfile working copy\n")
         target = self.root / "snapshot"
         target.mkdir()
         _snapshot(self.root, revision, target)
         self.assertEqual((target / "Cargo.lock").read_text(), "locked baseline\n")
         self.assertFalse((target / "private.txt").exists())
+        self.assertEqual((target / ".devcontainer/Dockerfile").read_text(), declared)

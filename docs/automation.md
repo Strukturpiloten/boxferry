@@ -1,6 +1,6 @@
 # Shared development automation
 
-BoxFerry owns the shared [automation package](../automation/), [reusable workflows](../.github/workflows/) and composite actions. Lens products consume these as development tooling; their product dependency graphs remain independent. The website shares validation mechanics while retaining its own site checks. [ADR 0092](decisions/0092-shared-development-automation.md) records the architecture and rollout constraints. Consumer rollout is incomplete: one passing repository does not establish adoption or validation in the others.
+BoxFerry owns the shared [automation package](../automation/), [reusable workflows](../.github/workflows/) and composite actions. Lens products consume these as development tooling; their product dependency graphs remain independent. The website shares validation mechanics while retaining its own site checks. [ADR 0092](decisions/0092-shared-development-automation.md) records the architecture and rollout constraints. Rollout remains incomplete; validate each consumer independently.
 
 ## Revisions and admission
 
@@ -15,6 +15,8 @@ For pull requests and merge queues the planner compares the trusted base with th
 Main pushes, manual CI, release validation and the local [complete gate](../scripts/check-all.sh) remain complete. Change-aware local feedback and formatting or linting alone do not replace that gate. During adoption, consumers must preserve complete existing task behavior when trusted policy lacks new definitions.
 
 The shared [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) define the canonical uv, Ruff and ty tooling. The stable interface-1 local loader verifies the pinned source, then delegates uv setup and locked execution to that shared implementation. Consumer checks cover the loader interface rather than equality with the changing implementation. Repository-owned feature checks, coverage thresholds, native suites, binaries and evidence remain in their respective repositories. Compose provider, Podman observation, Quadlet generator, Docker native and BoxFerry application checks remain distinct; runtime selection, resource limits, privacy and cleanup follow [ADR 0079](decisions/0079-native-test-runtime-selection.md) and each owning harness.
+
+See [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md) for SemVer tooling and age checks.
 
 ## Daily checks and agent repairs
 

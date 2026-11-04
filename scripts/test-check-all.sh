@@ -55,6 +55,11 @@ case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
   python3:automation/src/boxferry_ci/bootstrap.py\ install-uv*) printf '%s/uv\n' "${0%/*}" ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
+  uv:*boxferry_ci.cargo_tools*)
+    [[ "${CARGO_HOME}" == "${CARGO_TARGET_DIR%/cargo-semver-checks-target}/cargo-home" ]] ;;
+  cargo:semver-checks*)
+    [[ "${RUSTUP_TOOLCHAIN}" == "${CHECK_ALL_TEST_MSRV}" ]]
+    [[ "${CARGO_HOME}" == "${CARGO_TARGET_DIR%/cargo-semver-checks-target}/cargo-home" ]] ;;
 esac
 MOCK
 chmod +x "${test_root}/bin/mock"
@@ -159,6 +164,7 @@ run_gate extra --check --fix || status=$?
 for mode in default fix check; do
   for command in \
     "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
+    "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-semver-checks" \
     "uv run --locked --project automation ruff check automation" \
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
@@ -170,6 +176,16 @@ for mode in default fix check; do
     [[ "$(grep -Fxc -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
   done
 done
+# An invalid or missing declared plugin must stop before formatting or compatibility.
+status=0
+CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-semver-checks" \
+  run_gate invalid_semver --check || status=$?
+[[ "${status}" == 17 ]]
+if grep -q '^cargo fmt' "${test_root}/invalid_semver.commands"; then
+  printf 'Invalid SemVer selection reached formatting.\n' >&2
+  exit 1
+fi
+grep -Fq 'Verify exact local Cargo SemVer selection' "${test_root}/invalid_semver.output"
 assert_contains fix "uv run --locked --project automation ruff format automation"
 assert_contains check "uv run --locked --project automation ruff format --check automation"
 for mode in fix check; do
@@ -181,6 +197,7 @@ for mode in fix check; do
   for command in \
     "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
     "${format_command}" \
+    "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-semver-checks" \
     "uv run --locked --project automation ruff check automation" \
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \

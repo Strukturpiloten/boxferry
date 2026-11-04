@@ -251,6 +251,10 @@ def _cancel(_signum: int, _frame: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "cargo-tools":
+        from boxferry_ci.cargo_tools import main as cargo_tools_main
+
+        return cargo_tools_main(arguments[1:])
     if arguments and arguments[0] == "tools":
         from boxferry_ci.tooling import main as tools_main
 

@@ -7613,10 +7613,18 @@ fn public_api_compatibility_has_one_ci_owner_and_release_consumer() -> Result<()
     let root = repository_root();
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
-    if ci.matches(ACTION).count() != 1 {
-        return Err("canonical CI must invoke cargo-semver-checks exactly once".to_owned());
+    let shared = fs::read_to_string(root.join(".github/workflows/shared-rust-semver.yml"))
+        .map_err(|error| format!("failed to read shared SemVer workflow: {error}"))?;
+    if ci.matches("uses: ./.github/workflows/shared-rust-semver.yml").count() != 1
+        || ci.contains(ACTION)
+        || shared.matches(ACTION).count() != 1
+    {
+        return Err("canonical CI must invoke one candidate-local shared SemVer Action owner".to_owned());
     }
-    for required in ["package: ${{ matrix.package }}", "feature-group: all-features"] {
+    if !shared.contains("feature-group: all-features") {
+        return Err("shared SemVer owner must preserve all-feature compatibility".to_owned());
+    }
+    for required in ["package: ${{ matrix.package }}", "automation_sha: ${{ github.sha }}"] {
         if !ci.contains(required) {
             return Err(format!("canonical CI SemVer job missing `{required}`"));
         }
@@ -7667,7 +7675,7 @@ fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), S
         "printf 'release_type=major\\n' >> \"${GITHUB_OUTPUT}\"",
         "printf 'release_type=\\n' >> \"${GITHUB_OUTPUT}\"",
         "needs: [validation-plan, semver-release-type]",
-        "release-type: ${{ needs.semver-release-type.outputs.release_type }}",
+        "release_type: ${{ needs.semver-release-type.outputs.release_type }}",
     ] {
         if !ci.contains(required) {
             return Err(format!("CI SemVer break classifier is missing {required}"));
