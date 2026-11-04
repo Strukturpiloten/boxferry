@@ -19,6 +19,11 @@ tables-out-of-order = "error"
 path = "docs/schemas/tombi-cargo-offline.schema.json"
 include = ["Cargo.toml", "**/Cargo.toml"]
 
+# uv, Ruff and ty validate the shared project's semantics without remote schema references.
+[[schemas]]
+path = "docs/schemas/tombi-python-offline.schema.json"
+include = ["automation/pyproject.toml"]
+
 # Fixture manifests and evidence matrices use deliberate domain ordering. Keep their keys in that
 # order while still applying syntax validation and the non-ordering formatter rules.
 [[overrides]]

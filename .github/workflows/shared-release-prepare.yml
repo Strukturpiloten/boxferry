@@ -1,0 +1,90 @@
+---
+name: Shared Rust release preparation
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact caller revision tested in this run.
+        required: true
+        type: string
+      automation_sha:
+        description: Immutable BoxFerry commit; must equal this workflow call's SHA ref.
+        required: true
+        type: string
+      policy_sha:
+        description: Trusted PR or merge queue base, otherwise the candidate SHA.
+        required: true
+        type: string
+      config_path:
+        description: Repository-relative JSON policy path in the trusted policy revision.
+        required: true
+        type: string
+      app_client_id:
+        description: Client ID of the release-plz App installed for this caller.
+        required: true
+        type: string
+    secrets:
+      app_private_key:
+        description: Release-plz App key, scoped to the current caller repository.
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-release-pr-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release pull request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind caller candidate and trusted policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Require the exact default-branch candidate
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "${POLICY_SHA}" = "${CANDIDATE_SHA}"
+          case "${GITHUB_EVENT_NAME}" in push|workflow_dispatch) ;; *) exit 1 ;; esac
+      - name: Create repository-scoped release preparation token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ inputs.app_client_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Create or update the release pull request
+        uses: release-plz/action@b2baf303c463c223526d52a8a91b0777f052cf3f # v0.5.146
+        with:
+          command: release-pr
+          manifest_path: source/Cargo.toml
+          config: source/release-plz.toml
+          # renovate: datasource=crate depName=release-plz
+          version: "0.4.0"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

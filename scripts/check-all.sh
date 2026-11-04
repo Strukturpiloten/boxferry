@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=36
+readonly total_steps=44
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -73,6 +73,7 @@ required_tools=(
   jq
   lychee
   markdownlint-cli2
+  podman
   prettier
   python3
   realpath
@@ -136,7 +137,7 @@ readonly msrv
 
 if ! rustup run "${msrv}" rustc --version > /dev/null 2>&1; then
   printf 'Installing the workspace MSRV toolchain %s.\n' "${msrv}"
-  if ! rustup toolchain install "${msrv}" --profile minimal; then
+  if ! rustup toolchain install "${msrv}" --profile minimal --no-self-update; then
     # A Dev Container may keep Cargo's package cache outside the Cargo home
     # containing the rustup proxies. Some rustup releases then return a
     # non-zero status after successfully installing the toolchain. Trust only
@@ -169,6 +170,13 @@ if [[ -n "${semver_release_type}" ]]; then
   semver_check+=(--release-type "${semver_release_type}")
 fi
 
+current_step="Prepare the canonical shared Python toolchain"
+automation_uv="$(python3 automation/src/boxferry_ci/bootstrap.py install-uv \
+  --project automation --cache-root target/shared-uv --no-path-uv)"
+readonly automation_uv
+PATH="$(dirname -- "${automation_uv}"):${PATH}"
+export PATH
+
 if [[ "${format_mode}" == "check" ]]; then
   run_step "Check Rust formatting" cargo fmt --all -- --check
   run_step "Check non-Rust files" bash scripts/check-files.sh --check
@@ -176,7 +184,32 @@ else
   run_step "Format Rust" cargo fmt --all
   run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
 fi
+if [[ "${format_mode}" == "check" ]]; then
+  run_step "Check shared automation Python formatting" \
+    uv run --locked --project automation ruff format --check automation
+else
+  run_step "Format shared automation Python" \
+    uv run --locked --project automation ruff format automation
+fi
+run_step "Lint shared automation Python" uv run --locked --project automation ruff check automation
+run_step "Type-check shared automation Python" uv run --locked --project automation ty check --project automation
+run_step "Verify every canonical archive on both architectures" \
+  uv run --locked --project automation python -m boxferry_ci.asset_verification \
+  --repository-root . --working-tree
+run_step "Prepare the integrity-pinned native Renovate test runtime" \
+  uv run --locked --project automation python -m boxferry_ci.renovate_runtime \
+  --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate
+export BOXFERRY_RENOVATE_PACKAGE="${repository_root}/target/tools/renovate"
+run_step "Test shared automation contracts" \
+  uv run --locked --project automation python -m unittest discover -s automation/tests -v
+run_step "Verify candidate Compose provider artifact integrity" \
+  uv run --locked --project automation python -m boxferry_ci.compose_provider \
+  --repository-root "${repository_root}" --verify-working-tree
 run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
+run_step "Verify Kubernetes tool installer integrity" \
+  uv run --locked --project automation python \
+  scripts/kubernetes_tool_checksum_refresh.py \
+  --verify-working-tree --repository-root "${repository_root}"
 run_step "Test release binary archive contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-release-binaries.py
 run_step "Test release emulator extraction" bash scripts/test-release-emulator.sh
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh

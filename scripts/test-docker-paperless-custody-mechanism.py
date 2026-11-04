@@ -189,26 +189,58 @@ class TrackedMainAuthority(unittest.TestCase):
                  "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"})
         return result.stdout.decode().strip()
 
+    @classmethod
+    def snapshot_source(cls, source_root, destination):
+        """Copy tracked working bytes and nonignored new files from a source tree."""
+        inventory = frozenset(name for name in cls.git(
+            source_root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
+        ).split("\0") if name)
+        for name in inventory:
+            source, target = source_root / name, destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_symlink():
+                target.symlink_to(os.readlink(source))
+            else:
+                shutil.copy2(source, target)
+        return inventory
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="custody-tracked-main-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
         self.main = self.base / "main"
         self.main.mkdir()
-        self.tracked = frozenset(name for name in self.git(ROOT, "ls-files", "--cached", "-z").split("\0") if name)
-        # Never fabricate a declared dependency: every copied path is an actual
-        # tracked working-tree file, including the pending source correction.
-        for name in self.tracked:
-            source, target = ROOT / name, self.main / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if source.is_symlink():
-                target.symlink_to(os.readlink(source))
-            else:
-                shutil.copy2(source, target)
+        self.tracked = self.snapshot_source(ROOT, self.main)
         self.git(self.main, "init", "--quiet")
         self.revision = self.commit()
         snapshot_tracked = frozenset(name for name in self.git(self.main, "ls-files", "--cached", "-z").split("\0") if name)
         self.assertEqual(snapshot_tracked, self.tracked)
+
+    def test_snapshot_tracks_working_bytes_and_nonignored_new_files(self):
+        source, destination = self.base / "source", self.base / "snapshot"
+        source.mkdir()
+        destination.mkdir()
+        self.git(source, "init", "--quiet")
+        (source / ".gitignore").write_text("ignored.txt\n")
+        (source / "tracked.txt").write_bytes(b"original\n")
+        self.git(source, "add", "--all")
+        self.git(source, "commit", "--quiet", "--no-gpg-sign", "-m", "initial")
+        (source / "tracked.txt").write_bytes(b"modified working bytes\n")
+        (source / "new.txt").write_bytes(b"new working bytes\n")
+        (source / "ignored.txt").write_bytes(b"ignored bytes\n")
+        inventory = self.snapshot_source(source, destination)
+        self.assertEqual(inventory, {".gitignore", "tracked.txt", "new.txt"})
+        self.assertEqual((destination / "tracked.txt").read_bytes(), b"modified working bytes\n")
+        self.assertEqual((destination / "new.txt").read_bytes(), b"new working bytes\n")
+        self.assertFalse((destination / "ignored.txt").exists())
+        self.git(destination, "init", "--quiet")
+        self.git(destination, "add", "--all", "--force")
+        self.git(destination, "commit", "--quiet", "--no-gpg-sign", "-m", "snapshot")
+        self.assertEqual(
+            frozenset(name for name in self.git(destination, "ls-files", "--cached", "-z").split("\0") if name),
+            inventory,
+        )
+        self.assertEqual(auth.source_digest(source), auth.source_digest(destination))
 
     def commit(self, *, empty=False):
         self.git(self.main, "add", "--all", "--force")

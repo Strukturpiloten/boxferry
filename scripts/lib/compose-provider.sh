@@ -2,9 +2,10 @@
 # Shared Docker Compose provider metadata and checksum-verified installer.
 
 boxferry_load_compose_provider_metadata() {
-  # renovate: datasource=github-releases depName=docker/compose
-  local -r expected_version="5.5.0"
+  # renovate: datasource=github-release-attachments depName=docker/compose
+  local -r expected_release="v5.5.0"
   local -r expected_sha256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+  local -r expected_version="${expected_release#v}"
   local -r expected_url="https://github.com/docker/compose/releases/download/v${expected_version}/docker-compose-linux-x86_64"
 
   local declaration metadata_declared=false readonly_declaration variable

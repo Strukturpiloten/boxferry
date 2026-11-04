@@ -12,6 +12,7 @@
     "**/tests/**"
   ],
   "minimumReleaseAge": "3 days",
+  "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
@@ -31,14 +32,6 @@
       "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
-      ]
-    },
-    {
-      "customType": "regex",
-      "description": "Signal updates for checksum-pinned file-quality tools",
-      "managerFilePatterns": ["/^scripts/install-file-tools\\.sh$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
       ]
     },
     {
@@ -122,11 +115,38 @@
     },
     {
       "customType": "regex",
-      "description": "Signal updates for the checksum-pinned Docker Compose provider",
+      "description": "Update the Docker Compose provider release and its matching binary checksum",
       "managerFilePatterns": ["/^scripts/lib/compose-provider\\.sh$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n  local -r expected_version=\"(?<currentValue>[^\"]+)\""
-      ]
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>docker/compose)\\n  local -r expected_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"\\n  local -r expected_sha256=\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "docker/compose",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      "description": "Update active Compose provider catalogue rows with the canonical release and checksum",
+      "managerFilePatterns": [
+        "/^fixtures/conformance/(?:forgejo|immich|nextcloud|observability|paperless-ngx)-application/providers\\.tsv$/"
+      ],
+      "matchStrings": [
+        "docker-compose\\t[0-9]+\\.[0-9]+\\.[0-9]+\\thttps://github\\.com/docker/compose/releases/download/(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)/docker-compose-linux-x86_64\\t(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "autoReplaceStringTemplate": "docker-compose\t{{{replace \"^v\" \"\" newValue}}}\thttps://github.com/docker/compose/releases/download/{{{newValue}}}/docker-compose-linux-x86_64\t{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "docker/compose",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      "description": "Update the active Supabase Compose provider catalogue release and checksum",
+      "managerFilePatterns": ["/^fixtures/conformance/supabase-application/providers\\.tsv$/"],
+      "matchStrings": [
+        "docker-compose\\t[0-9]+\\.[0-9]+\\.[0-9]+\\tlinux-amd64\\t(?<currentDigest>[a-f0-9]{64})\\thttps://github\\.com/docker/compose/releases/download/(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)/docker-compose-linux-x86_64"
+      ],
+      "autoReplaceStringTemplate": "docker-compose\t{{{replace \"^v\" \"\" newValue}}}\tlinux-amd64\t{{{newDigest}}}\thttps://github.com/docker/compose/releases/download/{{{newValue}}}/docker-compose-linux-x86_64"
     },
     {
       "customType": "regex",
@@ -172,8 +192,18 @@
       "description": "Signal updates for checksum-pinned Kubernetes development tools",
       "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes-sigs/kind|kubernetes/kubernetes|helm/helm)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes/kubernetes|helm/helm)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update kind's exact release tag and per-architecture asset digest together",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-release-attachments depName=(?<depName>kubernetes-sigs/kind) depType=(?<depType>kind-linux-(?<architecture>amd64))\\nreadonly kind_amd64_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\" kind_amd64_checksum=\"(?<currentDigest>[a-f0-9]{64})\"",
+        "# renovate: datasource=github-release-attachments depName=(?<depName>kubernetes-sigs/kind) depType=(?<depType>kind-linux-(?<architecture>arm64))\\nreadonly kind_arm64_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\" kind_arm64_checksum=\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments"
     },
     {
       "customType": "regex",
@@ -193,13 +223,54 @@
       ],
       "versioningTemplate": "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
       "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\nreadonly release_emulator_image='{{{depName}}}:{{{newValue}}}@{{{newDigest}}}'"
+    },
+    {
+      "customType": "regex",
+      "description": "Update each canonical uv release-attachment checksum and its release annotation; the pyproject regex owns the execution version.",
+      "managerFilePatterns": ["/^automation/uv-artifacts\\.json$/"],
+      "matchStrings": [
+        "\"filename\"[ \\t]*:[ \\t]*\"(?<depType>uv-(?:x86_64|aarch64)-unknown-linux-gnu\\.tar\\.gz)\"\\s*,\\s*\"currentVersion\"[ \\t]*:[ \\t]*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"[ \\t]*:[ \\t]*\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "depNameTemplate": "astral-sh/uv",
+      "datasourceTemplate": "github-release-attachments"
+    },
+    {
+      "customType": "regex",
+      "description": "Own the uv execution constraint, which pep621 consumes but does not extract as a versioned dependency.",
+      "managerFilePatterns": ["/^(?:automation/)?pyproject\\.toml$/"],
+      "matchStrings": [
+        "\\[tool\\.uv\\][^\\[]*?required-version[ \\t]*=[ \\t]*\"==(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "depNameTemplate": "uv",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the immutable native Renovate test runtime version and OCI digest atomically.",
+      "managerFilePatterns": ["/^automation/renovate-runtime\\.json$/"],
+      "matchStrings": [
+        "\"image\"[ \\t]*:[ \\t]*\"(?<depName>ghcr\\.io/renovatebot/renovate):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update each canonical downloaded-tool release tag and architecture checksum atomically; asset filenames are computed from version-independent templates.",
+      "managerFilePatterns": ["/^automation/tool-artifacts\\.json$/"],
+      "matchStrings": [
+        "\"repository\"\\s*:\\s*\"(?<depName>tombi-toml/tombi|mvdan/sh|koalaman/shellcheck|hadolint/hadolint|rhysd/actionlint|lycheeverse/lychee)\"\\s*,\\s*\"architecture\"\\s*:\\s*\"(?<depType>x86_64|aarch64)\"\\s*,\\s*\"filenameTemplate\"\\s*:\\s*\"[^\"\\r\\n]+\"\\s*,\\s*\"memberTemplate\"\\s*:\\s*(?:null|\"[^\"\\r\\n]+\")\\s*,\\s*\"archive\"\\s*:\\s*\"(?:binary|tar\\.gz|tar\\.xz)\"\\s*,\\s*\"currentVersion\"\\s*:\\s*\"(?<currentValue>(?:v|lychee-v)[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     }
   ],
   "packageRules": [
     {
-      "description": "Keep non-major Dev Container image and tool updates together",
+      "description": "Keep non-major Dev Container image updates together",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": [".devcontainer/Dockerfile", "scripts/install-kubernetes-tools.sh"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
       "groupName": "Dev Container toolchain"
     },
@@ -340,13 +411,17 @@
       ]
     },
     {
-      "description": "Require checksum review for the Docker Compose provider",
-      "matchFileNames": ["scripts/lib/compose-provider.sh"],
-      "dependencyDashboardApproval": true,
-      "automerge": false,
-      "prBodyNotes": [
-        "Update the Linux release-asset SHA-256 and every provider catalogue, then run the live-provider contract checks before merging."
-      ]
+      "description": "Provisionally hold Docker Compose provider proposals pending native qualification",
+      "enabled": false,
+      "prBodyNotes": ["Verify the exact provider release, checksum and downstream compatibility."],
+      "pinDigests": true,
+      "matchDatasources": ["github-release-attachments"],
+      "matchPackageNames": ["docker/compose"],
+      "groupName": "Docker Compose provider",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
     },
     {
       "description": "Keep Rust toolchain updates visible and separate",
@@ -354,21 +429,18 @@
       "groupName": "Rust toolchain"
     },
     {
-      "description": "Require checksum review for downloaded file-quality tools",
-      "matchFileNames": ["scripts/install-file-tools.sh"],
-      "dependencyDashboardApproval": true,
-      "automerge": false,
-      "prBodyNotes": [
-        "Review both Linux release assets and update their SHA-256 checksums before merging."
-      ]
-    },
-    {
-      "description": "Require checksum review for Kubernetes development tools",
+      "description": "Group Kubernetes development tool versions and integrity refreshes",
       "matchFileNames": ["scripts/install-kubernetes-tools.sh"],
-      "dependencyDashboardApproval": true,
-      "automerge": false,
-      "prBodyNotes": [
-        "Review both Linux architectures and update their SHA-256 checksums from official release assets. Rebuild the Dev Container and validate every shared consumer; do not change historical compatibility profiles."
+      "groupName": "Kubernetes development tools",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false,
+      "matchPackageNames": [
+        "kubernetes-sigs/kind",
+        "kubernetes/kubernetes",
+        "helm/helm",
+        "kubernetes-sigs/kustomize"
       ]
     },
     {
@@ -379,6 +451,64 @@
       "groupName": "release emulator image",
       "dependencyDashboardApproval": true,
       "automerge": false
+    },
+    {
+      "description": "Bootstrap shared Python package/build tools and their lockfile before immutable preset adoption.",
+      "matchManagers": ["pep621"],
+      "groupName": "Python automation",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Bootstrap the exact Python interpreter owner before immutable preset adoption.",
+      "matchManagers": ["pyenv"],
+      "groupName": "Python interpreter",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Bootstrap the identical shared uv version/checksum pairing before immutable preset adoption.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["pypi", "github-release-attachments"],
+      "matchPackageNames": ["uv", "astral-sh/uv"],
+      "groupName": "Python automation",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Keep native Renovate validation runtime upgrades isolated and automatically merge after native compatibility checks.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/renovatebot/renovate"],
+      "groupName": "Renovate native test runtime",
+      "automerge": true,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Bootstrap the identical canonical downloaded-tool integrity owner before immutable preset adoption.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-release-attachments"],
+      "matchPackageNames": [
+        "tombi-toml/tombi",
+        "mvdan/sh",
+        "koalaman/shellcheck",
+        "hadolint/hadolint",
+        "rhysd/actionlint",
+        "lycheeverse/lychee"
+      ],
+      "groupName": "Canonical downloaded tools",
+      "pinDigests": true,
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
     }
-  ]
+  ],
+  "gitIgnoredAuthors": ["317908760+strukturpiloten-release-plz[bot]@users.noreply.github.com"]
 }

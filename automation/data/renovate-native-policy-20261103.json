@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "observed_on": "2026-11-03",
+  "purpose": "Historical read-only native Renovate capability evidence; not an operational tool pin or consumer rollout claim.",
+  "oracle": {
+    "package": "renovate",
+    "version": "44.188.0",
+    "registry": "https://registry.npmjs.org/renovate/44.188.0",
+    "integrity": "sha512-gWb5nTewt+xRtbTQBuyoXViCWOaqT9dGQ2ds0jJtH5GPhNsaM8ZPvfVaFuvs3eK4LNiQ+jnOClp+OHeQPYoEJg==",
+    "license": "AGPL-3.0-only",
+    "redistribution": "No oracle source or binaries redistributed; tests invoke an independently installed package."
+  },
+  "command": "BOXFERRY_RENOVATE_PACKAGE=/path/to/node_modules/renovate python3 -m unittest discover -s automation/tests -p test_presets.py -v",
+  "native_results": {
+    "version": "44.188.0",
+    "replacements": 7,
+    "ruleCases": 5,
+    "operationalExtractions": 165
+  },
+  "regex_engine_limitation": "Research install used --ignore-scripts; native regex manager and updater executed with Renovate RegExp fallback because native RE2 binary was not installed. All added expressions avoid unsupported RE2 lookaround/backreferences.",
+  "native_uv_version_finding": "pep621 extracts package/build/group declarations and uv.lock, but only consumes tool.uv.required-version as an execution constraint. The shared custom regex is its sole version-update owner.",
+  "native_checksum_acquisition": {
+    "datasource": "github-release-attachments",
+    "package": "astral-sh/uv",
+    "current_version": "0.13.6",
+    "next_version": "0.13.7",
+    "asset": "uv-x86_64-unknown-linux-gnu.tar.gz",
+    "native_digest": "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83",
+    "independent_official_checksum_url": "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256",
+    "sidecar_sha256": "0d2de511ca3b8ef4da8cc7dbf3df4ce9ddaea0a354a75b4ce5682a5cf596d141",
+    "result": "Native getDigest matched the independently fetched official sidecar. This did not change an installed or repository-pinned uv version."
+  },
+  "sources": [
+    "https://docs.renovatebot.com/config-presets/",
+    "https://docs.renovatebot.com/modules/manager/renovate-config/",
+    "https://docs.renovatebot.com/modules/datasource/github-release-attachments/",
+    "https://docs.renovatebot.com/modules/manager/pep621/"
+  ],
+  "integration_requirements": [
+    "Persist trusted first-seen state and schedule waiting/transient rechecks.",
+    "Keep first-party PR eligibility through merge queues.",
+    "Extend immutable-artifact observation to missing-date OCI, feature, hosted runner and custom JSON pins before claiming those automatic paths.",
+    "Advance automation-v1 only after reviewed shared-source changes pass their full gate; atomically recompute consumer bootstrap file integrity records."
+  ]
+}

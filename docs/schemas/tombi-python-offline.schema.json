@@ -1,0 +1,67 @@
+{
+  "title": "Shared Python metadata validated semantically by uv, Ruff and ty",
+  "description": "Offline structural checks without unresolved remote tool schemas.",
+  "type": "object",
+  "required": ["project", "build-system", "dependency-groups", "tool"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["name", "version", "requires-python"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "description": { "type": "string" },
+        "requires-python": { "type": "string" },
+        "dependencies": { "type": "array", "items": { "type": "string" } },
+        "scripts": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "build-system": {
+      "type": "object",
+      "required": ["requires", "build-backend"],
+      "properties": {
+        "requires": { "type": "array", "items": { "type": "string" } },
+        "build-backend": { "type": "string" }
+      }
+    },
+    "dependency-groups": {
+      "type": "object",
+      "properties": { "dev": { "type": "array", "items": { "type": "string" } } }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["uv", "ruff", "ty"],
+      "properties": {
+        "uv": {
+          "type": "object",
+          "required": ["required-version"],
+          "properties": { "required-version": { "type": "string" } }
+        },
+        "ruff": {
+          "type": "object",
+          "properties": {
+            "target-version": { "type": "string" },
+            "line-length": { "type": "integer", "minimum": 1 },
+            "lint": {
+              "type": "object",
+              "properties": { "select": { "type": "array", "items": { "type": "string" } } }
+            }
+          }
+        },
+        "ty": {
+          "type": "object",
+          "properties": {
+            "environment": {
+              "type": "object",
+              "properties": { "python-version": { "type": "string" } }
+            },
+            "terminal": {
+              "type": "object",
+              "properties": { "error-on-warning": { "type": "boolean" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

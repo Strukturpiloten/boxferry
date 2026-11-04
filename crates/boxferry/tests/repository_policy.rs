@@ -802,14 +802,14 @@ fn validate_ci_event_contract(workflow: &str) -> Result<(), String> {
         .lines()
         .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
         .collect();
-    if declarations != ["  workflow_call:", "  push:", "  pull_request:", "  workflow_dispatch:"]
+    if declarations != ["  workflow_call:", "  push:", "  pull_request:", "  merge_group:", "  workflow_dispatch:"]
         || !events.starts_with("  workflow_call:\n")
         || !events
             .trim_end()
-            .ends_with("  push:\n    branches:\n      - main\n  pull_request:\n  workflow_dispatch:")
+            .ends_with("  push:\n    branches:\n      - main\n  pull_request:\n  merge_group:\n    types: [checks_requested]\n  workflow_dispatch:")
     {
         return Err(
-            "CI must run for one unrestricted pull-request event, main pushes, manual dispatch, and reusable calls"
+            "CI must run for unrestricted pull-request updates, merge queue checks, main pushes, manual dispatch, and reusable calls"
                 .to_owned(),
         );
     }
@@ -838,6 +838,8 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
         ("      - main\n", "      - feature\n"),
         ("  pull_request:\n", "  pull_request:\n  pull_request:\n"),
         ("  pull_request:\n", "  pull_request_target:\n"),
+        ("  merge_group:\n    types: [checks_requested]\n", ""),
+        ("types: [checks_requested]", "types: [destroyed]"),
         ("  workflow_dispatch:\n", ""),
         ("  workflow_call:\n", "  schedule:\n"),
     ] {
@@ -6527,11 +6529,10 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
             &[
                 "## Issue-to-PR contribution workflow",
                 "./scripts/check-all.sh",
-                "selected GitHub checks and fail-closed `Required CI`",
-                "primary agent uses GPT-6 Sol with `xhigh` reasoning",
-                "Worker agents",
-                "never perform Git or GitHub writes",
-                "the primary agent's final responsibility",
+                "The fail-closed `Required CI` check must pass before merge",
+                "complete agent Git and GitHub workflow",
+                "agents must complete the local gate before committing, pushing, or opening a PR",
+                "the primary owns the final gate and standing-authorized merges",
             ][..],
         ),
     ] {
@@ -7081,7 +7082,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: Required CI\n    if: always()",
-        "needs:\n      [\n        release-binaries,\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "needs:\n      [\n        release-binaries,\n        automation,\n        canonical-artifact-integrity,\n        kubernetes-artifact-integrity,\n        compose-provider-integrity,\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
         "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
         "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
@@ -8194,8 +8195,6 @@ fn validate_renovate_lock_maintenance(
         "Review GitHub-hosted runner environment upgrades manually",
         "Keep Dev Container feature versions current; the lock file owns digests",
         "Require explicit revalidation for live application and workload images",
-        "Require checksum review for the Docker Compose provider",
-        "Require checksum review for downloaded file-quality tools",
     ] {
         let (position, rule) = package_rules
             .iter()
@@ -8285,9 +8284,9 @@ fn validate_shared_lockfile_guard(renovate: &serde_json::Value, workflow: &str) 
         "lockfile-release-age:\n    name: Lockfile release age",
         "if: github.event_name != 'pull_request'",
         "repository: Strukturpiloten/.github",
-        "ref: ${{ github.event.pull_request.head.sha }}",
-        "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+        "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+        "HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
         "python3 .github/strukturpiloten-shared/scripts/lockfile_release_age.py",
         "--repository-root \"${GITHUB_WORKSPACE}\"",
         "--base \"${BASE_SHA}\"",
@@ -8517,6 +8516,171 @@ fn first_party_release_age_rejects_global_and_third_party_waivers() -> Result<()
     Ok(())
 }
 
+fn validate_compose_provider_catalogue(
+    catalogue: &str,
+    supabase: bool,
+    version: &str,
+    sha: &str,
+    url: &str,
+) -> Result<(), String> {
+    let rows: Vec<Vec<&str>> = catalogue
+        .lines()
+        .filter(|line| line.starts_with("docker-compose\t"))
+        .map(|line| line.split('\t').collect())
+        .collect();
+    let expected: [&str; 4] = if supabase {
+        ["docker-compose", version, "linux-amd64", sha]
+    } else {
+        ["docker-compose", version, url, sha]
+    };
+    if rows.len() != 1 || rows[0].len() < 5 || rows[0][..4] != expected || (supabase && rows[0][4] != url) {
+        return Err("provider catalogue version, digest and asset URL must match the canonical provider".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn provider_catalogue_rejects_mismatched_fields() -> Result<(), String> {
+    for supabase in [false, true] {
+        let valid = if supabase {
+            "docker-compose\t1.2.3\tlinux-amd64\tsha\turl\tlicense"
+        } else {
+            "docker-compose\t1.2.3\turl\tsha\tlicense"
+        };
+        validate_compose_provider_catalogue(valid, supabase, "1.2.3", "sha", "url")?;
+        for (version, sha, url) in [
+            ("1.2.4", "sha", "url"),
+            ("1.2.3", "other", "url"),
+            ("1.2.3", "sha", "other"),
+        ] {
+            if validate_compose_provider_catalogue(valid, supabase, version, sha, url).is_ok() {
+                return Err("mismatched provider catalogue unexpectedly passed".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_compose_provider_renovate_policy(renovate: &serde_json::Value) -> Result<(), String> {
+    let managers = renovate["customManagers"]
+        .as_array()
+        .ok_or("Renovate customManagers must be an array")?;
+    let owners = managers
+        .iter()
+        .filter(|manager| {
+            manager["managerFilePatterns"] == serde_json::json!(["/^scripts/lib/compose-provider\\.sh$/"])
+        })
+        .collect::<Vec<_>>();
+    let [owner] = owners.as_slice() else {
+        return Err("Compose provider installer must have exactly one extraction owner".to_owned());
+    };
+    let paired = owner["matchStrings"].as_array().is_some_and(|patterns| {
+        patterns.iter().any(|pattern| {
+            pattern.as_str().is_some_and(|pattern| {
+                [
+                    "(?<datasource>github-release-attachments)",
+                    "(?<depName>docker/compose)",
+                    "(?<currentValue>",
+                    "(?<currentDigest>",
+                    "expected_release=",
+                    "expected_sha256=",
+                ]
+                .iter()
+                .all(|required| pattern.contains(required))
+            })
+        })
+    });
+    if owner["customType"] != "regex" || !paired {
+        return Err("Compose provider owner must pair its exact release with its binary checksum".to_owned());
+    }
+    let rules = renovate["packageRules"]
+        .as_array()
+        .ok_or("Renovate packageRules must be an array")?;
+    let provider_rules = rules
+        .iter()
+        .filter(|rule| {
+            rule["matchPackageNames"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|name| name == "docker/compose"))
+        })
+        .collect::<Vec<_>>();
+    let [hold] = provider_rules.as_slice() else {
+        return Err("Compose provider must have exactly one proposal policy".to_owned());
+    };
+    if hold["matchPackageNames"] != serde_json::json!(["docker/compose"])
+        || hold["matchDatasources"] != serde_json::json!(["github-release-attachments"])
+        || hold["enabled"] != false
+        || hold["dependencyDashboardApproval"] != false
+        || hold["pinDigests"] != true
+        || hold.get("matchUpdateTypes").is_some()
+    {
+        return Err(
+            "Compose provider proposals must be held for every update type without a manual approval path".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_provider_renovate_policy_rejects_unpaired_or_unheld_rules() -> Result<(), String> {
+    let text = fs::read_to_string(repository_root().join(".github/renovate.json"))
+        .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    validate_compose_provider_renovate_policy(&value)?;
+    let owner = value["customManagers"]
+        .as_array()
+        .ok_or("missing managers")?
+        .iter()
+        .position(|manager| {
+            manager["managerFilePatterns"] == serde_json::json!(["/^scripts/lib/compose-provider\\.sh$/"])
+        })
+        .ok_or("missing provider owner")?;
+    let hold = value["packageRules"]
+        .as_array()
+        .ok_or("missing rules")?
+        .iter()
+        .position(|rule| rule["matchPackageNames"] == serde_json::json!(["docker/compose"]))
+        .ok_or("missing provider policy")?;
+    let mut renamed = value.clone();
+    renamed["customManagers"][owner]["description"] = serde_json::json!("");
+    renamed["packageRules"][hold]["description"] = serde_json::json!("");
+    validate_compose_provider_renovate_policy(&renamed)?;
+    for mutation in [
+        "unpaired",
+        "foreign-source",
+        "broad-package",
+        "enabled",
+        "approval",
+        "major-only",
+        "duplicate-owner",
+    ] {
+        let mut changed = value.clone();
+        match mutation {
+            "unpaired" => changed["customManagers"][owner]["matchStrings"] = serde_json::json!(["(?<currentValue>.*)"]),
+            "foreign-source" => {
+                changed["packageRules"][hold]["matchDatasources"] = serde_json::json!(["github-releases"]);
+            }
+            "broad-package" => {
+                changed["packageRules"][hold]["matchPackageNames"] = serde_json::json!(["docker/compose", "unrelated"]);
+            }
+            "enabled" => changed["packageRules"][hold]["enabled"] = serde_json::json!(true),
+            "approval" => changed["packageRules"][hold]["dependencyDashboardApproval"] = serde_json::json!(true),
+            "major-only" => changed["packageRules"][hold]["matchUpdateTypes"] = serde_json::json!(["major"]),
+            _ => {
+                let duplicate = changed["customManagers"][owner].clone();
+                changed["customManagers"]
+                    .as_array_mut()
+                    .ok_or("missing managers")?
+                    .push(duplicate);
+            }
+        }
+        if validate_compose_provider_renovate_policy(&changed).is_ok() {
+            return Err(format!("provider policy accepted counterexample `{mutation}`"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String> {
     let root = repository_root();
@@ -8524,16 +8688,14 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
     for required in [
         "Update versioned Dev Container tools",
-        "Signal updates for checksum-pinned file-quality tools",
+        "Update each canonical downloaded-tool release tag and architecture checksum atomically",
         "Update directly pinned workflow tool versions",
         "Update the documented Dev Container CLI",
         "Update the GitHub CLI installed in the Dev Container",
-        "Signal updates for the checksum-pinned Docker Compose provider",
         "Track reviewed live-application container images",
         "Track reviewed live Podman matrix images",
         "Track the digest-pinned live workload probe image",
         "Require explicit revalidation for live application and workload images",
-        "Require checksum review for the Docker Compose provider",
         "Automerge tested non-major dependency updates",
         "Do not delay BoxFerry and Lens releases",
         r#""boxferry-model""#,
@@ -8590,15 +8752,14 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         .as_array()
         .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
     validate_renovate_manager_coverage(package_rules)?;
+    validate_compose_provider_renovate_policy(&renovate_value)?;
     validate_first_party_release_age(&renovate_value)?;
     let ci_workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .map_err(|error| format!("failed to read CI workflow: {error}"))?;
     validate_renovate_lock_maintenance(&renovate_value, package_rules)?;
     validate_shared_lockfile_guard(&renovate_value, &ci_workflow)?;
-    for description in [
-        "Require explicit revalidation for live application and workload images",
-        "Require checksum review for the Docker Compose provider",
-    ] {
+    {
+        let description = "Require explicit revalidation for live application and workload images";
         let rule = package_rules
             .iter()
             .find(|rule| rule["description"] == description)
@@ -8627,8 +8788,8 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
     let compose_provider = fs::read_to_string(root.join("scripts/lib/compose-provider.sh"))
         .map_err(|error| format!("failed to read shared Compose provider metadata: {error}"))?;
     for required in [
-        "renovate: datasource=github-releases depName=docker/compose",
-        "local -r expected_version=\"",
+        "renovate: datasource=github-release-attachments depName=docker/compose",
+        "local -r expected_release=\"",
         "local -r expected_sha256=\"",
         "readonly BOXFERRY_COMPOSE_PROVIDER_VERSION=\"",
         "readonly BOXFERRY_COMPOSE_PROVIDER_SHA256=\"",
@@ -8641,8 +8802,11 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
             return Err(format!("shared Compose provider metadata is missing `{required}`"));
         }
     }
-    let provider_version = shell_quoted_value(&compose_provider, "local -r expected_version")
-        .ok_or_else(|| "shared Compose provider version must be a quoted canonical value".to_owned())?;
+    let provider_release = shell_quoted_value(&compose_provider, "local -r expected_release")
+        .ok_or_else(|| "shared Compose provider release must be a quoted canonical value".to_owned())?;
+    let provider_version = provider_release
+        .strip_prefix('v')
+        .ok_or_else(|| "shared Compose provider release must have a v prefix".to_owned())?;
     let provider_sha = shell_quoted_value(&compose_provider, "local -r expected_sha256")
         .ok_or_else(|| "shared Compose provider checksum must be a quoted canonical value".to_owned())?;
     if provider_sha.len() != 64 || !provider_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -8747,13 +8911,13 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
                 .join("providers.tsv"),
         )
         .map_err(|error| format!("failed to read {application} provider catalogue: {error}"))?;
-        for required in [provider_version, provider_sha, provider_url.as_str()] {
-            if !catalogue.contains(required) {
-                return Err(format!(
-                    "{application} provider catalogue does not match canonical value `{required}`"
-                ));
-            }
-        }
+        validate_compose_provider_catalogue(
+            &catalogue,
+            application == "supabase-application",
+            provider_version,
+            provider_sha,
+            &provider_url,
+        )?;
     }
 
     for (workflow_name, expected_installs) in [("migration-readiness.yml", 2), ("podman-live-conformance.yml", 4)] {
@@ -8843,8 +9007,15 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
 
     let file_tool_installer = fs::read_to_string(root.join("scripts/install-file-tools.sh"))
         .map_err(|error| format!("failed to read file-tool installer: {error}"))?;
-    if !file_tool_installer.contains("--retry 3 --retry-all-errors --connect-timeout 10 --max-time 300") {
-        return Err("checksum-pinned file-tool downloads must retry bounded transient failures".to_owned());
+    for required in [
+        "exec python3 \"${repository_root}/automation/src/boxferry_ci/tooling.py\"",
+        "--destination \"${1:-/usr/local/bin}\" --profile core",
+    ] {
+        if !file_tool_installer.contains(required) {
+            return Err(format!(
+                "file-tool installer must delegate to shared verified tooling: {required}"
+            ));
+        }
     }
 
     let development = fs::read_to_string(root.join("docs/development-environment.md"))
@@ -9882,6 +10053,7 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
         "README.md",
         "api-stability.md",
         "architecture.md",
+        "automation.md",
         "dependency-policy.md",
         "development-environment.md",
         "platform-support.md",
@@ -9909,6 +10081,7 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
         ("docs/README.md", 500),
         ("docs/api-stability.md", 800),
         ("docs/architecture.md", 1_500),
+        ("docs/automation.md", 800),
         ("docs/dependency-policy.md", 1_000),
         ("docs/development-environment.md", 800),
         ("docs/platform-support.md", 400),
@@ -10236,8 +10409,9 @@ fn validate_release_binary_projection(ci: &str, release: &str) -> Result<(), Str
         || release.contains("uses: ./.github/workflows/release-binaries.yml")
         || !ci.contains("value: ${{ jobs.release-binaries.outputs.release_binary_artifact }}")
         || !ci.contains("NEEDS_JSON=$(python3 - <<'BINARY_NEEDS_PY'")
-        || !ci.contains("binary.get(\"result\") != \"success\"")
-        || !ci.contains("del needs[\"release-binaries\"]")
+        || !ci.contains("prerequisite.get(\"result\") != \"success\"")
+        || !ci.contains("for required in (\"release-binaries\", \"automation\", \"canonical-artifact-integrity\", \"kubernetes-artifact-integrity\", \"compose-provider-integrity\"):")
+        || !ci.contains("del needs[required]")
         || !ci.contains("export NEEDS_JSON")
     {
         return Err("CI must build once and project only successful binary evidence".to_owned());
@@ -10416,11 +10590,6 @@ fn release_binary_delivery_and_renovate_contracts_reject_counterfactuals() -> Re
             return Err(format!("binary contract accepted counterfactual {old}"));
         }
     }
-    for old in ["del needs[\"release-binaries\"]", "export NEEDS_JSON"] {
-        if validate_release_binary_delivery(&binary, &ci.replace(old, "true"), &release, &helper, &renovate).is_ok() {
-            return Err(format!("binary gate accepted counterfactual {old}"));
-        }
-    }
     for old in [
         "release-binaries.py stage",
         "target/release-artifacts/boxferry*.tar.gz",
@@ -10485,6 +10654,25 @@ fn release_binary_delivery_and_renovate_contracts_reject_counterfactuals() -> Re
     managers.push(owner);
     if validate_release_binary_delivery(&binary, &ci, &release, &helper, &duplicate).is_ok() {
         return Err("emulator contract accepted duplicate ownership".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn required_ci_rejects_missing_mandatory_prerequisite_guards() -> Result<(), String> {
+    let root = repository_root();
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).map_err(|error| error.to_string())?;
+    let release = fs::read_to_string(root.join(".github/workflows/release.yml")).map_err(|error| error.to_string())?;
+    validate_release_binary_projection(&ci, &release)?;
+    for old in [
+        "for required in (\"release-binaries\", \"automation\", \"canonical-artifact-integrity\", \"kubernetes-artifact-integrity\", \"compose-provider-integrity\"):",
+        "prerequisite.get(\"result\") != \"success\"",
+        "del needs[required]",
+        "export NEEDS_JSON",
+    ] {
+        if validate_release_binary_projection(&ci.replace(old, "true"), &release).is_ok() {
+            return Err(format!("binary gate accepted counterfactual {old}"));
+        }
     }
     Ok(())
 }

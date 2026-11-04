@@ -481,6 +481,9 @@ rustc-ice-*.txt
 # Project specific additions
 
 temp*/
+!/templates/
+/templates/*
+!/templates/shared-ci.py
 *.profraw
 *.profdata
 .boxferry-workspace/

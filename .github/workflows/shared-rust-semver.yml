@@ -1,0 +1,128 @@
+---
+name: Shared Rust public API
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact caller revision tested in this run.
+        required: true
+        type: string
+      automation_sha:
+        description: Immutable BoxFerry commit; must equal this workflow call's SHA ref.
+        required: true
+        type: string
+      policy_sha:
+        description: Trusted PR or merge queue base, otherwise the candidate SHA.
+        required: true
+        type: string
+      config_path:
+        description: Repository-relative JSON policy path in the trusted policy revision.
+        required: true
+        type: string
+      package:
+        description: One exact workspace crate name.
+        required: true
+        type: string
+      release_type:
+        description: Empty for manifest inference, or major, minor, patch.
+        default: ""
+        type: string
+      initial_api_contract:
+        description: Allow canonical crate absence only with the explicit positive initial-api-contract policy task.
+        default: false
+        type: boolean
+    outputs:
+      candidate_sha:
+        description: Exact candidate whose selected task succeeded.
+        value: ${{ jobs.check.outputs.candidate_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Public API compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      candidate_sha: ${{ steps.result.outputs.candidate_sha }}
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind caller candidate and trusted policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Install the locked shared Python project
+        uses: ./_automation/.github/actions/shared-python
+      - name: Verify canonical baseline and initial-publication policy
+        id: baseline
+        shell: bash
+        env:
+          PACKAGE: ${{ inputs.package }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          ALLOW_INITIAL: ${{ inputs.initial_api_contract }}
+          POLICY_CONFIG: ${{ steps.source.outputs.config }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${PACKAGE}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
+          case "${RELEASE_TYPE}" in ''|major|minor|patch) ;; *) exit 1 ;; esac
+          cargo metadata --manifest-path source/Cargo.toml --locked --no-deps --format-version 1 |
+            python3 -c 'import json, os, sys; metadata = json.load(sys.stdin); assert any(p["name"] == os.environ["PACKAGE"] and p["id"] in metadata["workspace_members"] for p in metadata["packages"]), "API package must belong to the tested workspace"'
+          status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+            --user-agent 'Strukturpiloten shared Rust CI' --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 --output /dev/null --write-out '%{http_code}' \
+            "https://crates.io/api/v1/crates/${PACKAGE}")"
+          case "${status}" in
+            200) printf 'published=true\n' >> "${GITHUB_OUTPUT}" ;;
+            404)
+              if [[ "${ALLOW_INITIAL}" != true ]]; then
+                echo 'Published API baseline missing; initial publication needs an explicit positive contract (#485).' >&2
+                exit 1
+              fi
+              uv run --locked --project _automation/automation python -m boxferry_ci run \
+                --repository-root source --config "${POLICY_CONFIG}" --task initial-api-contract \
+                --tested-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+                --report-json source/target/automation-initial-api-contract.json
+              printf 'published=false\n' >> "${GITHUB_OUTPUT}"
+              ;;
+            *) printf 'Unexpected canonical crates.io response: HTTP %s.\n' "${status}" >&2; exit 1 ;;
+          esac
+      - name: Retain the structured initial-API outcome when exercised
+        if: always() && inputs.initial_api_contract && (steps.baseline.outputs.published == 'false' || steps.baseline.outcome == 'failure')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: initial-api-${{ inputs.package }}-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: source/target/automation-initial-api-contract.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+      - name: Check published public API compatibility
+        if: steps.baseline.outputs.published == 'true'
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          manifest-path: source/Cargo.toml
+          package: ${{ inputs.package }}
+          feature-group: all-features
+          release-type: ${{ inputs.release_type }}
+      - name: Expose successful candidate binding
+        id: result
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"

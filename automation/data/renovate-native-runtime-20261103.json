@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "observed_on": "2026-11-03",
+  "purpose": "Historical read-only native fixture and checksum acquisition evidence, not a release or rollout result.",
+  "runtime": {
+    "version": "44.139.0",
+    "image": "ghcr.io/renovatebot/renovate:44.139.0@sha256:67e76082eded90c6fa1d1552cc9d8d93d1eb06e13e81591aab57b6f4994217be",
+    "license": "AGPL-3.0-only",
+    "redistribution": "Official image is acquired for ignored test tooling only; no upstream source/binary is committed.",
+    "regex_engine": "native RE2 available"
+  },
+  "native_results": {
+    "version": "44.139.0",
+    "replacements": 10,
+    "ruleCases": 6,
+    "operationalExtractions": 166
+  },
+  "uv_architecture_acquisition": [
+    {
+      "architecture": "x86_64",
+      "current": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz.sha256",
+        "sha256": "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
+      },
+      "next": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256",
+        "sha256": "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
+      },
+      "native_result": "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
+    },
+    {
+      "architecture": "aarch64",
+      "current": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-unknown-linux-gnu.tar.gz.sha256",
+        "sha256": "229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d"
+      },
+      "next": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz.sha256",
+        "sha256": "71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
+      },
+      "native_result": "71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
+    }
+  ],
+  "command": "BOXFERRY_RENOVATE_PACKAGE=<verified runtime> python3 -m unittest discover -s automation/tests -v",
+  "installer_contract": "uv run --locked --project automation python -m boxferry_ci.renovate_runtime --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate",
+  "hosted_difference": "Explicit --engine docker on the GitHub-hosted outer runner; no fallback and no image start.",
+  "required_checks": "Native extraction tests fail if the runtime is absent, differs from the reviewed OCI identity, or lacks RE2.",
+  "sources": [
+    "https://docs.renovatebot.com/modules/datasource/github-release-attachments/",
+    "https://docs.renovatebot.com/modules/manager/github-actions/"
+  ]
+}

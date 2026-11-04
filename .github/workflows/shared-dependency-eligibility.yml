@@ -1,0 +1,66 @@
+---
+name: Shared dependency eligibility
+
+on:
+  workflow_call:
+    inputs:
+      automation-sha:
+        description: Exact shared automation SHA, identical to this reusable workflow reference.
+        type: string
+        required: true
+
+# Call ONLY from a default-branch dependency-eligibility.yml with
+# schedule and workflow_run (CI/Check requested+completed).
+# Candidate pull_request/merge_group validation receives no write token.
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: dependency-eligibility-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  eligibility:
+    name: Trusted dependency metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out immutable shared implementation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation-sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Verify immutable shared revision
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        run: |
+          set -euo pipefail
+          [[ "${AUTOMATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C _automation rev-parse HEAD)" = "${AUTOMATION_SHA}"
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Evaluate authoritative candidate metadata and persist first-seen evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.eligibility service \
+            --repository "${GITHUB_REPOSITORY}" --implementation-revision "${AUTOMATION_SHA}" \
+            --event-name "${GITHUB_EVENT_NAME}" --event-path "${GITHUB_EVENT_PATH}" \
+            --run-id "${GITHUB_RUN_ID}" --output eligibility-evidence/eligibility-state.json \
+            --summary "${GITHUB_STEP_SUMMARY}"
+      - name: Retain trusted state and candidate reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dependency-eligibility-state-v1
+          path: eligibility-evidence/eligibility-state.json
+          if-no-files-found: error
+          retention-days: 30

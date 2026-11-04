@@ -139,31 +139,23 @@ Alternatively, authorize protected inline service providers explicitly:
 boxferry convert compose quadlet --input-file compose-deferred.yaml --quadlet-defer web:RUN_MODE --quadlet-defer web:DATA_ROOT --quadlet-service-env web:RUN_MODE=production --quadlet-service-env web:DATA_ROOT=/srv/example --environment-values include --output-directory quadlet-deferred-inline-output
 ```
 
-Inline assignments use `[Service] Environment`. All external files override inline assignments;
-later files override earlier files, including empty overrides. Assignment values are literal:
-`$OTHER` inside a provider value is not recursively expanded. Dollar and percent characters in
-provider paths are also literal. Files must have absolute paths without glob activation.
+Inline assignments use `[Service] Environment`; external files override them in order, including
+empty values. Assignment values and provider paths are literal and not recursively expanded; file
+paths must be absolute and cannot contain globs. Pure references work with `--environment-values withhold`; inline providers
+and values such as `prefix-${RUN_MODE}` require `include`. Reports and support ZIPs withhold provider
+values, and generated output remains private on Unix.
 
-Pure reference environment expressions work with the default `--environment-values withhold`.
-Any nonempty literal part, such as `prefix-${RUN_MODE}`, and every inline provider require
-`include`, including an empty inline value. Generated output remains private on Unix; diagnostics,
-reports and support ZIPs withhold provider values. Bind suffixes describe paths and need no
-separate environment-value acquisition consent.
+Only direct references in supported environment values and leading bind sources can be deferred.
+Effective bind roots must be nonempty absolute paths without colons or control characters. Missing
+or empty container environment references produce empty strings. Provider files and their contents
+remain external requirements. See the
+[compatibility reference](../../../reference/compatibility/#deferred-service-execution-environment)
+for supported expressions, provider order, and reverse-conversion limits.
 
-Only direct `$NAME`/`${NAME}` references in plain or double-quoted scalars are supported.
-Defaults, alternatives, required operators, malformed/nested expressions, and dollar-bearing
-single-quoted/block scalars require conversion-time resolution. Bind sources allow one leading
-reference and an optional safe slash suffix; native `.volume`/`.artifact` suffix rewrites are
-rejected. Targets/options, named volumes and other deferred fields remain unsupported. Effective
-bind roots must be nonempty absolute paths without colons or control characters. Inline-only
-known-invalid roots fail during conversion; file overrides remain external requirements. Missing
-or empty container environment references contribute empty strings.
-
-Unused references, orphan providers, duplicate entries, unknown or inactive services and unbound
-references fail. These flags cannot coexist with conversion-time `--env`, `--env-file`, or
-`--interpolate`. `validate compose quadlet` checks the same plan without writing output. Bundles
-preserve these declarations, but extraction does not migrate provider files or host data. Reverse
-conversion reports unresolved execution references and providers as unsupported intent.
+Unused, duplicate, unbound, or invalid declarations fail. Deferral cannot coexist with
+conversion-time `--env`, `--env-file`, or `--interpolate`. `validate compose quadlet` checks the
+same plan without writing output. Bundles retain declarations but do not migrate provider files or
+host data.
 
 ## Single-file transport
 

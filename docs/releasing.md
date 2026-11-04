@@ -23,21 +23,6 @@ Use `validation_only: true` to exercise the identical validation path without ta
 releases, crate publication, release credentials, or another mutating publication step. Manually
 dispatched full and focused migration-readiness artifacts remain diagnostic only.
 
-`Reviewed PR application validation` selects one trusted-main/exact-head Nextcloud,
-Paperless or Immich diagnostic; record URL, SHA, task and bounded JSON.
-Before/after rechecks cover both actors and the open same-repository PR.
-Failed/skipped persistence fails. Allowed source/target metadata and unselected-Lens
-full-SHA changes remain bound to the exact candidate catalogue.
-Helpers establish no runtime result or publication/deployment authority; complete
-PR/main/Release gates remain mandatory.
-See [ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md).
-
-The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md) needs
-[staged exact-pair authorization](decisions/0079-native-test-runtime-selection.md#safe-staged-bootstrap-and-acceptance-checkpoints).
-Infrastructure alone proves neither native acceptance nor release readiness.
-
-Upstream-rootless requires current-attempt verified-and-removed Box receipts; see that ADR.
-
 ## Automatic release validation
 
 Release requires fresh complete CI and catalogue evidence for one immutable candidate.
@@ -52,16 +37,17 @@ Each GitHub attempt independently meets admission budgets. Deadline accounting e
 retry waits. Attempt intervals use RFC 3339 instants and cannot overlap. See the
 [evidence contract](../fixtures/conformance/migration-readiness/README.md).
 
-Reviewed PR diagnostics require both actors, exact source/target pairs, before/after rechecks
-and successful persistence ([ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md)).
-Docker consumer diagnostics additionally require staged exact-pair authorization and current-attempt
-verified-and-removed Box receipts ([ADR 0079](decisions/0079-native-test-runtime-selection.md)).
-Infrastructure alone proves neither native acceptance nor readiness
+Reviewed PR application diagnostics bind the exact open PR and candidate catalogue, recheck both
+actors before and after, and require successful persistence. Record the URL, SHA, task, and bounded
+JSON ([ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md)). Docker consumer
+diagnostics additionally require staged exact-pair authorization and current-attempt verified and
+removed Box receipts ([ADR 0079](decisions/0079-native-test-runtime-selection.md)). Infrastructure
+alone proves neither native acceptance nor readiness
 ([ADR 0078](decisions/0078-trusted-docker-consumer-validation.md)).
 
-[Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates shared CI/release
-and Renovate rollout. Preserve each repository's ownership, thresholds and native suites;
-Lens libraries remain independent of BoxFerry. Validate every consumer.
+[Issue #549](https://github.com/Strukturpiloten/boxferry/issues/549) tracks shared CI and release
+rollout. Each repository retains its own thresholds and native suites, and Lens products remain
+independent of BoxFerry. A shared workflow does not establish consumer or release readiness.
 
 ## Release notes
 

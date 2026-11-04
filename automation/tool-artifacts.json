@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "provenance": {
+    "reviewedPins": [
+      "https://github.com/Strukturpiloten/boxferry/blob/ea264db2d6265454340b8e9e43fc99c3228eed8e/scripts/install-file-tools.sh",
+      "https://github.com/Strukturpiloten/boxferry-website/blob/4f61114ef90c4da8c5d3e92b814a3cd5f418aa46/scripts/install-file-tools.sh"
+    ],
+    "actionlintChecksums": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt",
+    "lycheeChecksums": "https://github.com/lycheeverse/lychee/releases/expanded_assets/lychee-v0.24.2",
+    "redistribution": "Asset identities and checksums only. Tool binaries are downloaded directly from their official upstream releases for development use.",
+    "notes": "No version upgrades. Hadolint ARM asset spelling corrected to official arm64 without changing its reviewed checksum."
+  },
+  "assets": [
+    {
+      "tool": "tombi",
+      "repository": "tombi-toml/tombi",
+      "architecture": "x86_64",
+      "filenameTemplate": "tombi-cli-{version}-x86_64-unknown-linux-musl.tar.gz",
+      "memberTemplate": "tombi-cli-{version}-x86_64-unknown-linux-musl/tombi",
+      "archive": "tar.gz",
+      "currentVersion": "v1.4.1",
+      "sha256": "9aa69eb3e75a4a22a961b8a1c8cc44e4f81328ce25ad5b10d151be1a09faa88d"
+    },
+    {
+      "tool": "tombi",
+      "repository": "tombi-toml/tombi",
+      "architecture": "aarch64",
+      "filenameTemplate": "tombi-cli-{version}-aarch64-unknown-linux-musl.tar.gz",
+      "memberTemplate": "tombi-cli-{version}-aarch64-unknown-linux-musl/tombi",
+      "archive": "tar.gz",
+      "currentVersion": "v1.4.1",
+      "sha256": "21f51d092597053266e0ed051082743b5956b6de2f0db1cecce78e0eb29165e5"
+    },
+    {
+      "tool": "shfmt",
+      "repository": "mvdan/sh",
+      "architecture": "x86_64",
+      "filenameTemplate": "shfmt_v{version}_linux_amd64",
+      "memberTemplate": null,
+      "archive": "binary",
+      "currentVersion": "v3.13.1",
+      "sha256": "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
+    },
+    {
+      "tool": "shfmt",
+      "repository": "mvdan/sh",
+      "architecture": "aarch64",
+      "filenameTemplate": "shfmt_v{version}_linux_arm64",
+      "memberTemplate": null,
+      "archive": "binary",
+      "currentVersion": "v3.13.1",
+      "sha256": "32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7"
+    },
+    {
+      "tool": "shellcheck",
+      "repository": "koalaman/shellcheck",
+      "architecture": "x86_64",
+      "filenameTemplate": "shellcheck-v{version}.linux.x86_64.tar.xz",
+      "memberTemplate": "shellcheck-v{version}/shellcheck",
+      "archive": "tar.xz",
+      "currentVersion": "v0.11.0",
+      "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+    },
+    {
+      "tool": "shellcheck",
+      "repository": "koalaman/shellcheck",
+      "architecture": "aarch64",
+      "filenameTemplate": "shellcheck-v{version}.linux.aarch64.tar.xz",
+      "memberTemplate": "shellcheck-v{version}/shellcheck",
+      "archive": "tar.xz",
+      "currentVersion": "v0.11.0",
+      "sha256": "12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588"
+    },
+    {
+      "tool": "hadolint",
+      "repository": "hadolint/hadolint",
+      "architecture": "x86_64",
+      "filenameTemplate": "hadolint-linux-x86_64",
+      "memberTemplate": null,
+      "archive": "binary",
+      "currentVersion": "v2.15.1",
+      "sha256": "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
+    },
+    {
+      "tool": "hadolint",
+      "repository": "hadolint/hadolint",
+      "architecture": "aarch64",
+      "filenameTemplate": "hadolint-linux-arm64",
+      "memberTemplate": null,
+      "archive": "binary",
+      "currentVersion": "v2.15.1",
+      "sha256": "f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d"
+    },
+    {
+      "tool": "actionlint",
+      "repository": "rhysd/actionlint",
+      "architecture": "x86_64",
+      "filenameTemplate": "actionlint_{version}_linux_amd64.tar.gz",
+      "memberTemplate": "actionlint",
+      "archive": "tar.gz",
+      "currentVersion": "v1.7.12",
+      "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    },
+    {
+      "tool": "actionlint",
+      "repository": "rhysd/actionlint",
+      "architecture": "aarch64",
+      "filenameTemplate": "actionlint_{version}_linux_arm64.tar.gz",
+      "memberTemplate": "actionlint",
+      "archive": "tar.gz",
+      "currentVersion": "v1.7.12",
+      "sha256": "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"
+    },
+    {
+      "tool": "lychee",
+      "repository": "lycheeverse/lychee",
+      "architecture": "x86_64",
+      "filenameTemplate": "lychee-x86_64-unknown-linux-gnu.tar.gz",
+      "memberTemplate": "lychee-x86_64-unknown-linux-gnu/lychee",
+      "archive": "tar.gz",
+      "currentVersion": "lychee-v0.24.2",
+      "sha256": "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a"
+    },
+    {
+      "tool": "lychee",
+      "repository": "lycheeverse/lychee",
+      "architecture": "aarch64",
+      "filenameTemplate": "lychee-aarch64-unknown-linux-gnu.tar.gz",
+      "memberTemplate": "lychee-aarch64-unknown-linux-gnu/lychee",
+      "archive": "tar.gz",
+      "currentVersion": "lychee-v0.24.2",
+      "sha256": "91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c"
+    }
+  ]
+}

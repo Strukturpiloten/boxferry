@@ -9,8 +9,11 @@ fi
 readonly install_directory="${1:-/usr/local/bin}"
 
 # These are development defaults, not the fixed Kubernetes 1.20 conformance profile.
-# renovate: datasource=github-releases depName=kubernetes-sigs/kind
-readonly kind_version="0.33.0"
+# Each kind record is one exact GitHub tag and one platform asset digest.
+# renovate: datasource=github-release-attachments depName=kubernetes-sigs/kind depType=kind-linux-amd64
+readonly kind_amd64_release="v0.33.0" kind_amd64_checksum="aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+# renovate: datasource=github-release-attachments depName=kubernetes-sigs/kind depType=kind-linux-arm64
+readonly kind_arm64_release="v0.33.0" kind_arm64_checksum="20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
 readonly kubectl_version="1.37.0"
 # renovate: datasource=github-releases depName=helm/helm
@@ -30,14 +33,16 @@ fi
 case "$(uname -m)" in
   x86_64)
     readonly architecture="amd64"
-    readonly kind_checksum="aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+    readonly kind_release="${kind_amd64_release}"
+    readonly kind_checksum="${kind_amd64_checksum}"
     readonly kubectl_checksum="6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f"
     readonly helm_checksum="86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb"
     readonly kustomize_checksum="cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61"
     ;;
   aarch64 | arm64)
     readonly architecture="arm64"
-    readonly kind_checksum="20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
+    readonly kind_release="${kind_arm64_release}"
+    readonly kind_checksum="${kind_arm64_checksum}"
     readonly kubectl_checksum="922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3"
     readonly helm_checksum="31c5794dd55c66a51e6b7d2e2ac7a114ae8b1de41ff1d9ba51748ac973b06a08"
     readonly kustomize_checksum="9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f"
@@ -66,7 +71,7 @@ download() {
 
 # Stage and verify everything before replacing any installed tool.
 download \
-  "https://github.com/kubernetes-sigs/kind/releases/download/v${kind_version}/kind-linux-${architecture}" \
+  "https://github.com/kubernetes-sigs/kind/releases/download/${kind_release}/kind-linux-${architecture}" \
   "${temporary_directory}/kind" "${kind_checksum}"
 download \
   "https://dl.k8s.io/release/v${kubectl_version}/bin/linux/${architecture}/kubectl" \
@@ -89,4 +94,4 @@ for tool in kind kubectl helm kustomize; do
 done
 
 printf 'Installed kind %s, kubectl %s, Helm %s, and Kustomize %s.\n' \
-  "${kind_version}" "${kubectl_version}" "${helm_version}" "${kustomize_version}"
+  "${kind_release#v}" "${kubectl_version}" "${helm_version}" "${kustomize_version}"

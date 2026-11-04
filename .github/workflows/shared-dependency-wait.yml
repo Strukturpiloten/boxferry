@@ -1,0 +1,133 @@
+---
+name: Shared dependency admission reader
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact caller revision tested by this run.
+        required: true
+        type: string
+      automation_sha:
+        description: Immutable BoxFerry commit matching this workflow's full SHA reference.
+        required: true
+        type: string
+      policy_sha:
+        description: Exact trusted PR or queue base; candidate SHA for complete events.
+        required: true
+        type: string
+    outputs:
+      candidate_sha:
+        description: Exact candidate whose admission stage succeeded.
+        value: ${{ jobs.check.outputs.candidate_sha }}
+      admission_implementation_sha:
+        description: Trusted base automation A that approved admission; empty when not applicable.
+        value: ${{ jobs.check.outputs.admission_implementation_sha }}
+      admission_status:
+        description: Eligible under the trusted base policy, or explicitly not-applicable.
+        value: ${{ jobs.check.outputs.admission_status }}
+
+permissions:
+  contents: read
+  actions: read
+  statuses: read
+
+jobs:
+  check:
+    name: Dependency eligibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_sha: ${{ steps.result.outputs.candidate_sha }}
+      admission_implementation_sha: ${{ steps.result.outputs.admission_implementation_sha }}
+      admission_status: ${{ steps.result.outputs.admission_status }}
+    steps:
+      - name: Reject floating references before checking out setup code
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+        run: |
+          set -euo pipefail
+          for revision in "${CANDIDATE_SHA}" "${AUTOMATION_SHA}" "${POLICY_SHA}"; do
+            if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo 'Admission setup requires full lowercase commit SHAs.' >&2
+              exit 2
+            fi
+          done
+      - name: Check out the immutable proposed setup implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _proposed_automation
+          persist-credentials: false
+      - name: Check out the independently trusted consumer base
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.policy_sha }}
+          path: _policy
+          persist-credentials: false
+      - name: Resolve admission authority from the exact base Git object
+        id: policy
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          python3 _proposed_automation/automation/src/boxferry_ci/admission.py \
+            --repository "${GITHUB_REPOSITORY}" --event-name "${GITHUB_EVENT_NAME}" \
+            --candidate-sha "${CANDIDATE_SHA}" --tested-sha "${GITHUB_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" --policy-sha "${POLICY_SHA}" \
+            --pr-base-sha "${PR_BASE_SHA}" --queue-base-sha "${QUEUE_BASE_SHA}" \
+            --implementation-root _proposed_automation --policy-root _policy \
+            --github-output "${GITHUB_OUTPUT}" --summary "${GITHUB_STEP_SUMMARY}"
+      - name: Check out the trusted base admission implementation A
+        if: steps.policy.outputs.required == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ steps.policy.outputs.policy_automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Verify the held admission source A
+        if: steps.policy.outputs.required == 'true'
+        shell: bash
+        env:
+          ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
+        run: test "$(git -C _automation rev-parse HEAD)" = "${ADMISSION_SHA}"
+      - name: Install A's canonical locked Python tooling
+        if: steps.policy.outputs.required == 'true'
+        uses: ./_automation/.github/actions/shared-python
+      - name: Read the exact candidate receipt under A's policy
+        if: steps.policy.outputs.required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
+        shell: bash
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci.eligibility wait \
+            --repository "${GITHUB_REPOSITORY}" --candidate-sha "${CANDIDATE_SHA}" \
+            --implementation-revision "${ADMISSION_SHA}" --summary "${GITHUB_STEP_SUMMARY}"
+      - name: Expose successful admission evidence without claiming B-policy approval
+        id: result
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
+          ADMISSION_REQUIRED: ${{ steps.policy.outputs.required }}
+        shell: bash
+        run: |
+          printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
+          printf 'admission_implementation_sha=%s\n' "${ADMISSION_SHA}" >> "${GITHUB_OUTPUT}"
+          if [[ "${ADMISSION_REQUIRED}" == true ]]; then
+            printf 'admission_status=eligible\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'admission_status=not-applicable\n' >> "${GITHUB_OUTPUT}"
+          fi

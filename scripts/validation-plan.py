@@ -345,6 +345,13 @@ def make_plan(args: argparse.Namespace, policy: dict[str, Any]) -> dict[str, Any
                 profile, reason = profile_for_changes(root, base, head, records, policy, policy_root, local=False)
             except (OSError, ValueError, PlanError) as error:
                 profile, reason = "full", [f"PR classification unavailable: {error}"]
+    elif event == "merge_group":
+        base = sha(args.base_sha, "merge queue base")
+        head = sha(args.head_sha, "merge queue head")
+        if head != tested:
+            raise PlanError("merge queue head must match the exact tested revision")
+        git(root, "merge-base", "--is-ancestor", base, tested)
+        profile, reason = "full", ["merge queue foundation requires complete validation"]
     elif event in {"push", "workflow_dispatch", "workflow_call"}:
         base = head = tested
         profile, reason = "full", [f"{event} always requires complete validation"]
@@ -372,6 +379,14 @@ def verify_gate(plan: dict[str, Any], needs: dict[str, Any], policy: dict[str, A
     if args.event == "pull_request":
         if plan["base_sha"] != sha(args.base_sha, "PR base") or plan["head_sha"] != sha(args.head_sha, "PR head"):
             raise PlanError("validation plan is not bound to the exact PR comparison")
+    elif args.event == "merge_group":
+        if (
+            plan["base_sha"] != sha(args.base_sha, "merge queue base")
+            or plan["head_sha"] != sha(args.head_sha, "merge queue head")
+            or plan["head_sha"] != plan["tested_sha"]
+            or plan["profile"] != "full"
+        ):
+            raise PlanError("merge queue validation must be complete at its exact base and tested head")
     elif plan["profile"] != "full" or plan["base_sha"] != plan["tested_sha"] or plan["head_sha"] != plan["tested_sha"]:
         raise PlanError("non-PR validation must be complete at the tested revision")
     jobs = plan["jobs"]
