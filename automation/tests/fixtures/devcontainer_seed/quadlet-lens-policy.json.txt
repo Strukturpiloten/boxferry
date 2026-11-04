@@ -1,0 +1,38 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/quadlet-lens",
+  "jobs": [
+    "rust",
+    "coverage",
+    "msrv",
+    "dependencies",
+    "api",
+    "documentation",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["documentation", "lockfile-release-age"],
+    "executable-docs": [
+      "rust",
+      "coverage",
+      "msrv",
+      "dependencies",
+      "api",
+      "documentation",
+      "lockfile-release-age"
+    ]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": [],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": [],
+  "documentation_examples_manifest": null,
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [["bash", "scripts/check-all.sh", "--check"]],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  }
+}

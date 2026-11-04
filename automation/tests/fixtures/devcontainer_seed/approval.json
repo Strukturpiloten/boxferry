@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-11-04T13:46:38.181647+00:00",
+  "source": "GitHub REST API exact recorded main commits and regular manifest/selected-policy blobs, independently reread before registry approval",
+  "review_decision": "approve_exact_actual_main_policy_hashes_for_seed_registry_only",
+  "review_issue": "https://github.com/Strukturpiloten/boxferry/issues/569",
+  "review_evidence_sha256": "5729a131d0f7a653f087bbc3bc13c3bb3ac9947eb0f536b8151a3b4838d82773",
+  "snapshot_proof_sha256": "bbfb541c58ecafb127b2f292a4d86e8854587e23c75a6618363cbbab7d5dd65b",
+  "limits": [
+    "Historical approved policy bytes, not moving main references or future draft approval.",
+    "No candidate execution, native image/App qualification, consumer activation or publication evidence."
+  ],
+  "policies": [
+    {
+      "repository": "Strukturpiloten/boxferry",
+      "head": "2b131a7d87b3cd10f7db47a8d11cab824ef5f3e5",
+      "policy_path": "scripts/shared-validation-policy.json",
+      "policy_fixture": "boxferry-policy.json.txt",
+      "policy_blob": "061bd6582fb4cfad8bb09b47be9673f1d99c158d",
+      "policy_mode": "100644",
+      "policy_sha256": "b83045f7d6b17c8874f414536e9d8aa87ddb9e957df236c3f70501bab936cb52",
+      "policy_bytes": 3606,
+      "schema": 3,
+      "jobs": [
+        "canonical-artifact-integrity",
+        "kubernetes-artifact-integrity",
+        "compose-provider-integrity",
+        "automation",
+        "release-binaries",
+        "rust",
+        "msrv",
+        "dependencies",
+        "documentation",
+        "release-metadata",
+        "semver-release-type",
+        "semver",
+        "coverage",
+        "migration-readiness",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["automation", "documentation", "lockfile-release-age"],
+        "executable-docs": ["automation", "documentation", "lockfile-release-age"],
+        "rust-source": [
+          "canonical-artifact-integrity",
+          "kubernetes-artifact-integrity",
+          "compose-provider-integrity",
+          "automation",
+          "release-binaries",
+          "rust",
+          "msrv",
+          "dependencies",
+          "release-metadata",
+          "semver-release-type",
+          "semver",
+          "coverage",
+          "migration-readiness",
+          "lockfile-release-age"
+        ]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "boxferry-automation.json.txt",
+      "manifest_blob": "0555c9e3a5038050f9d00f77ddeca3000ce18ed5",
+      "manifest_mode": "100644",
+      "automation_revision": "322024da130587ba14ea9f7eb499e5f41a07e43d",
+      "rejected_future_draft_sha256": null
+    },
+    {
+      "repository": "Strukturpiloten/compose-lens",
+      "head": "7fd59faf53464779b2c79a83bea0b68233b92bf9",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "compose-lens-policy.json.txt",
+      "policy_blob": "220c882cd47a8b3539cf5b7fe03446c292d57e91",
+      "policy_mode": "100644",
+      "policy_sha256": "514efbfda2d38bbf5e608d0785e8f0d8be97af1083733b966146a7f0273ab6a4",
+      "policy_bytes": 2255,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "msrv",
+        "dependencies",
+        "api",
+        "documentation",
+        "coverage",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": [
+          "rust",
+          "msrv",
+          "dependencies",
+          "api",
+          "documentation",
+          "coverage",
+          "lockfile-release-age"
+        ]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "compose-lens-automation.json.txt",
+      "manifest_blob": "5445b60281212f1bf11ace02de92dd0c91e2464c",
+      "manifest_mode": "100644",
+      "automation_revision": "322024da130587ba14ea9f7eb499e5f41a07e43d",
+      "rejected_future_draft_sha256": "bd00daae0d4ebfc2afa2f39f2c8ac256102e0f0c16f7c5f47a199ef266b4db62"
+    },
+    {
+      "repository": "Strukturpiloten/podman-lens",
+      "head": "3783b3faf85741b88f571e8bb4fa055a461a3cb8",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "podman-lens-policy.json.txt",
+      "policy_blob": "9f02505fbc0ff5c403cac20c8ffa1fbb94d55e0f",
+      "policy_mode": "100644",
+      "policy_sha256": "f21647319d0829cca3e36ac2fd43e21595415ab80bdbc5faedce92954d7f96cd",
+      "policy_bytes": 3125,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "coverage",
+        "msrv",
+        "dependencies",
+        "api-release-type",
+        "api",
+        "documentation",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": ["documentation", "lockfile-release-age"]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "podman-lens-automation.json.txt",
+      "manifest_blob": "5445b60281212f1bf11ace02de92dd0c91e2464c",
+      "manifest_mode": "100644",
+      "automation_revision": "322024da130587ba14ea9f7eb499e5f41a07e43d",
+      "rejected_future_draft_sha256": "aa214c642a58e56d4a564488b1d415d268c951e63a2c06ad5b3782fd93e5db00"
+    },
+    {
+      "repository": "Strukturpiloten/quadlet-lens",
+      "head": "e9cae624fc87e0c205a367a47be83ea63f1aa6e6",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "quadlet-lens-policy.json.txt",
+      "policy_blob": "abbc17b0ab9f7a3ca63d96b14992f2deca17be94",
+      "policy_mode": "100644",
+      "policy_sha256": "29aff089e579582fb8ed5eb5e681b6c3f170c61a17bc188b82808b12f7e01ac3",
+      "policy_bytes": 970,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "coverage",
+        "msrv",
+        "dependencies",
+        "api",
+        "documentation",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": [
+          "rust",
+          "coverage",
+          "msrv",
+          "dependencies",
+          "api",
+          "documentation",
+          "lockfile-release-age"
+        ]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "quadlet-lens-automation.json.txt",
+      "manifest_blob": "5445b60281212f1bf11ace02de92dd0c91e2464c",
+      "manifest_mode": "100644",
+      "automation_revision": "322024da130587ba14ea9f7eb499e5f41a07e43d",
+      "rejected_future_draft_sha256": "235861254d94986bb3ce5979312094f580cd9c8f3d8645ace38f259a160d3e17"
+    }
+  ],
+  "raw_sidecars": "Opaque .json.txt sidecars preserve exact captured JSON bytes; native paths, modes and Git blob identities are recorded separately."
+}

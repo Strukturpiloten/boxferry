@@ -706,6 +706,50 @@ def validate_engine(
             )
 
 
+def validate_docker_budget_filesystem(
+    private: Path, docker_root: str, report: dict[str, object]
+) -> None:
+    """Require the monitored directory and resolved hosted Docker store to share st_dev.
+
+    This checks coverage of the existing Budget without rebaselining free space;
+    it establishes no cold-build budget or native qualification evidence.
+    """
+    facts: dict[str, object] = {
+        "reported_docker_root_dir": docker_root,
+        "docker_root_dir": None,
+        "budget_path": None,
+        "budget_device": None,
+        "docker_device": None,
+        "same_filesystem": None,
+    }
+    report["docker_storage"] = facts
+    try:
+        budget = private.resolve(strict=True)
+        facts["budget_path"] = str(budget)
+        budget_stat = budget.stat()
+        facts["budget_device"] = budget_stat.st_dev
+        docker = Path(docker_root).resolve(strict=True)
+        facts["docker_root_dir"] = str(docker)
+        docker_stat = docker.stat()
+        facts["docker_device"] = docker_stat.st_dev
+    except (OSError, ValueError) as error:
+        raise ValidationError(
+            "Hosted Docker budget coverage needs existing observable DockerRootDir and "
+            f"private budget directories on the same filesystem; verify runner storage: {error}"
+        ) from error
+    if not stat.S_ISDIR(budget_stat.st_mode) or not stat.S_ISDIR(docker_stat.st_mode):
+        raise ValidationError(
+            "DockerRootDir and private budget path must be existing directories; "
+            "verify the hosted runner storage layout"
+        )
+    facts["same_filesystem"] = budget_stat.st_dev == docker_stat.st_dev
+    if not facts["same_filesystem"]:
+        raise ValidationError(
+            "DockerRootDir and private budget path use different filesystems; "
+            "use a hosted runner where both existing directories share a filesystem"
+        )
+
+
 def passwd_identity(path: Path, user: str) -> tuple[str, str]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
         raise ValidationError("built image passwd content exceeds its regular-file bound")
@@ -1023,6 +1067,8 @@ def qualify(
         info = _json(commands.call((*engine_argv, "info", "--format", "{{json .}}"), "engine-info"))
         expected_rootless = False if mode == "hosted" else os.geteuid() != 0
         validate_engine(info, selected, ARCHITECTURES[machine], private, rootless=expected_rootless)
+        if selected == "docker" and mode == "hosted":
+            validate_docker_budget_filesystem(private, info["DockerRootDir"], report)
         report["runner"] = {"os": "linux", "architecture": ARCHITECTURES[machine], "mode": mode}
         if selected == "podman":
             observed = info.get("version")
