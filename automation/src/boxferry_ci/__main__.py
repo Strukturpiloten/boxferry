@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 
 from boxferry_ci.contracts import ContractError, exact_sha, object_value, relative_path
-from boxferry_ci.gate import GateFailure, verify_gate
+from boxferry_ci.gate import GateFailure, verify_devcontainer_gate, verify_gate
 from boxferry_ci.planner import Comparison, git, git_text, make_plan, verify_policy_revision
 from boxferry_ci.policy import DEFAULT_TASKS, Policy, Task, load_policy
 from boxferry_ci.runner import RunCancelled, RunResult, protected_values, redact, run
@@ -44,6 +44,11 @@ def _parser() -> argparse.ArgumentParser:
         elif name == "gate":
             command.add_argument("--plan-json", required=True)
             command.add_argument("--needs-json", required=True)
+            command.add_argument(
+                "--devcontainer-validation",
+                action="store_true",
+                help="Require reviewed Dev Container seed/selected exact-candidate evidence.",
+            )
         elif name == "run":
             command.add_argument("--task", required=True)
         else:
@@ -305,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
                 exact_sha(args.head_sha or args.tested_sha, "head SHA"),
                 exact_sha(args.tested_sha, "tested SHA"),
             )
-            results = verify_gate(
+            verifier = verify_devcontainer_gate if args.devcontainer_validation else verify_gate
+            results = verifier(
                 json.loads(args.plan_json),
                 json.loads(args.needs_json),
                 policy,

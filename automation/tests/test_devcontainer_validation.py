@@ -10,6 +10,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,11 @@ class FakeCommands(validation.Commands):
         self.substituted = False
         self.mutate_source: Path | None = None
         self.mutate_ignore = False
+        self.docker_root = private / "docker-store"
+        self.docker_root.mkdir(exist_ok=True)
+        self.checkouts: list[Path] = []
+        self.engine = "docker"
+        self.mode = "hosted"
 
     def call(
         self, argv: tuple[str, ...], stage: str, timeout: int = 30, *, cwd: Path | None = None
@@ -56,10 +62,31 @@ class FakeCommands(validation.Commands):
         if stage == "podman-rootful-prerequisite":
             return "0"
         if stage == "engine-info":
+            if self.engine == "podman":
+                return json.dumps(
+                    {
+                        "host": {
+                            "serviceIsRemote": False,
+                            "arch": "amd64",
+                            "security": {"rootless": self.mode == "local" and os.geteuid() != 0},
+                        },
+                        "store": {
+                            "graphRoot": str(self.private / "store"),
+                            "runRoot": str(self.private / "runroot"),
+                        },
+                        "version": {"Version": "1.2.3"},
+                    }
+                )
             return json.dumps(
-                {"OSType": "linux", "Architecture": "x86_64", "DockerRootDir": "/var/lib/docker"}
+                {
+                    "OSType": "linux",
+                    "Architecture": "x86_64",
+                    "DockerRootDir": str(self.docker_root),
+                }
             )
         if stage == "engine-version":
+            if self.engine == "podman":
+                return json.dumps({"Client": {"Version": "1.2.3", "APIVersion": "1.2.3"}})
             return json.dumps(
                 {
                     "Server": {
@@ -118,6 +145,24 @@ class FakeCommands(validation.Commands):
 
     def git(self, root: Path, *argv: str) -> str:
         return "payload\0"
+
+
+def docker_stat_observer(
+    docker: Path, *, distinct: bool = False, inaccessible: bool = False
+) -> Callable[..., os.stat_result]:
+    original = Path.stat
+
+    def observe(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path == docker and inaccessible:
+            raise PermissionError("Docker store observation denied")
+        result = original(path, follow_symlinks=follow_symlinks)
+        if path == docker and distinct:
+            values = list(result)
+            values[2] = result.st_dev + 1
+            return os.stat_result(values)
+        return result
+
+    return observe
 
 
 class ProducerTests(unittest.TestCase):
@@ -686,8 +731,15 @@ class ProducerTests(unittest.TestCase):
         substituted: bool = False,
         mutate_source: bool = False,
         mutate_ignore: bool = False,
+        docker_root: Path | None = None,
+        engine: str = "docker",
+        mode: str = "hosted",
     ) -> tuple[dict[str, object], FakeCommands]:
         fake = FakeCommands(self.root)
+        fake.engine, fake.mode = engine, mode
+        repository = "podman-lens" if engine == "podman" else "boxferry"
+        if docker_root is not None:
+            fake.docker_root = docker_root
         fake.failure, fake.wrong_image, fake.substituted = failure, wrong_image, substituted
         (self.root / "payload").write_text("held source bytes")
         fake.mutate_source = self.root / "payload" if mutate_source else None
@@ -700,8 +752,13 @@ class ProducerTests(unittest.TestCase):
         def checkout(
             destination: Path, _revision: str, _commands: validation.Commands, _source: str
         ) -> None:
+            fake.checkouts.append(destination)
             destination.mkdir()
             shutil.copyfile(self.root / "payload", destination / "payload")
+
+        def commands(private: Path) -> FakeCommands:
+            fake.private = private
+            return fake
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -709,14 +766,14 @@ class ProducerTests(unittest.TestCase):
                     "os.environ",
                     {
                         "GITHUB_SHA": SHA,
-                        "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+                        "GITHUB_REPOSITORY": f"Strukturpiloten/{repository}",
                         "GITHUB_EVENT_PATH": str(event),
                         "GITHUB_EVENT_NAME": "push",
                     },
                 )
             )
             for name, replacement in (
-                ("Commands", lambda _private: fake),
+                ("Commands", commands),
                 ("_held_revision", lambda *_args, **_kwargs: None),
                 ("_verify_origin", lambda *_args: None),
                 ("fingerprint", actual_fingerprint if mutate_source else lambda *_args: INPUT),
@@ -741,7 +798,7 @@ class ProducerTests(unittest.TestCase):
                 patch.object(validation.shutil, "which", return_value=sys.executable)
             )
             result = validation.qualify(
-                repository="boxferry",
+                repository=repository,
                 candidate=SHA,
                 policy_sha=SHA,
                 automation_sha=AUTOMATION,
@@ -750,10 +807,17 @@ class ProducerTests(unittest.TestCase):
                 automation=self.root,
                 manifest={
                     "schema": 1,
-                    "repositories": {name: SHA for name in validation.ALL_REPOSITORIES},
+                    "repositories": {
+                        name: SHA
+                        for name in (
+                            validation.ALL_REPOSITORIES
+                            if repository == "boxferry"
+                            else (repository,)
+                        )
+                    },
                 },
-                engine="docker",
-                mode="hosted",
+                engine=engine,
+                mode=mode,
                 work=self.root,
                 expected_architecture="amd64",
             )
@@ -825,6 +889,152 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(), "owned by another task")
         self.assertFalse(any(stage == "cleanup-container" for _argv, stage, _timeout in fake.calls))
         self.assertTrue(Path(str(result["retained_private_directory"])).is_dir())
+
+    def test_docker_budget_same_filesystem_records_facts_without_rebaselining(self) -> None:
+        private, docker = self.root / "private", self.root / "daemon"
+        private.mkdir()
+        docker.mkdir()
+        report: dict[str, object] = {}
+        with (
+            patch.object(validation.Budget, "start") as start,
+            patch.object(validation.shutil, "disk_usage") as usage,
+        ):
+            validation.validate_docker_budget_filesystem(private, str(docker), report)
+        start.assert_not_called()
+        usage.assert_not_called()
+        self.assertEqual(
+            report["docker_storage"],
+            {
+                "reported_docker_root_dir": str(docker),
+                "docker_root_dir": str(docker.resolve(strict=True)),
+                "budget_path": str(private.resolve(strict=True)),
+                "budget_device": private.stat().st_dev,
+                "docker_device": docker.stat().st_dev,
+                "same_filesystem": True,
+            },
+        )
+
+    def test_successful_docker_qualification_reports_observed_storage(self) -> None:
+        report, fake = self.simulate()
+        self.assertEqual(report["status"], "success", report)
+        facts = report["docker_storage"]
+        self.assertIsInstance(facts, dict)
+        assert isinstance(facts, dict)
+        self.assertEqual(facts["docker_root_dir"], str(fake.docker_root.resolve(strict=True)))
+        self.assertEqual(facts["budget_device"], self.root.stat().st_dev)
+        self.assertEqual(facts["docker_device"], self.root.stat().st_dev)
+        self.assertIs(facts["same_filesystem"], True)
+        self.assertTrue(fake.checkouts)
+        self.assertFalse(Path(str(facts["budget_path"])).exists())
+        self.assertTrue(fake.docker_root.is_dir())
+
+    def assert_docker_refused_before_preparation(
+        self, report: dict[str, object], fake: FakeCommands
+    ) -> None:
+        self.assertEqual(report["status"], "failure")
+        self.assertEqual(report["cleanup"], "success")
+        self.assertEqual(fake.checkouts, [])
+        self.assertEqual(
+            [stage for _argv, stage, _timeout in fake.calls], ["engine-version", "engine-info"]
+        )
+        self.assertNotIn("retained_private_directory", report)
+
+    def test_distinct_docker_filesystem_fails_before_snapshots_build_and_resource_cleanup(
+        self,
+    ) -> None:
+        docker = self.root / "other-store"
+        docker.mkdir()
+        sentinel = docker / "unrelated-data"
+        sentinel.write_text("preserve daemon data")
+        with patch.object(Path, "stat", docker_stat_observer(docker, distinct=True)):
+            report, fake = self.simulate(docker_root=docker)
+        self.assert_docker_refused_before_preparation(report, fake)
+        self.assertIn("different filesystems", str(report.get("cause")))
+        facts = report["docker_storage"]
+        assert isinstance(facts, dict)
+        self.assertEqual(facts["docker_root_dir"], str(docker.resolve(strict=True)))
+        self.assertNotEqual(facts["budget_device"], facts["docker_device"])
+        self.assertIs(facts["same_filesystem"], False)
+        self.assertEqual(sentinel.read_text(), "preserve daemon data")
+
+    def test_missing_or_non_directory_docker_root_fails_before_preparation(self) -> None:
+        missing, regular = self.root / "missing-store", self.root / "regular-store"
+        regular.write_text("not a directory")
+        for docker, cause in ((missing, "observable"), (regular, "must be existing directories")):
+            with self.subTest(root=docker):
+                report, fake = self.simulate(docker_root=docker)
+                self.assert_docker_refused_before_preparation(report, fake)
+                self.assertIn(cause, str(report.get("cause")))
+                facts = report["docker_storage"]
+                assert isinstance(facts, dict)
+                self.assertIsNone(facts["same_filesystem"])
+                self.assertEqual(facts["reported_docker_root_dir"], str(docker))
+        self.assertFalse(missing.exists())
+        self.assertEqual(regular.read_text(), "not a directory")
+
+    def test_inaccessible_docker_stat_fails_actionably_and_retains_partial_report(self) -> None:
+        docker = self.root / "inaccessible-store"
+        docker.mkdir()
+        with patch.object(Path, "stat", docker_stat_observer(docker, inaccessible=True)):
+            report, fake = self.simulate(docker_root=docker)
+        self.assert_docker_refused_before_preparation(report, fake)
+        self.assertIn("observable", str(report.get("cause")))
+        self.assertIn("observation denied", str(report.get("cause")))
+        facts = report["docker_storage"]
+        assert isinstance(facts, dict)
+        self.assertEqual(facts["docker_root_dir"], str(docker.resolve(strict=True)))
+        self.assertIsInstance(facts["budget_device"], int)
+        self.assertIsNone(facts["docker_device"])
+        self.assertIsNone(facts["same_filesystem"])
+
+    def test_docker_storage_symlink_uses_resolved_target_device_and_report_path(self) -> None:
+        private, docker = self.root / "private", self.root / "real-store"
+        private.mkdir()
+        docker.mkdir()
+        alias = private / "apparent-store"
+        alias.symlink_to(docker, target_is_directory=True)
+        report: dict[str, object] = {}
+        validation.validate_docker_budget_filesystem(private, str(alias), report)
+        facts = report["docker_storage"]
+        assert isinstance(facts, dict)
+        self.assertEqual(facts["docker_root_dir"], str(docker))
+        self.assertIs(facts["same_filesystem"], True)
+        with (
+            patch.object(Path, "stat", docker_stat_observer(docker, distinct=True)),
+            self.assertRaisesRegex(validation.ValidationError, "different filesystems"),
+        ):
+            validation.validate_docker_budget_filesystem(private, str(alias), report)
+        facts = report["docker_storage"]
+        assert isinstance(facts, dict)
+        self.assertEqual(facts["docker_root_dir"], str(docker))
+        self.assertIs(facts["same_filesystem"], False)
+
+    def test_private_budget_path_must_also_be_an_existing_observable_directory(self) -> None:
+        docker = self.root / "daemon"
+        docker.mkdir()
+        missing, regular = self.root / "missing-budget", self.root / "regular-budget"
+        regular.write_text("not a directory")
+        for private in (missing, regular):
+            with self.subTest(private=private), self.assertRaises(validation.ValidationError):
+                validation.validate_docker_budget_filesystem(private, str(docker), {})
+        with (
+            patch.object(Path, "stat", docker_stat_observer(docker, inaccessible=True)),
+            self.assertRaisesRegex(validation.ValidationError, "observable"),
+        ):
+            validation.validate_docker_budget_filesystem(docker, str(docker), {})
+
+    def test_hosted_and_local_podman_do_not_apply_docker_storage_guard(self) -> None:
+        for mode in ("hosted", "local"):
+            with (
+                self.subTest(mode=mode),
+                patch.object(validation, "prepare_hosted_podman", return_value={"fixture": True}),
+                patch.object(validation, "validate_docker_budget_filesystem") as guard,
+            ):
+                report, _fake = self.simulate(engine="podman", mode=mode)
+                self.assertEqual(report["status"], "success", report)
+                self.assertEqual(report["engine"], "podman")
+                self.assertNotIn("docker_storage", report)
+                guard.assert_not_called()
 
     def test_disk_initial_growth_and_reserve_boundaries(self) -> None:
         for free in (12 * validation.GIB - 1, 0):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from boxferry_ci.contracts import ContractError, exact_sha, object_value, strings
+from boxferry_ci.devcontainer_seed import DEVCONTAINER_JOB, require_devcontainer_policy
 from boxferry_ci.planner import PLAN_SCHEMA, Comparison
 from boxferry_ci.policy import Policy
 
@@ -99,4 +100,46 @@ def verify_gate(
         results.append((job, result))
     if failures:
         raise GateFailure("; ".join(failures))
+    return results
+
+
+def _devcontainer_receipt(outcome: dict[str, object], tested_sha: str) -> None:
+    result = outcome.get("result")
+    if not isinstance(result, str) or result not in {"success", "failure", "cancelled", "skipped"}:
+        raise ContractError(f"{DEVCONTAINER_JOB} has a missing or unknown result")
+    if result != "success":
+        raise GateFailure(f"selected {DEVCONTAINER_JOB} concluded {result}")
+    outputs = object_value(outcome.get("outputs"), f"{DEVCONTAINER_JOB} outputs")
+    candidate = exact_sha(outputs.get("candidate_sha"), "Dev Container candidate receipt")
+    if candidate != tested_sha:
+        raise ContractError("Dev Container receipt does not identify the exact tested candidate")
+
+
+def verify_devcontainer_gate(
+    plan_value: object,
+    needs_value: object,
+    policy: Policy,
+    comparison: Comparison,
+    *,
+    expected_plan: dict[str, object],
+) -> list[tuple[str, str]]:
+    """Keep the trusted gate intact and bind its image prerequisite to this candidate.
+
+    An approved pre-seed policy permits precisely one supplemental dependency;
+    it never changes the plan or any original job selection or outcome rule.
+    """
+    seed = DEVCONTAINER_JOB not in policy.jobs
+    require_devcontainer_policy(policy, seed=seed)
+    needs = object_value(needs_value, "aggregate job dependencies")
+    original = dict(needs)
+    if seed:
+        image = original.pop(DEVCONTAINER_JOB, None)
+    else:
+        image = original.get(DEVCONTAINER_JOB)
+    results = verify_gate(plan_value, original, policy, comparison, expected_plan=expected_plan)
+    outcome = object_value(image, f"{DEVCONTAINER_JOB} outcome")
+    if seed or outcome.get("result") == "success":
+        _devcontainer_receipt(outcome, comparison.tested_sha)
+    if seed:
+        results.append((DEVCONTAINER_JOB, "success"))
     return results
