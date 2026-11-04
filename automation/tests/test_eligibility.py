@@ -631,11 +631,14 @@ class EligibilityTests(unittest.TestCase):
                 }
             }
         }
-        self.api.graph["data"]["repository"]["mergeQueue"]["configuration"] = {
-            "maximumEntriesToBuild": 1,
-            "maximumEntriesToMerge": 1,
-        }
+        self.api.responses["rules/branches/main?per_page=100&page=1"] = [self.queue_rule()]
         self.api.responses[f"compare/main...{HEAD}"] = {"merge_base_commit": {"sha": BASE}}
+
+    def queue_rule(self) -> dict[str, Any]:
+        return {
+            "type": "merge_queue",
+            "parameters": {"max_entries_to_build": 1, "max_entries_to_merge": 1},
+        }
 
     def node(self, number: int = 17, head: str = HEAD, source: str = SOURCE) -> dict[str, Any]:
         return {
@@ -729,11 +732,221 @@ class EligibilityTests(unittest.TestCase):
 
     def test_changed_queue_limits_fail_explicitly(self) -> None:
         self.queue([self.node()])
-        self.api.graph["data"]["repository"]["mergeQueue"]["configuration"][
-            "maximumEntriesToBuild"
+        self.api.responses["rules/branches/main?per_page=100&page=1"][0]["parameters"][
+            "max_entries_to_build"
         ] = 2
         with self.assertRaisesRegex(subject.EligibilityError, "one-entry queue"):
             subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_queue_reads_effective_rules_and_only_exact_entries_graphql(self) -> None:
+        self.queue([self.node()])
+        with (
+            patch.object(self.api, "items", wraps=self.api.items) as items,
+            patch.object(self.api, "request", wraps=self.api.request) as request,
+        ):
+            self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+        items.assert_called_once_with("rules/branches/main?per_page=100&page=1")
+        request.assert_called_once_with(
+            "POST",
+            "/graphql",
+            {
+                "query": (
+                    "query($owner:String!,$name:String!,$branch:String!){"
+                    "repository(owner:$owner,name:$name){mergeQueue(branch:$branch){"
+                    "entries(first:100){totalCount nodes{baseCommit{oid} "
+                    "headCommit{oid} pullRequest{number headRefOid}}}}}}"
+                ),
+                "variables": {"owner": "Strukturpiloten", "name": "boxferry", "branch": "main"},
+            },
+        )
+
+    def test_queue_limits_use_metadata_endpoint_with_encoded_exact_branch(self) -> None:
+        api = subject.GitHub(REPOSITORY, "never-print-this-token")
+        with patch.object(api, "request", return_value=[self.queue_rule()]) as request:
+            subject.require_single_entry_queue(api, "release/next")
+        request.assert_called_once_with(
+            "GET", f"/repos/{REPOSITORY}/rules/branches/release%2Fnext?per_page=100&page=1"
+        )
+
+    def test_queue_rules_reject_nonarray_and_malformed_entries(self) -> None:
+        api = subject.GitHub(REPOSITORY, "never-print-this-token")
+        for rules in (None, {}, "private-text", [None], [1], ["private-text"], [{}], [{"type": 1}]):
+            with (
+                self.subTest(rules=rules),
+                patch.object(api, "request", return_value=rules),
+                self.assertRaises(subject.EligibilityError),
+            ):
+                subject.require_single_entry_queue(api, "main")
+
+    def test_queue_rules_require_one_unambiguous_active_queue(self) -> None:
+        for rules in ([], [{"type": "required_status_checks"}], [self.queue_rule()] * 2):
+            self.queue([self.node()])
+            self.api.responses["rules/branches/main?per_page=100&page=1"] = rules
+            with (
+                self.subTest(rules=rules),
+                self.assertRaisesRegex(subject.EligibilityError, "exactly one active merge queue"),
+            ):
+                subject.queue_candidate(self.api, HEAD, "main")
+            self.assertEqual(self.api.requested, [])
+
+    def test_queue_limits_reject_missing_malformed_boolean_and_nonone_values(self) -> None:
+        for key in ("max_entries_to_build", "max_entries_to_merge"):
+            for value in (None, False, True, 1.0, "1", 0, 2, -1, [], {}):
+                self.queue([self.node()])
+                rule = self.api.responses["rules/branches/main?per_page=100&page=1"][0]
+                if value is None:
+                    del rule["parameters"][key]
+                else:
+                    rule["parameters"][key] = value
+                with (
+                    self.subTest(key=key, value=value),
+                    self.assertRaisesRegex(subject.EligibilityError, "one-entry queue"),
+                ):
+                    subject.queue_candidate(self.api, HEAD, "main")
+        for parameters in (None, [], "private-text", 1):
+            self.queue([self.node()])
+            self.api.responses["rules/branches/main?per_page=100&page=1"][0]["parameters"] = (
+                parameters
+            )
+            with self.subTest(parameters=parameters), self.assertRaises(subject.EligibilityError):
+                subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_queue_rule_pagination_boundary_fails_without_prefix_authorization(self) -> None:
+        for size in (99, 100, 101):
+            self.queue([self.node()])
+            self.api.responses["rules/branches/main?per_page=100&page=1"] = [
+                *[{"type": "required_status_checks"}] * (size - 1),
+                self.queue_rule(),
+            ]
+            with self.subTest(size=size):
+                if size == 99:
+                    self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+                else:
+                    with self.assertRaisesRegex(subject.EligibilityError, "truncated"):
+                        subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_missing_or_failed_effective_rules_never_falls_back_to_queue_configuration(
+        self,
+    ) -> None:
+        self.queue([self.node()])
+        self.api.graph["data"]["repository"]["mergeQueue"]["configuration"] = {
+            "maximumEntriesToBuild": 1,
+            "maximumEntriesToMerge": 1,
+        }
+        del self.api.responses["rules/branches/main?per_page=100&page=1"]
+        with self.assertRaises(subject.MissingResource):
+            subject.queue_candidate(self.api, HEAD, "main")
+        with patch.object(self.api, "items", side_effect=subject.EligibilityError("HTTP 403")):
+            with self.assertRaisesRegex(subject.EligibilityError, "HTTP 403"):
+                subject.queue_candidate(self.api, HEAD, "main")
+        self.assertEqual(self.api.requested, [])
+
+    def test_graphql_error_rejects_partial_valid_data_and_projects_closed_identifiers(self) -> None:
+        self.queue([self.node()])
+        self.api.graph["errors"] = [
+            {
+                "type": "FORBIDDEN",
+                "message": "secret-token\n::error::private-text",
+                "extensions": {"code": "FORBIDDEN", "private": "secret-token"},
+                "path": ["repository", "mergeQueue", "entries", "nodes", 0, "headCommit", "oid"],
+            }
+        ]
+        with self.assertRaises(subject.EligibilityError) as raised:
+            subject.queue_candidate(self.api, HEAD, "main")
+        self.assertEqual(
+            str(raised.exception),
+            "authoritative merge queue metadata is unavailable: "
+            "type=FORBIDDEN,code=FORBIDDEN,field=ENTRY_HEAD",
+        )
+
+    def test_present_empty_or_malformed_graphql_errors_cannot_authorize_valid_data(self) -> None:
+        for errors in (False, {}, None, [], "", 0):
+            self.queue([self.node()])
+            self.api.graph["errors"] = errors
+            with (
+                self.subTest(errors=errors),
+                self.assertRaisesRegex(subject.EligibilityError, "graphql=INVALID_ERRORS"),
+            ):
+                subject.queue_candidate(self.api, HEAD, "main")
+        self.queue([self.node()])
+        self.assertNotIn("errors", self.api.graph)
+        self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+
+    def test_graphql_error_diagnostics_are_bounded_and_never_echo_untrusted_fields(self) -> None:
+        for error in (
+            None,
+            "private-text",
+            [],
+            {},
+            {"type": "private-text", "extensions": {"code": "secret-token"}, "path": ["private"]},
+            {"type": [], "extensions": [], "path": [{"secret": "token"}]},
+            {"type": {}, "extensions": {"code": []}, "path": ["repository", -1]},
+            {"path": ["repository", "mergeQueue", "entries", "nodes", True]},
+            {"path": ["repository"] * 100},
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(
+                    subject.queue_graphql_errors({"errors": [error]}),
+                    "type=UNKNOWN,code=UNKNOWN,field=UNKNOWN",
+                )
+        for response, expected in (
+            (None, "graphql=INVALID_RESPONSE"),
+            ({}, "graphql=INVALID_ERRORS"),
+            ({"errors": "secret-token"}, "graphql=INVALID_ERRORS"),
+            ({"errors": []}, "graphql=INVALID_ERRORS"),
+        ):
+            self.assertEqual(subject.queue_graphql_errors(response), expected)
+        summary = subject.queue_graphql_errors({"errors": [{"message": "secret-token"}] * 10000})
+        self.assertLess(len(summary), 500)
+        self.assertEqual(summary.count("type=UNKNOWN"), 8)
+        self.assertTrue(summary.endswith("additional_errors=OMITTED"))
+
+    def test_graphql_error_known_schema_code_and_source_pr_field_are_actionable(self) -> None:
+        self.assertEqual(
+            subject.queue_graphql_errors(
+                {
+                    "errors": [
+                        {
+                            "extensions": {"code": "undefinedField"},
+                            "path": [
+                                "repository",
+                                "mergeQueue",
+                                "entries",
+                                "nodes",
+                                4,
+                                "pullRequest",
+                                "headRefOid",
+                            ],
+                        }
+                    ]
+                }
+            ),
+            "type=UNKNOWN,code=undefinedField,field=SOURCE_PR",
+        )
+
+    def test_queue_graphql_malformed_payload_fails_closed(self) -> None:
+        for payload in (None, {}, {"repository": None}, {"repository": {"mergeQueue": None}}):
+            self.queue([self.node()])
+            self.api.graph["data"] = payload
+            with self.subTest(payload=payload), self.assertRaises(subject.EligibilityError):
+                subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_queue_graphql_malformed_and_truncated_entries_fail_closed(self) -> None:
+        for entries in (
+            None,
+            [],
+            {},
+            {"totalCount": True, "nodes": [self.node()]},
+            {"totalCount": -1, "nodes": []},
+            {"totalCount": 101, "nodes": []},
+            {"totalCount": 2, "nodes": [self.node()]},
+            {"totalCount": 1, "nodes": "private-text"},
+            {"totalCount": 1, "nodes": [None]},
+        ):
+            self.queue([self.node()])
+            self.api.graph["data"]["repository"]["mergeQueue"]["entries"] = entries
+            with self.subTest(entries=entries), self.assertRaises(subject.EligibilityError):
+                subject.queue_candidate(self.api, HEAD, "main")
 
     def test_multiple_matching_queue_entries_fail_instead_of_blanket_exemption(self) -> None:
         self.queue([self.node(), self.node(18)])

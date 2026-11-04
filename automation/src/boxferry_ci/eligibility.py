@@ -527,13 +527,98 @@ def pr_candidate(api: GitHub, number: int, *, expected_target: str | None = None
     return Candidate(base, merge, number, source, actor_login, actor_type, "pull_request")
 
 
+def require_single_entry_queue(api: GitHub, default_branch: str) -> None:
+    """Read effective active rules using the documented Metadata:read endpoint."""
+    rules = api.items(f"rules/branches/{quote(default_branch, safe='')}?per_page=100&page=1")
+    # A full first page may omit another applicable rule. Do not authorize from
+    # a prefix; this bounded reader deliberately rejects that pagination boundary.
+    if len(rules) >= 100:
+        raise EligibilityError("effective branch rules may be truncated or exceed their bound")
+    if not all(isinstance(rule, dict) and isinstance(rule.get("type"), str) for rule in rules):
+        raise EligibilityError("effective branch rule metadata is malformed")
+    queues = [rule for rule in rules if rule["type"] == "merge_queue"]
+    if len(queues) != 1:
+        raise EligibilityError("effective branch rules require exactly one active merge queue")
+    parameters = queues[0].get("parameters")
+    if not isinstance(parameters, dict) or any(
+        type(parameters.get(key)) is not int or parameters[key] != 1
+        for key in ("max_entries_to_build", "max_entries_to_merge")
+    ):
+        raise EligibilityError("dependency eligibility requires reviewed one-entry queue limits")
+
+
+def queue_graphql_errors(response: object) -> str:
+    """Project bounded closed error identifiers, never API messages or native text."""
+    if not isinstance(response, dict):
+        return "graphql=INVALID_RESPONSE"
+    errors = response.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return "graphql=INVALID_ERRORS"
+    known_types = {
+        "FORBIDDEN",
+        "UNAUTHORIZED",
+        "UNAUTHENTICATED",
+        "NOT_FOUND",
+        "RATE_LIMITED",
+        "UNPROCESSABLE",
+        "GRAPHQL_VALIDATION_FAILED",
+        "INTERNAL",
+    }
+    known_codes = known_types | {
+        "undefinedField",
+        "argumentNotAccepted",
+        "selectionMismatch",
+        "missingRequiredArguments",
+        "variableMismatch",
+    }
+    fields = {
+        ("repository",): "REPOSITORY",
+        ("repository", "mergeQueue"): "QUEUE",
+        ("repository", "mergeQueue", "entries"): "ENTRIES",
+        ("repository", "mergeQueue", "entries", "totalCount"): "ENTRY_COUNT",
+        ("repository", "mergeQueue", "entries", "nodes"): "ENTRY",
+        ("repository", "mergeQueue", "entries", "nodes", "baseCommit"): "ENTRY_BASE",
+        ("repository", "mergeQueue", "entries", "nodes", "baseCommit", "oid"): "ENTRY_BASE",
+        ("repository", "mergeQueue", "entries", "nodes", "headCommit"): "ENTRY_HEAD",
+        ("repository", "mergeQueue", "entries", "nodes", "headCommit", "oid"): "ENTRY_HEAD",
+        ("repository", "mergeQueue", "entries", "nodes", "pullRequest"): "SOURCE_PR",
+        ("repository", "mergeQueue", "entries", "nodes", "pullRequest", "number"): "SOURCE_PR",
+        ("repository", "mergeQueue", "entries", "nodes", "pullRequest", "headRefOid"): "SOURCE_PR",
+    }
+    summaries: list[str] = []
+    for error in errors[:8]:
+        kind, code, field = "UNKNOWN", "UNKNOWN", "UNKNOWN"
+        if isinstance(error, dict):
+            value = error.get("type")
+            if isinstance(value, str) and value in known_types:
+                kind = value
+            extensions = error.get("extensions")
+            value = extensions.get("code") if isinstance(extensions, dict) else None
+            if isinstance(value, str) and value in known_codes:
+                code = value
+            path = error.get("path")
+            if (
+                isinstance(path, list)
+                and 1 <= len(path) <= 8
+                and all(
+                    isinstance(part, str) or (type(part) is int and 0 <= part < 100)
+                    for part in path
+                )
+            ):
+                field = fields.get(tuple(part for part in path if isinstance(part, str)), "UNKNOWN")
+        summaries.append(f"type={kind},code={code},field={field}")
+    if len(errors) > 8:
+        summaries.append("additional_errors=OMITTED")
+    return "; ".join(summaries)
+
+
 def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
     """Bind a one-entry group to live queue metadata and the original PR author."""
     owner, name = api.repository.split("/")
+    require_single_entry_queue(api, default_branch)
     query = (
         "query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name){"
-        "mergeQueue(branch:$branch){configuration{maximumEntriesToBuild maximumEntriesToMerge} "
-        "entries(first:100){totalCount nodes{baseCommit{oid} "
+        "mergeQueue(branch:$branch){entries(first:100){totalCount nodes{baseCommit{oid} "
         "headCommit{oid} pullRequest{number headRefOid}}}}}}"
     )
     data = api.request(
@@ -541,22 +626,27 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
         "/graphql",
         {"query": query, "variables": {"owner": owner, "name": name, "branch": default_branch}},
     )
-    if not isinstance(data, dict) or data.get("errors"):
-        raise EligibilityError("authoritative merge queue metadata is unavailable")
-    queue = data.get("data", {}).get("repository", {}).get("mergeQueue")
+    if not isinstance(data, dict) or "errors" in data:
+        raise EligibilityError(
+            "authoritative merge queue metadata is unavailable: " + queue_graphql_errors(data)
+        )
+    payload = data.get("data")
+    repository = payload.get("repository") if isinstance(payload, dict) else None
+    queue = repository.get("mergeQueue") if isinstance(repository, dict) else None
     if not isinstance(queue, dict):
         raise EligibilityError("authoritative merge queue metadata is absent")
-    configuration = queue.get("configuration")
-    if (
-        not isinstance(configuration, dict)
-        or configuration.get("maximumEntriesToBuild") != 1
-        or configuration.get("maximumEntriesToMerge") != 1
-    ):
-        raise EligibilityError("dependency eligibility requires reviewed one-entry queue limits")
     entries = queue.get("entries", {})
+    if not isinstance(entries, dict):
+        raise EligibilityError("merge queue entry metadata is malformed")
     nodes = entries.get("nodes", [])
     total = entries.get("totalCount")
-    if type(total) is not int or total > 100 or len(nodes) != total:
+    if (
+        type(total) is not int
+        or not 0 <= total <= 100
+        or not isinstance(nodes, list)
+        or len(nodes) != total
+        or not all(isinstance(node, dict) for node in nodes)
+    ):
         raise EligibilityError("merge queue entry metadata is truncated or exceeds its bound")
     base = target_revision(api, default_branch)
     require_ancestor(api, base, head)
