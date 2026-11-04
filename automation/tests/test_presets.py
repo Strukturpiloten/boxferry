@@ -206,9 +206,9 @@ class PresetTests(unittest.TestCase):
     def test_automatic_policy_including_major_compiler_image_checksum(self) -> None:
         assert_automatic_policy(_shared())
 
-    def test_explicit_rebase_policy_keeps_candidate_checks_fresh_after_age_holds(self) -> None:
+    def test_common_queue_auto_and_pre_adoption_local_policy_remain_distinct(self) -> None:
         local = json.loads((ROOT / ".github/renovate.json").read_text())
-        for config in (_shared(), local):
+        for config, expected in ((_shared(), "auto"), (local, "behind-base-branch")):
             result = effective(
                 config,
                 {
@@ -218,7 +218,7 @@ class PresetTests(unittest.TestCase):
                     "updateType": "minor",
                 },
             )
-            self.assertEqual(result["rebaseWhen"], "behind-base-branch")
+            self.assertEqual(result["rebaseWhen"], expected)
             self.assertEqual(result["minimumReleaseAge"], "3 days")
 
     def test_devcontainer_node_image_couples_source_without_changing_age_or_other_owners(
@@ -679,7 +679,7 @@ class NativePresetTests(unittest.TestCase):
   const rust = JSON.parse(fs.readFileSync(root + "/renovate-presets/rust.json"));
   const { resolveConfigPresets } = require(base + "config/presets/index.js");
   const { config: resolvedCommon } = await resolveConfigPresets(common);
-  assert.equal(resolvedCommon.rebaseWhen, "behind-base-branch");
+  assert.equal(resolvedCommon.rebaseWhen, "auto");
   const shared = {
     ...resolvedCommon,
     packageRules: [...resolvedCommon.packageRules, ...rust.packageRules],
@@ -858,7 +858,7 @@ class NativePresetTests(unittest.TestCase):
       assert.equal(result.groupName, group);
       assert.equal(result.automerge, true);
       assert.equal(result.dependencyDashboardApproval, false);
-      assert.equal(result.rebaseWhen, "behind-base-branch");
+      assert.equal(result.rebaseWhen, "auto");
     }
     const defaults = require(base+"config/defaults.js").getConfig();
     const { generateBranchName } = require(base+"workers/repository/updates/branch-name.js");

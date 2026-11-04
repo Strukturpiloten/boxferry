@@ -102,20 +102,77 @@ jobs:
         env:
           ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
         run: test "$(git -C _automation rev-parse HEAD)" = "${ADMISSION_SHA}"
+      - name: Detect the immutable admission reader capability
+        if: steps.policy.outputs.required == 'true'
+        id: reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          capability="$(python3 _proposed_automation/automation/src/boxferry_ci/eligibility.py reader-contract \
+            --module-path _automation/automation/src/boxferry_ci/eligibility.py)"
+          test "${capability}" = 1 || test "${capability}" = 2
+          printf 'contract=%s\n' "${capability}" >> "${GITHUB_OUTPUT}"
       - name: Install A's canonical locked Python tooling
         if: steps.policy.outputs.required == 'true'
         uses: ./_automation/.github/actions/shared-python
+      # This artifact is an untrusted run/attempt-scoped hint, never execution provenance.
+      - name: Record a bounded candidate hint for the trusted service
+        if: github.event_name == 'pull_request' && steps.policy.outputs.required == 'true'
+        shell: bash
+        env:
+          HINT_CANDIDATE: ${{ github.sha }}
+          HINT_BASE: ${{ github.event.pull_request.base.sha }}
+          HINT_SOURCE: ${{ github.event.pull_request.head.sha }}
+          HINT_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_HINT'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema": 1, "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "pull_request": int(os.environ["HINT_PR"]),
+              "candidate_sha": os.environ["HINT_CANDIDATE"],
+              "base_sha": os.environ["HINT_BASE"],
+              "source_head_sha": os.environ["HINT_SOURCE"],
+          }
+          Path(os.environ["RUNNER_TEMP"], "dependency-candidate-hint.json").write_text(
+              json.dumps(payload) + "\n", encoding="utf-8"
+          )
+          PY_HINT
+      - name: Retain the untrusted candidate hint
+        if: github.event_name == 'pull_request' && steps.policy.outputs.required == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dependency-candidate-hint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency-candidate-hint.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Read the exact candidate receipt under A's policy
         if: steps.policy.outputs.required == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
+          EXPECTED_BASE_SHA: ${{ inputs.policy_sha }}
+          READER_CONTRACT: ${{ steps.reader.outputs.contract }}
         shell: bash
         run: |
+          set -euo pipefail
+          expected_base=()
+          case "${READER_CONTRACT}" in
+            1) ;; # The unchanged legacy parser has no expected-base option.
+            2) expected_base=(--expected-base-sha "${EXPECTED_BASE_SHA}") ;;
+            *) echo 'Unknown immutable admission reader contract.' >&2; exit 2 ;;
+          esac
           uv run --locked --project _automation/automation python -m boxferry_ci.eligibility wait \
             --repository "${GITHUB_REPOSITORY}" --candidate-sha "${CANDIDATE_SHA}" \
-            --implementation-revision "${ADMISSION_SHA}" --summary "${GITHUB_STEP_SUMMARY}"
+            --implementation-revision "${ADMISSION_SHA}" "${expected_base[@]}" \
+            --summary "${GITHUB_STEP_SUMMARY}"
       - name: Expose successful admission evidence without claiming B-policy approval
         id: result
         env:

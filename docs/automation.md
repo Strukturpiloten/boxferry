@@ -4,9 +4,11 @@ BoxFerry owns the shared [automation package](../automation/), [reusable workflo
 
 ## Revisions and admission
 
-Shared workflow callers bind three distinct immutable identities. `candidate_sha` is the exact tested `github.sha`; `automation_sha` is the BoxFerry implementation and must match the full SHA in the reusable workflow reference; `policy_sha` is the trusted pull request or merge queue base, or the candidate for other events. The common source setup validates the caller and held checkouts. Policy paths are repository-relative and validated against the trusted checkout. See [shared-source](../.github/actions/shared-source/action.yml) and the [shared workflows](../.github/workflows/) for their individual inputs.
+Shared workflow callers bind three distinct immutable identities. `candidate_sha` is the exact tested `github.sha`; `automation_sha` is the BoxFerry implementation and must match the full SHA in the reusable workflow reference; `policy_sha` is the trusted pull request or merge queue base, or the candidate for other events. Policy paths are repository-relative and validated against the trusted checkout. See [shared-source](../.github/actions/shared-source/action.yml) and the [shared workflows](../.github/workflows/) for inputs.
 
 Dependency admission for a pull request or merge queue reads the manifest from the exact trusted base Git object. If that base selects automation A while the candidate proposes B, the [admission reader](../.github/workflows/shared-dependency-wait.yml) checks the exact candidate using A and reports A as its implementation. B is validated by other CI; it does not replace the trusted admission authority before merge. The base manifest must already exist; there is no candidate fallback. Push, manual and release validation do not add an age-admission hold. See [admission.py](../automation/src/boxferry_ci/admission.py) and [eligibility.py](../automation/src/boxferry_ci/eligibility.py) for the contract and failure behavior.
+
+[ADR 0095](decisions/0095-bounded-older-base-dependency-recovery.md) defines exact-base readers, historical/current reports, finite effects and activation.
 
 ## Validation and repository boundaries
 
@@ -16,7 +18,7 @@ The [Dev Container seed adapter](../automation/src/boxferry_ci/devcontainer_seed
 
 Main pushes, manual CI, release validation and the local [complete gate](../scripts/check-all.sh) remain complete. Change-aware local feedback and formatting or linting alone do not replace that gate. During adoption, consumers must preserve complete existing task behavior when trusted policy lacks new definitions.
 
-The shared [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) define the canonical uv, Ruff and ty tooling. The stable interface-1 local loader verifies the pinned source, then delegates uv setup and locked execution to that shared implementation. Consumer checks cover the loader interface rather than equality with the changing implementation. Repository-owned feature checks, coverage thresholds, native suites, binaries and evidence remain in their respective repositories. Compose provider, Podman observation, Quadlet generator, Docker native and BoxFerry application checks remain distinct; runtime selection, resource limits, privacy and cleanup follow [ADR 0079](decisions/0079-native-test-runtime-selection.md) and each owning harness.
+The shared [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) define the canonical uv, Ruff and ty tooling. The stable interface-1 local loader verifies the pinned source, then delegates uv setup and locked execution to that shared implementation. Repository-owned feature checks, coverage thresholds, native suites, binaries and evidence remain in their respective repositories. Compose provider, Podman observation, Quadlet generator, Docker native and BoxFerry application checks remain distinct; runtime selection, resource limits, privacy and cleanup follow [ADR 0079](decisions/0079-native-test-runtime-selection.md) and each owning harness.
 
 See [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md) for SemVer tooling and age checks.
 
@@ -34,9 +36,8 @@ The root [agent contract](../AGENTS.md) governs all paths; scoped additions for
 [automation](../automation/AGENTS.md), [workflows](../.github/AGENTS.md), and
 [crates](../crates/AGENTS.md) supplement it.
 
-For focused Python feedback, use `uv run --locked --project automation ruff check automation`
-and `uv run --locked --project automation ty check --project automation`. The complete gate runs
-automation and native-policy tests with their required setup.
+For Python feedback, use `uv run --locked --project automation ruff check automation`
+and `uv run --locked --project automation ty check --project automation`. The complete gate includes automation and native-policy tests.
 
 Guidance ideas were reviewed from [Awesome Copilot at 8178d1939a203f691067073dcab2a3f1e14072d3](https://github.com/github/awesome-copilot/tree/8178d1939a203f691067073dcab2a3f1e14072d3)
 ([MIT, copyright GitHub, Inc.](https://github.com/github/awesome-copilot/blob/8178d1939a203f691067073dcab2a3f1e14072d3/LICENSE));

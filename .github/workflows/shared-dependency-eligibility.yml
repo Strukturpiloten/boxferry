@@ -14,8 +14,9 @@ on:
 # Candidate pull_request/merge_group validation receives no write token.
 permissions:
   actions: write
+  checks: read
   contents: read
-  pull-requests: read
+  pull-requests: write
   statuses: write
 
 concurrency:
@@ -55,7 +56,7 @@ jobs:
           uv run --locked --project _automation/automation python -m boxferry_ci.eligibility service \
             --repository "${GITHUB_REPOSITORY}" --implementation-revision "${AUTOMATION_SHA}" \
             --event-name "${GITHUB_EVENT_NAME}" --event-path "${GITHUB_EVENT_PATH}" \
-            --run-id "${GITHUB_RUN_ID}" --output eligibility-evidence/eligibility-state.json \
+            --run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" --output eligibility-evidence/eligibility-state.json \
             --summary "${GITHUB_STEP_SUMMARY}"
       - name: Retain trusted state and candidate reports
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

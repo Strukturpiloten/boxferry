@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "BoxFerry automation interface v1: automatic dependency PRs with compatibility, integrity and age checks. Rebase behind-base branches for fresh candidate checks after age holds; this may run extra CI.",
+  "description": "BoxFerry automation interface v1: automatic dependency PRs with compatibility, integrity and age checks. Preserve unchanged branches behind a merge queue; trusted bounded recovery rechecks historical and current candidates.",
   "extends": ["config:best-practices"],
   "dependencyDashboard": true,
   "dependencyDashboardApproval": false,
@@ -8,7 +8,8 @@
   "automergeType": "pr",
   "platformAutomerge": false,
   "minimumReleaseAge": "3 days",
-  "rebaseWhen": "behind-base-branch",
+  "rebaseWhen": "auto",
+  "rebaseLabel": "rebase",
   "minimumReleaseAgeBehaviour": "timestamp-required",
   "internalChecksFilter": "strict",
   "prConcurrentLimit": 5,

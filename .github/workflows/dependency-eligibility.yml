@@ -13,6 +13,12 @@ permissions:
   statuses: write
 jobs:
   eligibility:
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      pull-requests: write
+      statuses: write
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'merge_group'))
     # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
     uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@322024da130587ba14ea9f7eb499e5f41a07e43d # reviewed bootstrap; no automation release tag exists (ADR 0092)
