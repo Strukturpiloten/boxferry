@@ -48,6 +48,7 @@ class FakeCommands(validation.Commands):
         self.checkouts: list[Path] = []
         self.engine = "docker"
         self.mode = "hosted"
+        self.responses: dict[str, str] = {}
 
     def call(
         self, argv: tuple[str, ...], stage: str, timeout: int = 30, *, cwd: Path | None = None
@@ -55,13 +56,15 @@ class FakeCommands(validation.Commands):
         self.calls.append((argv, stage, timeout))
         if self.failure == stage:
             raise validation.ValidationError(f"{stage} failed")
+        if stage in self.responses:
+            return self.responses[stage]
         if stage == "podman-package-owner":
             return "podman: /usr/bin/podman"
         if stage == "podman-package-version":
             return "4.9.3+ds1-1ubuntu0.1"
         if stage == "podman-rootful-prerequisite":
             return "0"
-        if stage == "engine-info":
+        if stage in {"engine-info", "cleanup-store-identity"}:
             if self.engine == "podman":
                 return json.dumps(
                     {
@@ -119,6 +122,14 @@ class FakeCommands(validation.Commands):
                     }
                 ]
             )
+        if stage == "cleanup-image-list":
+            return IMAGE if self.tag else ""
+        if stage in {
+            "cleanup-store-containers",
+            "cleanup-store-image-mounts",
+            "cleanup-store-container-mounts",
+        }:
+            return "[]"
         if stage.startswith("create-"):
             self.token = argv[argv.index("--label") + 1].split("=", 1)[1]
             return CONTAINER
@@ -414,6 +425,47 @@ class ProducerTests(unittest.TestCase):
             (snapshot / ".dockerignore").write_text("!.git/config\n")
             with self.assertRaisesRegex(ValueError, "ignore changed"):
                 validation.build_context_fingerprint(snapshot, commands, ignores)
+
+    def test_failure_evidence_retains_early_causes_from_both_streams_and_redacts_before_cut(
+        self,
+    ) -> None:
+        private = self.root / "causal-diagnostics"
+        commands = validation.Commands(private)
+        automation = self.root / "outside-private-automation"
+        commands.evidence_paths = (automation,)
+        secret = "synthetic-private-boundary-secret"
+        program = (
+            "import sys; "
+            "print('progress' * 800); "
+            "print('fatal: missing build dependency ' + sys.argv[1]); "
+            "print('stdout-tail' * 800); "
+            "print('error: permission denied at ' + sys.argv[2], file=sys.stderr); "
+            "print('error: Command failed at ' + sys.argv[3], file=sys.stderr); "
+            "print('stack-frame' * 3000, file=sys.stderr); sys.exit(7)"
+        )
+        with patch.dict(os.environ, {"TEST_TOKEN": secret}):
+            with self.assertRaisesRegex(ValueError, "missing build dependency"):
+                commands.call(
+                    (sys.executable, "-c", program, secret, str(private), str(automation)), "build"
+                )
+        evidence = commands.outcomes[-1]["failure_evidence"]
+        self.assertIsInstance(evidence, dict)
+        assert isinstance(evidence, dict)
+        self.assertIn("missing build dependency", str(evidence["stdout"]))
+        self.assertIn("permission denied", str(evidence["stderr"]))
+        encoded = json.dumps(commands.outcomes)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn(str(private), encoded)
+        self.assertNotIn(str(automation), encoded)
+        self.assertLess(len(encoded.encode()), 10000)
+        for value in evidence.values():
+            self.assertLessEqual(len(value["excerpt"].encode()), validation.MAX_FAILURE_STREAM)
+            self.assertTrue(value["truncated"])
+        multibyte = "ä" * 253 + secret + "fatal: unavailable dependency\n" + "界" * 4000
+        safe = validation.failure_evidence(validation.redact(multibyte, (secret,)))
+        self.assertLessEqual(len(str(safe["excerpt"]).encode()), validation.MAX_FAILURE_STREAM)
+        self.assertNotIn(secret[:8], json.dumps(safe))
+        self.assertIn("unavailable dependency", str(safe))
 
     def test_command_failures_and_budget_monitor_retain_redacted_stage_command_cause(self) -> None:
         private = self.root / "diagnostics"
@@ -734,9 +786,11 @@ class ProducerTests(unittest.TestCase):
         docker_root: Path | None = None,
         engine: str = "docker",
         mode: str = "hosted",
+        responses: dict[str, str] | None = None,
     ) -> tuple[dict[str, object], FakeCommands]:
         fake = FakeCommands(self.root)
         fake.engine, fake.mode = engine, mode
+        fake.responses = responses or {}
         repository = "podman-lens" if engine == "podman" else "boxferry"
         if docker_root is not None:
             fake.docker_root = docker_root
@@ -758,6 +812,13 @@ class ProducerTests(unittest.TestCase):
 
         def commands(private: Path) -> FakeCommands:
             fake.private = private
+            self.addCleanup(shutil.rmtree, private, ignore_errors=True)
+            if engine == "podman":
+                (private / "store").mkdir()
+                if failure == "build":
+                    (private / "store" / "partial-image-layers").write_text(
+                        "incomplete build layers"
+                    )
             return fake
 
         with ExitStack() as stack:
@@ -865,6 +926,128 @@ class ProducerTests(unittest.TestCase):
         result, _fake = self.simulate(wrong_image=True)
         self.assertEqual(result["status"], "failure")
         self.assertIn("native host architecture", str(result.get("cause")))
+
+    def test_failed_build_without_final_tag_cleans_only_its_idle_private_store(self) -> None:
+        sentinel = self.root / "maintainer-store"
+        sentinel.mkdir()
+        (sentinel / "image").write_text("unrelated")
+        report, fake = self.simulate("build", engine="podman", mode="local")
+        self.assertEqual(report["status"], "failure")
+        self.assertEqual(report["cleanup"], "success")
+        self.assertIn("build failed", str(report["cause"]))
+        self.assertEqual(report["cleanup_image_tag"], "absent-after-failed-build")
+        self.assertFalse(fake.private.exists())
+        self.assertEqual((sentinel / "image").read_text(), "unrelated")
+        stages = [stage for _argv, stage, _timeout in fake.calls]
+        self.assertNotIn("cleanup-image-identity", stages)
+        self.assertNotIn("cleanup-image-tag", stages)
+        self.assertIn("cleanup-private-store", stages)
+        self.assertFalse((fake.private / "store" / "partial-image-layers").exists())
+        containers = next(
+            argv for argv, stage, _ in fake.calls if stage == "cleanup-store-containers"
+        )
+        self.assertIn("--external", containers)
+        for argv, _stage, _timeout in fake.calls:
+            self.assertNotIn("prune", argv)
+            self.assertNotIn(str(sentinel), argv)
+
+    def test_missing_successful_build_tag_and_unexpected_inspection_errors_fail_cleanup(
+        self,
+    ) -> None:
+        for failure, responses in (
+            ("", {"cleanup-image-list": ""}),
+            ("cleanup-image-list", {}),
+            ("cleanup-image-identity", {}),
+            ("", {"cleanup-image-identity": "not-json"}),
+            ("", {"cleanup-image-identity": json.dumps([{"Id": "sha256:" + "f" * 64}])}),
+            ("", {"cleanup-image-list": "unrelated:tag"}),
+        ):
+            with self.subTest(failure=failure, responses=responses):
+                report, fake = self.simulate(
+                    failure, engine="podman", mode="local", responses=responses
+                )
+                self.assertEqual(report["status"], "failure")
+                self.assertEqual(report["cleanup"], "failure")
+                self.assertTrue(fake.private.exists())
+                self.assertFalse(
+                    any(stage == "cleanup-private-store" for _, stage, _ in fake.calls)
+                )
+
+    def test_exact_qualified_tag_listing_binds_full_image_identity(self) -> None:
+        report, fake = self.simulate(
+            responses={"cleanup-image-list": IMAGE.removeprefix("sha256:")}
+        )
+        self.assertEqual(report["cleanup"], "success")
+        self.assertTrue(fake.tag.startswith("localhost/boxferry-devcontainer:"))
+        argv = next(argv for argv, stage, _ in fake.calls if stage == "cleanup-image-list")
+        self.assertIn("reference=" + fake.tag, argv)
+        self.assertIn("--no-trunc", argv)
+        self.assertEqual(argv[-1], "{{.ID}}")
+
+    def test_private_store_cleanup_rejects_containers_mounts_malformed_and_errors(self) -> None:
+        for stage in (
+            "cleanup-store-containers",
+            "cleanup-store-image-mounts",
+            "cleanup-store-container-mounts",
+        ):
+            for value in ('[{"Id":"external-build-container"}]', "null", "{}", "broken-json"):
+                with self.subTest(stage=stage, value=value):
+                    report, fake = self.simulate(
+                        "build", engine="podman", mode="local", responses={stage: value}
+                    )
+                    self.assertEqual(report["status"], "failure")
+                    self.assertEqual(report["cleanup"], "failure")
+                    self.assertIn("build failed", str(report["cause"]))
+                    self.assertTrue(fake.private.exists())
+                    self.assertFalse(any(s == "cleanup-private-store" for _, s, _ in fake.calls))
+            with self.subTest(stage=stage, error=True):
+                report, fake = self.simulate(stage, engine="podman", mode="local")
+                self.assertEqual(report["cleanup"], "failure")
+                self.assertFalse(any(s == "cleanup-private-store" for _, s, _ in fake.calls))
+
+    def test_private_store_identity_and_delete_errors_remain_failures(self) -> None:
+        for stage, responses in (
+            ("cleanup-store-identity", {}),
+            ("", {"cleanup-store-identity": json.dumps({"host": {}, "store": {}})}),
+            ("cleanup-private-store", {}),
+        ):
+            with self.subTest(stage=stage):
+                report, fake = self.simulate(
+                    stage, engine="podman", mode="local", responses=responses
+                )
+                self.assertEqual(report["status"], "failure")
+                self.assertEqual(report["cleanup"], "failure")
+                self.assertTrue(fake.private.exists())
+
+    def test_store_path_substitution_is_rejected_before_engine_or_delete(self) -> None:
+        private = self.root / "private-idle"
+        private.mkdir()
+        commands = FakeCommands(private)
+        for identity in ((-1, -1),):
+            with self.assertRaisesRegex(ValueError, "substituted"):
+                validation.verify_private_store_idle(
+                    commands, ("podman",), private, "amd64", True, identity
+                )
+        self.assertEqual(commands.calls, [])
+        facts = private.stat()
+        (private / "store").symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "substituted"):
+            validation.verify_private_store_idle(
+                commands, ("podman",), private, "amd64", True, (facts.st_dev, facts.st_ino)
+            )
+        self.assertEqual(commands.calls, [])
+
+    def test_rootless_store_mount_queries_enter_namespace_without_fallback(self) -> None:
+        with patch.object(validation.os, "geteuid", return_value=1000):
+            report, fake = self.simulate("build", engine="podman", mode="local")
+        self.assertEqual(report["cleanup"], "success")
+        for argv, stage, _timeout in fake.calls:
+            if stage in {"cleanup-store-image-mounts", "cleanup-store-container-mounts"}:
+                self.assertEqual(
+                    argv[:3],
+                    (str(fake.private / "podman"), "unshare", str(fake.private / "podman")),
+                )
+                self.assertNotIn("--all", argv)
 
     def test_source_and_generated_context_changes_during_build_are_rejected(self) -> None:
         for change in ("source", "ignore"):
