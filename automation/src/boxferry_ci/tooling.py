@@ -2,13 +2,16 @@
 
 Local, CI and Dev Container wrappers call ``boxferry-ci tools --destination DIR
 --profile core`` (Tombi, shfmt, ShellCheck, Hadolint), ``--profile website`` (all
-six tools), or ``--tools lychee`` for an explicit subset. No shell evaluation,
-PATH fallback, candidate configuration or version discovery occurs here.
+six tools), or ``--tools lychee`` for an explicit subset. Add ``--python-tools``
+(or select it alone) to copy canonical uv/Ruff/ty from this locked shared Python
+environment as standalone executables. No interpreter is replaced. No shell
+execution, PATH fallback or second version inventory is used.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import hashlib
 import json
@@ -21,9 +24,11 @@ import sys
 import tarfile
 import tempfile
 import time
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from http.client import HTTPMessage, IncompleteRead
+from importlib import metadata
 from pathlib import Path, PurePosixPath
 from string import Formatter
 from typing import IO, Any
@@ -508,13 +513,196 @@ def install(
     return selected
 
 
+def _python_versions(project: Path) -> dict[str, str]:
+    """Use existing exact declarations and lock records, never a second inventory."""
+    from boxferry_ci import bootstrap
+
+    documents: list[dict[str, Any]] = []
+    try:
+        for name in ("pyproject.toml", "uv.lock"):
+            path = project / name
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_MANIFEST * 32:
+                raise ToolError("shared Python project/lock must be bounded regular files")
+            documents.append(tomllib.loads(path.read_text()))
+    except (OSError, ValueError, UnicodeError) as error:
+        raise ToolError(
+            "shared Python project/lock is invalid; restore the selected locked source"
+        ) from error
+    manifest, lock = documents
+    groups, packages = manifest.get("dependency-groups", {}), lock.get("package", [])
+    if (
+        not isinstance(groups, dict)
+        or not isinstance(groups.get("dev"), list)
+        or not isinstance(packages, list)
+        or not all(isinstance(row, dict) for row in packages)
+    ):
+        raise ToolError("shared Python project/lock has malformed development package records")
+    versions = {"uv": bootstrap.uv_manifest(project)[0]}
+    for name in ("ruff", "ty"):
+        declarations = [
+            value
+            for value in groups["dev"]
+            if isinstance(value, str) and value.startswith(name + "==")
+        ]
+        if (
+            len(declarations) != 1
+            or re.fullmatch(name + r"==[0-9]+\.[0-9]+\.[0-9]+", declarations[0]) is None
+        ):
+            raise ToolError(f"shared {name} needs one exact development declaration")
+        version = declarations[0].removeprefix(name + "==")
+        records = [row for row in packages if row.get("name") == name]
+        if (
+            len(records) != 1
+            or records[0].get("version") != version
+            or records[0].get("source") != {"registry": "https://pypi.org/simple"}
+            or not isinstance(records[0].get("wheels"), list)
+            or not records[0]["wheels"]
+            or any(
+                not isinstance(wheel, dict)
+                or not isinstance(wheel.get("hash"), str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", wheel["hash"]) is None
+                or not isinstance(wheel.get("url"), str)
+                or not wheel["url"].startswith("https://files.pythonhosted.org/")
+                for wheel in records[0]["wheels"]
+            )
+        ):
+            raise ToolError(f"shared {name} lock version/source/wheel integrity is inconsistent")
+        versions[name] = version
+    return versions
+
+
+def _python_binary(name: str, version: str, environment: Path) -> tuple[Path, str]:
+    """Match the active locked distribution and its installed executable RECORD."""
+    try:
+        distribution = metadata.distribution(name)
+    except metadata.PackageNotFoundError as error:
+        raise ToolError(
+            f"{name} is missing; run tools through the selected locked shared environment"
+        ) from error
+    source = environment / "bin" / name
+    if (
+        distribution.version != version
+        or not Path(str(distribution.locate_file("")))
+        .resolve()
+        .is_relative_to(environment.resolve())
+        or source.is_symlink()
+        or not source.resolve().is_relative_to(environment.resolve())
+        or not source.is_file()
+        or not 0 < source.stat().st_size <= MAX_BINARY
+    ):
+        raise ToolError(
+            f"{name} differs from the selected locked environment/version "
+            "or is not a regular binary"
+        )
+    records = [
+        item
+        for item in distribution.files or ()
+        if Path(str(distribution.locate_file(item))).resolve() == source.resolve()
+    ]
+    if len(records) != 1 or records[0].hash is None or records[0].hash.mode != "sha256":
+        raise ToolError(f"{name} executable lacks one installed SHA256 RECORD entry")
+    with source.open("rb") as stream:
+        raw_digest = hashlib.file_digest(stream, "sha256").digest()
+        digest = base64.urlsafe_b64encode(raw_digest).decode().rstrip("=")
+    if records[0].hash.value != digest:
+        raise ToolError(f"{name} installed executable differs from its locked-environment RECORD")
+    return source, raw_digest.hex()
+
+
+def install_python_tools(destination: Path, *, project: Path | None = None) -> dict[str, str]:
+    """Copy canonical uv/Ruff/ty as ordinary non-root executables; preserve Python.
+
+    Invoke through the shared frontloader's locked environment. uv uses its existing
+    authenticated bootstrap archive; Ruff/ty retain uv.lock's installation integrity
+    and installed RECORD verification. No interpreter, symlink or root-cache wrapper
+    is exported. The active environment and system Python are never changed.
+    """
+    from boxferry_ci import bootstrap
+    from boxferry_ci.runner import run
+
+    host_architecture()
+    project = MANIFEST.parent if project is None else project
+    versions = _python_versions(project)
+    environment = Path(sys.prefix)
+    expected = Path(os.environ.get("UV_PROJECT_ENVIRONMENT", str(project / ".venv")))
+    if not expected.is_absolute() or environment.resolve() != expected.resolve():
+        raise ToolError(
+            "Python tools require the selected shared project's active locked environment; "
+            "use its frontloader"
+        )
+    if destination.resolve().is_relative_to(environment.resolve()):
+        raise ToolError("Python-tool export must not modify the active locked environment")
+    destination = bootstrap.safe_cache_directory(destination)
+    for name in versions:
+        target = destination / name
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ToolError(f"{name}: refusing a linked or non-regular Python-tool target")
+    sources = {name: _python_binary(name, versions[name], environment) for name in ("ruff", "ty")}
+    with tempfile.TemporaryDirectory(
+        prefix=".boxferry-python-tools-", dir=destination
+    ) as temporary:
+        staging = Path(temporary)
+        # Acquisition is owned by this export, never by the immutable source project.
+        uv = bootstrap.ensure_uv(project, staging / "uv-cache", prefer_path=False)
+        sources["uv"] = uv, bootstrap.bounded_sha256(uv, MAX_BINARY)
+        for name, (source, digest) in sources.items():
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or not 0 < source.stat().st_size <= MAX_BINARY
+            ):
+                raise ToolError(f"{name}: canonical executable is linked, missing or oversized")
+            with source.open("rb") as stream:
+                if stream.read(4) != b"\x7fELF":
+                    raise ToolError(
+                        f"{name}: only standalone native Linux executables can be exported"
+                    )
+            target = staging / name
+            shutil.copyfile(source, target, follow_symlinks=False)
+            target.chmod(0o755)
+            if bootstrap.bounded_sha256(target, MAX_BINARY) != digest:
+                raise ToolError(f"{name}: Python tool changed while being exported")
+            result = run(
+                (str(target), "--version"),
+                cwd=staging,
+                stage=f"verify exported {name}",
+                timeout_seconds=30,
+                environment={"PATH": os.defpath, "HOME": str(staging)},
+                max_output_bytes=64 * 1024,
+            )
+            pattern = (
+                re.escape(name + " " + versions[name])
+                + (r"(?: \([^\r\n]*\))?" if name == "uv" else "")
+                + r"\r?\n?"
+            )
+            if result.status != "success" or re.fullmatch(pattern, result.stdout) is None:
+                raise ToolError(
+                    f"{name}: exported executable failed its exact declared version probe; "
+                    "inspect the active environment and retry"
+                )
+        for name in versions:
+            target = destination / name
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ToolError(f"{name}: Python-tool target changed during staging")
+        for name in versions:
+            os.replace(staging / name, destination / name)
+    return versions
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", required=True, type=Path)
-    selection = parser.add_mutually_exclusive_group(required=True)
+    selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--profile", choices=("core", "website"))
     selection.add_argument("--tools", nargs="+", choices=WEBSITE)
+    parser.add_argument(
+        "--python-tools",
+        action="store_true",
+        help="Also export canonical uv/Ruff/ty from the active locked shared environment.",
+    )
     options = parser.parse_args(argv)
+    if not options.profile and not options.tools and not options.python_tools:
+        parser.error("select --profile, --tools or --python-tools")
     try:
         tools = (
             tuple(options.tools)
@@ -523,9 +711,21 @@ def main(argv: list[str] | None = None) -> int:
             if options.profile == "core"
             else WEBSITE
         )
-        assets = install(options.destination, tools)
-        for asset in assets:
-            print(f"Installed {asset.tool} {asset.tag} ({asset.architecture}; SHA256 verified).")
+        if options.profile or options.tools:
+            assets = install(options.destination, tools)
+            for asset in assets:
+                print(
+                    f"Installed {asset.tool} {asset.tag} ({asset.architecture}; SHA256 verified)."
+                )
+        if options.python_tools:
+            try:
+                versions = install_python_tools(options.destination)
+            except (ImportError, ValueError) as error:
+                raise ToolError(
+                    f"Python tool export requires the selected locked shared frontloader: {error}"
+                ) from error
+            for name, version in versions.items():
+                print(f"Exported canonical {name} {version} from verified shared tooling.")
         return 0
     except (ToolError, OSError) as error:
         print(f"Canonical tool installation failed: {error}", file=sys.stderr)

@@ -8,7 +8,7 @@ import selectors
 import signal
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -141,6 +141,7 @@ def run(
     evidence_link: str = "local command output",
     max_output_bytes: int = MAX_OUTPUT_BYTES,
     grace_seconds: float = 0.25,
+    monitor: Callable[[], None] | None = None,
 ) -> RunResult:
     """Drain both pipes within one aggregate log bound and clean every owned child.
 
@@ -179,6 +180,8 @@ def run(
                 selector.register(stream, selectors.EVENT_READ, name)
             cleaned = False
             while True:
+                if monitor is not None:
+                    monitor()
                 returncode = process.poll()
                 if returncode is not None and not cleaned:
                     # An exited leader may leave descendants holding its pipes.

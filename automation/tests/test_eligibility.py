@@ -8,6 +8,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -516,7 +517,10 @@ class EligibilityTests(unittest.TestCase):
         self.assertEqual(candidate.head, HEAD)
         self.assertEqual(candidate.source_head, SOURCE)
         self.assertEqual(candidate.actor_login, "renovate[bot]")
-        for key, value in (("mergeable", None), ("state", "closed"), ("merge_commit_sha", "main")):
+        self.api.responses["pulls/17"] = {**pr_metadata(), "mergeable": None}
+        with self.assertRaises(subject.CandidateComputationPending):
+            subject.pr_candidate(self.api, 17)
+        for key, value in (("state", "closed"), ("merge_commit_sha", "main")):
             self.api.responses["pulls/17"] = {**pr_metadata(), key: value}
             with self.assertRaises(subject.EligibilityError):
                 subject.pr_candidate(self.api, 17)
@@ -977,6 +981,11 @@ class EligibilityTests(unittest.TestCase):
 
     def test_snapshot_only_downloads_inert_dependency_paths_never_candidate_scripts(self) -> None:
         self.contents("Cargo.lock", HEAD, b"version = 4\n")
+        cli_lock = (
+            b'{"lockfileVersion":3,"packages":{'
+            b'"node_modules/@devcontainers/cli":{"version":"0.89.0"}}}'
+        )
+        self.contents("automation/devcontainer/package-lock.json", HEAD, cli_lock)
         self.contents("crates/owned/Cargo.toml", HEAD, b"[package]\n")
         self.contents("scripts/exploit.py", HEAD, b"raise RuntimeError('candidate code')")
         with tempfile.TemporaryDirectory() as temporary:
@@ -985,6 +994,9 @@ class EligibilityTests(unittest.TestCase):
                 self.api, HEAD, root, ["scripts/exploit.py", "crates/owned/Cargo.toml"]
             )
             self.assertTrue((root / "Cargo.lock").is_file())
+            self.assertEqual(
+                (root / "automation/devcontainer/package-lock.json").read_bytes(), cli_lock
+            )
             self.assertTrue((root / "crates/owned/Cargo.toml").is_file())
             self.assertFalse((root / "scripts").exists())
 
@@ -1837,6 +1849,408 @@ jobs_extra:
                 output=Path("unused"),
                 now=NOW,
             )
+
+    def pending_callback(self, kind: str) -> None:
+        current = run_metadata(11)
+        current["event"] = "workflow_run"
+        self.api.responses["actions/runs/11"] = current
+        self.api.responses[
+            "actions/workflows/dependency-eligibility.yml/runs?per_page=30&status=success"
+        ] = {"workflow_runs": []}
+        source = ci_run()
+        source.update(
+            event=kind,
+            head_sha=HEAD if kind == "merge_group" else SOURCE,
+            status="in_progress",
+            conclusion=None,
+        )
+        self.api.responses["actions/runs/50"] = source
+        if kind == "merge_group":
+            self.queue([self.node()])
+        self.api.responses["pulls/17"].update(mergeable=None, merge_commit_sha=None)
+
+    def test_workflow_callbacks_defer_null_then_bind_computed_exact_candidate(self) -> None:
+        for kind in ("pull_request", "merge_group"):
+            with self.subTest(source_event=kind):
+                self.setUp()
+                self.pending_callback(kind)
+                report = {
+                    "status": "pass",
+                    "candidate_sha": HEAD,
+                    "base_sha": BASE,
+                    "source_head_sha": SOURCE,
+                    "pull_request": 17,
+                    "scope": kind,
+                    "state": {"schema_version": 1, "first_seen": {}},
+                }
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate", return_value=deepcopy(report)) as evaluate,
+                    patch.object(subject, "rerun_ready") as retry,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    pending = subject.service(
+                        self.api,
+                        event_name="workflow_run",
+                        event={"action": "requested", "workflow_run": {"id": 50}},
+                        implementation=IMPLEMENTATION,
+                        run_id=11,
+                        output=output,
+                        now=NOW,
+                    )
+                    self.assertEqual(json.loads(output.read_text()), pending)
+                    self.assertEqual(pending["reports"], {})
+                    self.assertEqual(pending["infrastructure_errors"], [])
+                    self.assertEqual(len(pending["deferred_candidates"]), 1)
+                    deferred = pending["deferred_candidates"][0]
+                    self.assertEqual(deferred["pull_request"], 17)
+                    self.assertEqual(deferred["source_run_id"], 50)
+                    self.assertEqual(
+                        deferred["source_head_sha"], HEAD if kind == "merge_group" else SOURCE
+                    )
+                    self.assertIn("computing", deferred["reason"])
+                    self.assertIn("completed CI callback", deferred["next_action"])
+                    self.assertIn("hourly schedule", subject.summary(pending))
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+                    retry.assert_not_called()
+
+                    self.api.responses["pulls/17"] = pr_metadata()
+                    self.api.responses["actions/runs/50"].update(
+                        status="completed", conclusion="success"
+                    )
+                    next_run = run_metadata(12)
+                    next_run["event"] = "workflow_run"
+                    self.api.responses["actions/runs/12"] = next_run
+                    completed = subject.service(
+                        self.api,
+                        event_name="workflow_run",
+                        event={"action": "completed", "workflow_run": {"id": 50}},
+                        implementation=IMPLEMENTATION,
+                        run_id=12,
+                        output=output,
+                        now=NOW,
+                    )
+                    self.assertEqual(completed["deferred_candidates"], [])
+                    self.assertEqual(set(completed["reports"]), {HEAD})
+                    candidate = evaluate.call_args.args[1]
+                    self.assertEqual(
+                        (candidate.head, candidate.source_head, candidate.scope),
+                        (HEAD, SOURCE, kind),
+                    )
+                    self.assertEqual([path for path, _ in self.api.posted], [f"statuses/{HEAD}"])
+                    self.assertEqual(self.api.posted[0][1]["state"], "success")
+                    self.assertEqual(self.api.read_paths.count("actions/runs/50"), 2)
+                    retry.assert_not_called()
+
+    def test_completed_callbacks_for_owned_closed_pr_are_no_action_not_authorization(self) -> None:
+        for kind in ("pull_request", "merge_group"):
+            for merged in (False, True):
+                with self.subTest(source_event=kind, merged=merged):
+                    self.setUp()
+                    self.pending_callback(kind)
+                    self.api.responses["actions/runs/50"].update(
+                        status="completed", conclusion="success"
+                    )
+                    self.api.responses["pulls/17"] = {
+                        **pr_metadata(),
+                        "state": "closed",
+                        "mergeable": None,
+                        "merged": merged,
+                    }
+                    with self.assertRaises(subject.ClosedPullRequest):
+                        subject.pr_candidate(self.api, 17)
+                    previous = state_payload()
+                    previous["reruns"] = {HEAD: 50}
+                    with (
+                        tempfile.TemporaryDirectory() as temporary,
+                        patch.object(subject, "previous_state", return_value=previous),
+                        patch.object(subject, "evaluate") as evaluate,
+                        patch.object(subject, "rerun_ready") as retry,
+                    ):
+                        output = Path(temporary) / subject.STATE_FILE
+                        payload = subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"action": "completed", "workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                        self.assertEqual(json.loads(output.read_text()), payload)
+                    self.assertEqual(payload["reports"], {})
+                    self.assertEqual(payload["deferred_candidates"], [])
+                    self.assertEqual(payload["infrastructure_errors"], [])
+                    self.assertEqual(payload["dependency_state"], previous["dependency_state"])
+                    self.assertEqual(payload["reruns"], previous["reruns"])
+                    self.assertEqual(len(payload["no_action_candidates"]), 1)
+                    item = payload["no_action_candidates"][0]
+                    self.assertEqual((item["pull_request"], item["source_run_id"]), (17, 50))
+                    self.assertEqual(
+                        item["source_head_sha"], HEAD if kind == "merge_group" else SOURCE
+                    )
+                    self.assertNotIn("candidate_sha", item)
+                    self.assertIn("No action", subject.summary(payload))
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+                    retry.assert_not_called()
+
+    def test_closed_callback_requires_completed_source_and_exact_owned_metadata(self) -> None:
+        for defect in (
+            "foreign",
+            "branch",
+            "actor",
+            "source",
+            "merge",
+            "mergeable",
+            "stale-source",
+            "requested",
+            "running",
+            "open-conflict",
+        ):
+            with self.subTest(defect=defect):
+                self.setUp()
+                self.pending_callback("pull_request")
+                self.api.responses["actions/runs/50"].update(status="completed")
+                record: dict[str, Any] = {**pr_metadata(), "state": "closed", "mergeable": None}
+                action = "completed"
+                if defect == "foreign":
+                    record["base"]["repo"]["full_name"] = "Other/project"
+                elif defect == "branch":
+                    record["base"]["ref"] = "bad\nref"
+                elif defect == "actor":
+                    record["user"] = {"login": "", "type": "Bot"}
+                elif defect == "source":
+                    record["head"]["sha"] = "invalid"
+                elif defect == "merge":
+                    record["merge_commit_sha"] = "invalid"
+                elif defect == "mergeable":
+                    record.pop("mergeable")
+                elif defect == "stale-source":
+                    record["head"]["sha"] = "9" * 40
+                    record["merge_commit_sha"] = None
+                elif defect == "requested":
+                    action = "requested"
+                elif defect == "running":
+                    self.api.responses["actions/runs/50"]["status"] = "in_progress"
+                else:
+                    record.update(state="open", mergeable=False)
+                self.api.responses["pulls/17"] = record
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate") as evaluate,
+                    patch.object(subject, "rerun_ready") as retry,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    with self.assertRaises(subject.EligibilityError):
+                        subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"action": action, "workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                    self.assertFalse(output.exists())
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+                    retry.assert_not_called()
+
+    def test_closed_queue_no_action_requires_existing_exact_queue_binding(self) -> None:
+        for defect in ("empty", "foreign-source", "wrong-head", "wrong-target"):
+            with self.subTest(defect=defect):
+                self.setUp()
+                self.pending_callback("merge_group")
+                self.api.responses["actions/runs/50"].update(status="completed")
+                record: dict[str, Any] = {**pr_metadata(), "state": "closed", "mergeable": None}
+                self.api.responses["pulls/17"] = record
+                if defect == "empty":
+                    self.queue([])
+                elif defect == "foreign-source":
+                    self.queue([self.node(source="9" * 40)])
+                elif defect == "wrong-head":
+                    self.queue([self.node(head="9" * 40)])
+                else:
+                    record["base"]["ref"] = "release/next"
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate") as evaluate,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    with self.assertRaises(subject.EligibilityError):
+                        subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"action": "completed", "workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                    self.assertFalse(output.exists())
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+
+    def test_deferred_callback_retains_trusted_observations_without_a_receipt(self) -> None:
+        self.pending_callback("pull_request")
+        previous = state_payload()
+        previous["reruns"] = {HEAD: 50}
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(subject, "previous_state", return_value=previous),
+            patch.object(subject, "evaluate") as evaluate,
+        ):
+            payload = subject.service(
+                self.api,
+                event_name="workflow_run",
+                event={"workflow_run": {"id": 50}},
+                implementation=IMPLEMENTATION,
+                run_id=11,
+                output=Path(temporary) / subject.STATE_FILE,
+                now=NOW,
+            )
+        self.assertEqual(payload["dependency_state"], previous["dependency_state"])
+        self.assertEqual(payload["reruns"], previous["reruns"])
+        self.assertEqual(payload["reports"], {})
+        self.assertNotIn("candidate_sha", payload["deferred_candidates"][0])
+        self.assertEqual(self.api.posted, [])
+        evaluate.assert_not_called()
+
+    def test_workflow_null_mergeability_never_defers_terminal_or_malformed_pr(self) -> None:
+        terminal: list[dict[str, Any]] = []
+        for key, value in (
+            ("state", "closed"),
+            ("mergeable", False),
+            ("mergeable", 1),
+            ("mergeable", "pending"),
+            ("merge_commit_sha", "main"),
+            ("user", None),
+            ("user", {"login": "bot", "type": []}),
+        ):
+            record = {**pr_metadata(), "mergeable": None, key: value}
+            terminal.append(record)
+        missing = pr_metadata()
+        missing.pop("mergeable")
+        terminal.append(missing)
+        for section, field, value in (
+            ("head", "sha", "broken"),
+            ("base", "ref", ""),
+            ("base", "ref", "bad\nref"),
+        ):
+            record = pr_metadata()
+            record["mergeable"] = None
+            record[section][field] = value
+            terminal.append(record)
+        foreign = pr_metadata()
+        foreign["mergeable"] = None
+        foreign["base"]["repo"]["full_name"] = "Other/project"
+        terminal.append(foreign)
+        stale = pr_metadata(source_head="9" * 40)
+        stale["mergeable"] = None
+        terminal.append(stale)
+        for record in terminal:
+            with self.subTest(metadata=record):
+                self.setUp()
+                self.pending_callback("pull_request")
+                self.api.responses["pulls/17"] = record
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate") as evaluate,
+                    patch.object(subject, "rerun_ready") as retry,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    with self.assertRaises(subject.EligibilityError) as raised:
+                        subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                    self.assertNotIsInstance(raised.exception, subject.CandidateComputationPending)
+                    self.assertFalse(output.exists())
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+                    retry.assert_not_called()
+
+    def test_pending_queue_requires_exact_source_and_default_target(self) -> None:
+        for mutation in ("target", "source"):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.pending_callback("merge_group")
+                if mutation == "target":
+                    self.api.responses["pulls/17"]["base"]["ref"] = "release/next"
+                else:
+                    self.queue([self.node(source="9" * 40)])
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate") as evaluate,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    with self.assertRaises(subject.EligibilityError) as raised:
+                        subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                    self.assertNotIsInstance(raised.exception, subject.CandidateComputationPending)
+                    self.assertFalse(output.exists())
+                    self.assertEqual(self.api.posted, [])
+                    evaluate.assert_not_called()
+
+    def test_callback_readback_source_or_target_change_cannot_be_deferred(self) -> None:
+        for mutation in ("source", "target"):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.pending_callback("pull_request")
+                self.api.responses["pulls/17"] = pr_metadata()
+                get, reads = self.api.get, 0
+
+                def moving(
+                    suffix: str,
+                    mutation: str = mutation,
+                    get: Callable[[str], dict[str, Any]] = get,
+                ) -> dict[str, Any]:
+                    nonlocal reads
+                    value = get(suffix)
+                    if suffix == "pulls/17":
+                        reads += 1
+                        if reads == 2:
+                            value.update(mergeable=None, merge_commit_sha=None)
+                            if mutation == "source":
+                                value["head"]["sha"] = "9" * 40
+                            else:
+                                value["base"]["ref"] = "release/next"
+                    return value
+
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(self.api, "get", side_effect=moving),
+                    patch.object(subject, "evaluate") as evaluate,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+                    with self.assertRaises(subject.EligibilityError) as raised:
+                        subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+                    self.assertNotIsInstance(raised.exception, subject.CandidateComputationPending)
+                    self.assertEqual(self.api.posted, [])
+                    self.assertFalse(output.exists())
+                    evaluate.assert_not_called()
 
     def test_service_persists_new_firstseen_even_when_dependency_policy_waits(self) -> None:
         self.api.responses["actions/runs/10"] = run_metadata()

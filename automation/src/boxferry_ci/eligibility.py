@@ -56,7 +56,13 @@ REPOSITORIES = {
         "boxferry-website",
     )
 }
-LOCK_PATHS = ("Cargo.lock", "package-lock.json", "uv.lock", "automation/uv.lock")
+LOCK_PATHS = (
+    "Cargo.lock",
+    "package-lock.json",
+    "automation/devcontainer/package-lock.json",
+    "uv.lock",
+    "automation/uv.lock",
+)
 MAX_JSON_BYTES = 4 * 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_STATE_BYTES = 2 * 1024 * 1024
@@ -67,6 +73,32 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 class EligibilityError(ValueError):
     """Unavailable or inconsistent authoritative eligibility evidence."""
+
+
+class CandidateComputationPending(EligibilityError):
+    """A valid open PR has an explicitly null, asynchronously computed mergeability."""
+
+    def __init__(
+        self, number: int, identity: tuple[str, str, str, str], merge_head: str | None
+    ) -> None:
+        super().__init__("GitHub is computing this open PR's merge candidate")
+        self.number = number
+        self.identity = identity
+        self.source_head = identity[1]
+        self.merge_head = merge_head
+
+
+class ClosedPullRequest(EligibilityError):
+    """Valid owned closed metadata still refuses every candidate authorization."""
+
+    def __init__(
+        self, number: int, identity: tuple[str, str, str, str], merge_head: str | None
+    ) -> None:
+        super().__init__("PR is already closed or merged; no eligibility action")
+        self.number = number
+        self.identity = identity
+        self.source_head = identity[1]
+        self.merge_head = merge_head
 
 
 class MissingResource(EligibilityError):
@@ -351,6 +383,22 @@ def validate_state(
             raise EligibilityError("trusted first-seen time is later than its observation")
     if not isinstance(value.get("reports"), dict) or len(value["reports"]) > 100:
         raise EligibilityError("trusted candidate reports are malformed")
+    for metadata_key in ("deferred_candidates", "no_action_candidates"):
+        items = value.get(metadata_key, [])
+        if not isinstance(items, list) or len(items) > 1:
+            raise EligibilityError("trusted noncandidate metadata exceeds its bound")
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or type(item.get("pull_request")) is not int
+                or item["pull_request"] < 1
+                or type(item.get("source_run_id")) is not int
+                or item["source_run_id"] < 1
+                or not isinstance(item.get("reason"), str)
+                or not isinstance(item.get("next_action"), str)
+            ):
+                raise EligibilityError("trusted noncandidate metadata is malformed")
+            revision(item.get("source_head_sha"))
     cursor = value.get("scan_cursor", 0)
     if type(cursor) is not int or cursor < 0:
         raise EligibilityError("trusted scheduled scan cursor is malformed")
@@ -479,46 +527,84 @@ def pr_identity(
     pr: dict[str, Any],
     repository: str,
     number: int,
+    *,
+    expected_target: str | None = None,
 ) -> tuple[str, str, str, str, str]:
-    """Retain authoritative mutable PR identities while ignoring stale base.sha."""
+    """Validate PR identities before distinguishing asynchronous mergeability."""
     base, head = pr.get("base"), pr.get("head")
     if (
         pr.get("number") != number
-        or pr.get("state") != "open"
+        or not isinstance(pr.get("state"), str)
+        or pr["state"] not in {"open", "closed"}
         or not isinstance(base, dict)
         or not isinstance(head, dict)
         or not isinstance(base.get("repo"), dict)
         or base["repo"].get("full_name") != repository
-        or pr.get("mergeable") is not True
     ):
-        raise EligibilityError(
-            "PR is closed, foreign, conflicted or still computing its merge candidate"
-        )
+        raise EligibilityError("PR is closed, foreign or malformed")
     branch = base.get("ref")
-    if not isinstance(branch, str) or not branch:
+    if (
+        not isinstance(branch, str)
+        or not branch
+        or branch.startswith("/")
+        or any(char in branch for char in "\r\n\0")
+    ):
         raise EligibilityError("PR has no authoritative target branch ref")
-    actor = pr.get("user") or {}
-    if not isinstance(actor, dict):
+    if expected_target is not None and branch != expected_target:
+        raise EligibilityError("queued PR targets a different branch from the reviewed queue")
+    source = revision(head.get("sha"))
+    actor = pr.get("user")
+    if (
+        not isinstance(actor, dict)
+        or not isinstance(actor.get("login"), str)
+        or not actor["login"]
+        or not isinstance(actor.get("type"), str)
+        or actor["type"] not in {"User", "Bot"}
+    ):
         raise EligibilityError("PR author metadata is malformed")
-    return (
-        branch,
-        revision(pr.get("merge_commit_sha")),
-        revision(head.get("sha")),
-        str(actor.get("login", "")),
-        str(actor.get("type", "")),
-    )
+    merge = revision(pr["merge_commit_sha"]) if pr.get("merge_commit_sha") is not None else None
+    if pr["state"] == "closed":
+        if "mergeable" not in pr or (
+            pr["mergeable"] is not None and type(pr["mergeable"]) is not bool
+        ):
+            raise EligibilityError("closed PR mergeability metadata is malformed")
+        raise ClosedPullRequest(number, (branch, source, actor["login"], actor["type"]), merge)
+    if "mergeable" in pr and pr["mergeable"] is None:
+        raise CandidateComputationPending(
+            number, (branch, source, actor["login"], actor["type"]), merge
+        )
+    if pr.get("mergeable") is not True or merge is None:
+        raise EligibilityError(
+            "PR is conflicted or its mergeability/candidate metadata is malformed"
+        )
+    return branch, merge, source, actor["login"], actor["type"]
 
 
 def pr_candidate(api: GitHub, number: int, *, expected_target: str | None = None) -> Candidate:
-    """Bind a live synthetic merge to current target/source refs before and after."""
-    identity = pr_identity(api.get(f"pulls/{number}"), api.repository, number)
+    """Bind the live synthetic merge to current target/source refs before and after."""
+    identity = pr_identity(
+        api.get(f"pulls/{number}"), api.repository, number, expected_target=expected_target
+    )
     branch, merge, source, actor_login, actor_type = identity
-    if expected_target is not None and branch != expected_target:
-        raise EligibilityError("queued PR targets a different branch from the reviewed queue")
     base = target_revision(api, branch)
     require_ancestor(api, base, merge)
     require_ancestor(api, source, merge)
-    if pr_identity(api.get(f"pulls/{number}"), api.repository, number) != identity:
+    try:
+        observed = pr_identity(
+            api.get(f"pulls/{number}"), api.repository, number, expected_target=expected_target
+        )
+    except (CandidateComputationPending, ClosedPullRequest) as pending:
+        if pending.identity != (
+            branch,
+            source,
+            actor_login,
+            actor_type,
+        ) or pending.merge_head not in {None, merge}:
+            raise EligibilityError("PR source or target changed during verification") from pending
+        if target_revision(api, branch) != base:
+            raise EligibilityError("PR target branch moved during verification") from pending
+        raise
+    if observed != identity:
         raise EligibilityError(
             "PR source or synthetic candidate changed during verification; next event rechecks"
         )
@@ -661,7 +747,22 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
         number = node.get("pullRequest", {}).get("number")
         if type(number) is not int or number < 1:
             raise EligibilityError("queue entry has no authoritative source PR")
-        pr = pr_candidate(api, number, expected_target=default_branch)
+        try:
+            pr = pr_candidate(api, number, expected_target=default_branch)
+        except (CandidateComputationPending, ClosedPullRequest) as pending:
+            if node.get("pullRequest", {}).get(
+                "headRefOid"
+            ) != pending.source_head or node_head not in {
+                head,
+                pending.source_head,
+                pending.merge_head,
+            }:
+                raise EligibilityError(
+                    "unready queue PR does not match the exact source binding"
+                ) from pending
+            if target_revision(api, default_branch) != base:
+                raise EligibilityError("queue target branch moved during verification") from pending
+            raise
         if node.get("pullRequest", {}).get("headRefOid") != pr.source_head:
             continue
         if base != pr.base or node_head not in {head, pr.head, pr.source_head}:
@@ -1341,6 +1442,8 @@ def service(
     evaluated_cursor: int | None = None
     candidates: list[Candidate] = []
     errors: list[str] = []
+    deferred: list[dict[str, Any]] = []
+    no_action: list[dict[str, Any]] = []
     if event_name == "workflow_run":
         source_id = event.get("workflow_run", {}).get("id")
         if type(source_id) is not int or source_id < 1:
@@ -1351,18 +1454,60 @@ def service(
             raise EligibilityError(
                 "workflow_run source is outside the read-only candidate CI allowlist"
             )
-        if source.get("event") == "merge_group":
-            candidates.append(queue_candidate(api, head, default_branch))
-        else:
-            prs = source.get("pull_requests", [])
-            if len(prs) != 1 or type(prs[0].get("number")) is not int:
-                raise EligibilityError("candidate CI run has no unique authoritative PR")
-            candidate = pr_candidate(api, prs[0]["number"])
-            # REST workflow runs may identify the PR source head rather than the
-            # synthetic merge SHA. Only the live PR supplies the latter.
-            if head not in {candidate.source_head, candidate.head}:
-                raise EligibilityError("candidate CI run is stale relative to the live PR")
-            candidates.append(candidate)
+        try:
+            if source.get("event") == "merge_group":
+                candidates.append(queue_candidate(api, head, default_branch))
+            else:
+                prs = source.get("pull_requests", [])
+                if len(prs) != 1 or type(prs[0].get("number")) is not int:
+                    raise EligibilityError("candidate CI run has no unique authoritative PR")
+                candidate = pr_candidate(api, prs[0]["number"])
+                # REST workflow runs may identify the PR source head rather than the
+                # synthetic merge SHA. Only the live PR supplies the latter.
+                if head not in {candidate.source_head, candidate.head}:
+                    raise EligibilityError("candidate CI run is stale relative to the live PR")
+                candidates.append(candidate)
+        except CandidateComputationPending as pending:
+            if source.get("event") != "merge_group" and head not in {
+                pending.source_head,
+                pending.merge_head,
+            }:
+                raise EligibilityError(
+                    "candidate CI run is stale relative to the pending PR"
+                ) from pending
+            deferred.append(
+                {
+                    "pull_request": pending.number,
+                    "source_run_id": source_id,
+                    "source_head_sha": head,
+                    "reason": str(pending),
+                    "next_action": (
+                        "The completed CI callback or existing hourly schedule "
+                        "will recheck live metadata."
+                    ),
+                }
+            )
+        except ClosedPullRequest as closed:
+            if (
+                event.get("action") != "completed"
+                or source.get("status") != "completed"
+                or closed.identity[0] != default_branch
+                or head not in {closed.source_head, closed.merge_head}
+            ):
+                raise EligibilityError(
+                    "closed PR is not bound to this exact completed callback"
+                ) from closed
+            no_action.append(
+                {
+                    "pull_request": closed.number,
+                    "source_run_id": source_id,
+                    "source_head_sha": head,
+                    "reason": str(closed),
+                    "next_action": (
+                        "No evaluation, eligibility status or rerun is needed for this closed PR."
+                    ),
+                }
+            )
     else:
         prs = api.items("pulls?state=open&per_page=100&sort=updated&direction=desc")
         if not isinstance(prs, list) or len(prs) >= 100:
@@ -1463,6 +1608,8 @@ def service(
             )
         ),
         "infrastructure_errors": errors,
+        "deferred_candidates": deferred,
+        "no_action_candidates": no_action,
     }
     validate_state(
         payload, repository=api.repository, run_id=run_id, implementation=implementation, now=now
@@ -1567,6 +1714,16 @@ def summary(payload: dict[str, Any]) -> str:
             f"; next automatic recheck after {report['retry_at']}" if report.get("retry_at") else ""
         )
         lines.append(f"- PR #{report['pull_request']}, `{head}`: {report['status']}{retry}.")
+    for item in payload.get("deferred_candidates", []):
+        lines.append(
+            f"- Deferred PR #{item['pull_request']}, source `{item['source_head_sha']}`: "
+            f"{item['reason']}. {item['next_action']}"
+        )
+    for item in payload.get("no_action_candidates", []):
+        lines.append(
+            f"- No action for PR #{item['pull_request']}, source `{item['source_head_sha']}`: "
+            f"{item['reason']}. {item['next_action']}"
+        )
     lines.extend(f"- Infrastructure: {error}." for error in payload["infrastructure_errors"])
     return "\n".join(lines) + "\n"
 

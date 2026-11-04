@@ -1,0 +1,278 @@
+---
+name: Shared Dev Container validation
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact caller candidate tested in this attempt.
+        required: true
+        type: string
+      policy_sha:
+        description: Real PR or queue base; otherwise the candidate SHA.
+        required: true
+        type: string
+      automation_sha:
+        description: Immutable automation revision, equal to this reusable workflow ref.
+        required: true
+        type: string
+      config_path:
+        description: Repository-relative trusted validation policy path.
+        required: true
+        type: string
+    outputs:
+      candidate_sha:
+        description: Candidate successful in both native architecture lanes.
+        value: ${{ jobs.aggregate.outputs.candidate_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  sources:
+    name: Resolve held workspace sources once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sources: ${{ steps.resolve.outputs.sources }}
+      source_digest: ${{ steps.resolve.outputs.source_digest }}
+      node_version: ${{ steps.resolve.outputs.node_version }}
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind exact candidate and independently trusted policy
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Install the locked shared Python authority
+        uses: ./_automation/.github/actions/shared-python
+      - name: Resolve public sibling revisions without candidate execution
+        id: resolve
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation resolve \
+            --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --automation _automation --output "${RUNNER_TEMP}/devcontainer-sources.json" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Retain once-resolved source identities
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: devcontainer-sources-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/devcontainer-sources.json
+          if-no-files-found: error
+          retention-days: 7
+
+  x64:
+    name: Native amd64 candidate image
+    needs: sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    outputs:
+      candidate_sha: ${{ steps.qualify.outputs.candidate_sha }}
+      source_digest: ${{ steps.qualify.outputs.source_manifest_sha256 }}
+      input_digest: ${{ steps.qualify.outputs.input_sha256 }}
+      build_context_digest: ${{ steps.qualify.outputs.build_context_sha256 }}
+      architecture: ${{ steps.qualify.outputs.architecture }}
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind exact candidate and independently trusted policy
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Install the locked shared Python authority
+        uses: ./_automation/.github/actions/shared-python
+      - name: Install the selected canonical Node authority
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ needs.sources.outputs.node_version }}
+      - name: Install the integrity-locked official Dev Container CLI
+        shell: bash
+        run: npm ci --ignore-scripts --prefix _automation/automation/devcontainer
+      - name: Prepare reviewed rootful hosted Podman prerequisite
+        if: github.repository == 'Strukturpiloten/podman-lens' || github.repository == 'Strukturpiloten/quadlet-lens'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation prepare-podman \
+            --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --output "${RUNNER_TEMP}/devcontainer-podman-prerequisite.json"
+      - name: Build frozen candidate and run exact-ID nonroot probes
+        id: qualify
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          SOURCE_MANIFEST: ${{ needs.sources.outputs.sources }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REPOSITORY}" in
+            Strukturpiloten/boxferry|Strukturpiloten/compose-lens) engine=docker ;;
+            Strukturpiloten/podman-lens|Strukturpiloten/quadlet-lens) engine=podman ;;
+            *) echo 'Repository does not own a reviewed Dev Container.' >&2; exit 1 ;;
+          esac
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation qualify \
+            --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --source source --policy _policy --automation _automation \
+            --policy-sha "${POLICY_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --mode hosted --engine "${engine}" --architecture amd64 \
+            --sources-json "${SOURCE_MANIFEST}" \
+            --output "${RUNNER_TEMP}/devcontainer-amd64/report.json" --github-output "${GITHUB_OUTPUT}"
+      - name: Retain bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: devcontainer-amd64-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/devcontainer-amd64/report.json
+            ${{ runner.temp }}/devcontainer-podman-prerequisite.json
+          if-no-files-found: error
+          retention-days: 7
+
+  arm64:
+    name: Native arm64 candidate image
+    needs: sources
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    outputs:
+      candidate_sha: ${{ steps.qualify.outputs.candidate_sha }}
+      source_digest: ${{ steps.qualify.outputs.source_manifest_sha256 }}
+      input_digest: ${{ steps.qualify.outputs.input_sha256 }}
+      build_context_digest: ${{ steps.qualify.outputs.build_context_sha256 }}
+      architecture: ${{ steps.qualify.outputs.architecture }}
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind exact candidate and independently trusted policy
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Install the locked shared Python authority
+        uses: ./_automation/.github/actions/shared-python
+      - name: Install the selected canonical Node authority
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ needs.sources.outputs.node_version }}
+      - name: Install the integrity-locked official Dev Container CLI
+        shell: bash
+        run: npm ci --ignore-scripts --prefix _automation/automation/devcontainer
+      - name: Prepare reviewed rootful hosted Podman prerequisite
+        if: github.repository == 'Strukturpiloten/podman-lens' || github.repository == 'Strukturpiloten/quadlet-lens'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation prepare-podman \
+            --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --output "${RUNNER_TEMP}/devcontainer-podman-prerequisite.json"
+      - name: Build frozen candidate and run exact-ID nonroot probes
+        id: qualify
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          SOURCE_MANIFEST: ${{ needs.sources.outputs.sources }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REPOSITORY}" in
+            Strukturpiloten/boxferry|Strukturpiloten/compose-lens) engine=docker ;;
+            Strukturpiloten/podman-lens|Strukturpiloten/quadlet-lens) engine=podman ;;
+            *) echo 'Repository does not own a reviewed Dev Container.' >&2; exit 1 ;;
+          esac
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation qualify \
+            --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --source source --policy _policy --automation _automation \
+            --policy-sha "${POLICY_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --mode hosted --engine "${engine}" --architecture arm64 \
+            --sources-json "${SOURCE_MANIFEST}" \
+            --output "${RUNNER_TEMP}/devcontainer-arm64/report.json" --github-output "${GITHUB_OUTPUT}"
+      - name: Retain bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: devcontainer-arm64-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/devcontainer-arm64/report.json
+            ${{ runner.temp }}/devcontainer-podman-prerequisite.json
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Both native Dev Container lanes
+    if: always()
+    needs: [sources, x64, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_sha: ${{ steps.result.outputs.candidate_sha }}
+    steps:
+      - name: Require fresh successful exact-candidate lanes and matching source closure
+        id: result
+        shell: bash
+        env:
+          SOURCES_RESULT: ${{ needs.sources.result }}
+          X64_RESULT: ${{ needs.x64.result }}
+          ARM64_RESULT: ${{ needs.arm64.result }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          X64_CANDIDATE: ${{ needs.x64.outputs.candidate_sha }}
+          ARM64_CANDIDATE: ${{ needs.arm64.outputs.candidate_sha }}
+          SOURCE_DIGEST: ${{ needs.sources.outputs.source_digest }}
+          X64_SOURCE_DIGEST: ${{ needs.x64.outputs.source_digest }}
+          ARM64_SOURCE_DIGEST: ${{ needs.arm64.outputs.source_digest }}
+          X64_INPUT: ${{ needs.x64.outputs.input_digest }}
+          ARM64_INPUT: ${{ needs.arm64.outputs.input_digest }}
+          X64_CONTEXT: ${{ needs.x64.outputs.build_context_digest }}
+          ARM64_CONTEXT: ${{ needs.arm64.outputs.build_context_digest }}
+          X64_ARCHITECTURE: ${{ needs.x64.outputs.architecture }}
+          ARM64_ARCHITECTURE: ${{ needs.arm64.outputs.architecture }}
+        run: |
+          set -euo pipefail
+          test "${SOURCES_RESULT}" = success
+          test "${X64_RESULT}" = success
+          test "${ARM64_RESULT}" = success
+          test "${X64_CANDIDATE}" = "${CANDIDATE_SHA}"
+          test "${ARM64_CANDIDATE}" = "${CANDIDATE_SHA}"
+          [[ "${SOURCE_DIGEST}" =~ ^[a-f0-9]{64}$ ]]
+          test "${X64_SOURCE_DIGEST}" = "${SOURCE_DIGEST}"
+          test "${ARM64_SOURCE_DIGEST}" = "${SOURCE_DIGEST}"
+          [[ "${X64_INPUT}" =~ ^[a-f0-9]{64}$ ]]
+          test "${ARM64_INPUT}" = "${X64_INPUT}"
+          [[ "${X64_CONTEXT}" =~ ^[a-f0-9]{64}$ ]]
+          test "${ARM64_CONTEXT}" = "${X64_CONTEXT}"
+          test "${X64_ARCHITECTURE}" = amd64
+          test "${ARM64_ARCHITECTURE}" = arm64
+          printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
