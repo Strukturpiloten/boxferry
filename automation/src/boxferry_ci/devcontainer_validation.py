@@ -51,6 +51,38 @@ GIB = 1024**3
 BUILD_SECONDS, PROBE_SECONDS, CLEANUP_SECONDS = 3600, 300, 300
 MAX_TREE_FILES, MAX_TREE_BYTES = 25000, 256 * 1024**2
 MAX_REPORT = 64 * 1024
+MAX_FAILURE_STREAM = 2048
+_CAUSAL_LINE = re.compile(r"\b(error|failed|failure|fatal|denied|cannot|unable|not found)\b", re.I)
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    return value.encode("utf-8")[:limit].decode("utf-8", "ignore")
+
+
+def failure_evidence(value: str) -> dict[str, object]:
+    """Keep initial context, early causal lines and final context within a byte bound."""
+    causal = "\n".join(
+        _bounded_text(line[max(0, match.start() - 64) :], 384)
+        for line in value.splitlines()
+        if (match := _CAUSAL_LINE.search(line))
+    )
+    if len(value.encode("utf-8")) <= MAX_FAILURE_STREAM:
+        excerpt = value
+    else:
+        excerpt = (
+            _bounded_text(value, 512)
+            + "\n[... causal lines ...]\n"
+            + _bounded_text(causal, 896)
+            + "\n[... final context ...]\n"
+            + value.encode("utf-8")[-512:].decode("utf-8", "ignore")
+        )
+    return {
+        "excerpt": excerpt,
+        "truncated": excerpt != value,
+        "causal": _bounded_text(causal or value, 768),
+    }
+
+
 PROBES: tuple[tuple[str, ...], ...] = (
     ("actionlint", "--version"),
     ("cargo", "--version"),
@@ -182,6 +214,8 @@ class Budget:
 
 
 class Commands:
+    evidence_paths: tuple[Path, ...] = ()
+
     def __init__(self, private: Path) -> None:
         self.private = private
         self.env = environment(private)
@@ -201,7 +235,15 @@ class Commands:
     ) -> str:
         started = time.monotonic()
         hidden = (*protected_values(os.environ), *_argument_secrets(argv))
-        safe = shlex.join(_redacted_argv(argv, hidden, cwd or self.private))
+        home = os.environ.get("HOME", "")
+        evidence_hidden = (
+            *hidden,
+            str(self.private.resolve()),
+            str((cwd or self.private).resolve()),
+            *(str(path.resolve()) for path in self.evidence_paths),
+            *((home,) if home.startswith("/") and home != "/" else ()),
+        )
+        safe = shlex.join(_redacted_argv(argv, evidence_hidden, cwd or self.private))
         outcome: dict[str, object] = {
             "stage": stage,
             "command": safe[:2048],
@@ -227,11 +269,18 @@ class Commands:
             )
             outcome.update(status=result.status, cause=result.diagnostic.cause)
             if result.status != "success":
-                detail = redact((result.stderr or result.stdout)[-1024:], hidden)
+                evidence = {
+                    name: failure_evidence(redact(value, evidence_hidden))
+                    for name, value in (("stderr", result.stderr), ("stdout", result.stdout))
+                }
+                outcome["failure_evidence"] = evidence
+                detail = "; ".join(
+                    f"{name}: {item['causal']}" for name, item in evidence.items() if item["causal"]
+                )
                 raise ValidationError(f"{result.diagnostic.cause}; {detail}")
             return result.stdout
         except (OSError, ValueError, RunCancelled, KeyboardInterrupt) as error:
-            cause = redact(str(error), hidden)[:2048]
+            cause = redact(str(error), evidence_hidden)[:2048]
             if isinstance(error, (RunCancelled, KeyboardInterrupt)):
                 outcome["status"] = "cancelled"
             outcome["cause"] = cause
@@ -841,6 +890,95 @@ def remove_owned_container(
         raise ValidationError("exact owned container remains after cleanup")
 
 
+def cleanup_image_tag(
+    commands: Commands,
+    engine: tuple[str, ...],
+    tag: str,
+    image_id: str | None,
+    build_completed: bool,
+    report: dict[str, object],
+) -> None:
+    # A failed build may leave layers without ever creating the requested tag.
+    # A successful listing, rather than an arbitrary inspect failure, proves absence.
+    listed = commands.call(
+        (
+            *engine,
+            "image",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--filter",
+            "reference=" + tag,
+            "--format",
+            "{{.ID}}",
+        ),
+        "cleanup-image-list",
+    ).strip()
+    if not listed:
+        if build_completed:
+            raise ValidationError("completed build is missing its exact image tag")
+        report["cleanup_image_tag"] = "absent-after-failed-build"
+        return
+    listed_id = _image_identity(listed)
+    inspected_id = _inspection(
+        commands.call((*engine, "image", "inspect", tag), "cleanup-image-identity")
+    ).get("Id")
+    cleanup_image_id = _image_identity(inspected_id)
+    report["cleanup_image_id"] = cleanup_image_id
+    if cleanup_image_id != listed_id or (image_id is not None and cleanup_image_id != image_id):
+        raise ValidationError("cleanup refuses substituted image tag")
+    # Remove only our tag. Never force-remove a shared image ID or prune.
+    commands.call((*engine, "image", "rm", tag), "cleanup-image-tag")
+    remaining = commands.call(
+        (
+            *engine,
+            "image",
+            "ls",
+            "--all",
+            "--filter",
+            "reference=" + tag,
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+        ),
+        "cleanup-image-absence",
+    )
+    if remaining.strip():
+        raise ValidationError("owned image tag remains after cleanup")
+
+
+def verify_private_store_idle(
+    commands: Commands,
+    engine: tuple[str, ...],
+    private: Path,
+    architecture: str,
+    rootless: bool,
+    identity: tuple[int, int],
+) -> None:
+    """Authorize deletion only for the exact run's local, container-free unmounted store."""
+    facts = private.lstat()
+    if (
+        not stat.S_ISDIR(facts.st_mode)
+        or (facts.st_dev, facts.st_ino) != identity
+        or any((private / name).is_symlink() for name in ("store", "runroot"))
+    ):
+        raise ValidationError("cleanup refuses substituted private store paths")
+    info = _json(
+        commands.call((*engine, "info", "--format", "{{json .}}"), "cleanup-store-identity")
+    )
+    validate_engine(info, "podman", architecture, private, rootless=rootless)
+    mount_engine = (*engine, "unshare", *engine) if rootless else engine
+    for argv, stage in (
+        ((*engine, "ps", "--all", "--external", "--format", "json"), "cleanup-store-containers"),
+        ((*mount_engine, "image", "mount", "--format", "json"), "cleanup-store-image-mounts"),
+        (
+            (*mount_engine, "container", "mount", "--format", "json"),
+            "cleanup-store-container-mounts",
+        ),
+    ):
+        if json.loads(commands.call(argv, stage)) != []:
+            raise ValidationError(f"{stage}: private store is not empty or evidence is malformed")
+
+
 def inspect_image(document: object, architecture: str) -> str:
     if not isinstance(document, list) or len(document) != 1 or not isinstance(document[0], dict):
         raise ValidationError("engine returned malformed built-image inspection")
@@ -1023,7 +1161,10 @@ def qualify(
         )
     )
     private.chmod(0o700)
+    private_facts = private.lstat()
+    private_identity = (private_facts.st_dev, private_facts.st_ino)
     commands = Commands(private)
+    commands.evidence_paths = (source, policy, automation, work)
     report: dict[str, object] = {
         "schema": 1,
         "status": "failure",
@@ -1038,13 +1179,14 @@ def qualify(
         "cleanup": "pending",
     }
     token = uuid.uuid4().hex
-    name, tag = f"boxferry-devcontainer-{token}", f"boxferry-devcontainer:{token}"
+    name, tag = f"boxferry-devcontainer-{token}", f"localhost/boxferry-devcontainer:{token}"
     executable = _engine(private, selected, mode)
     engine_argv = (executable,)
     container_id: str | None = None
     image_id: str | None = None
     created = False
     build_started = False
+    build_completed = False
     try:
         commands.budget = Budget.start(private, BUILD_SECONDS)
         _held_revision(source, candidate, commands, clean=mode != "local")
@@ -1166,6 +1308,7 @@ def qualify(
             "build",
             BUILD_SECONDS,
         )
+        build_completed = True
         lines = output.strip().splitlines()
         if not lines:
             raise ValidationError("official CLI returned no build outcome")
@@ -1311,30 +1454,24 @@ def qualify(
             if created:
                 remove_owned_container(commands, engine_argv, container_id or name, token)
             if build_started:
-                inspected_id = _inspection(
-                    commands.call((*engine_argv, "image", "inspect", tag), "cleanup-image-identity")
-                ).get("Id")
-                cleanup_image_id = _image_identity(inspected_id)
-                report["cleanup_image_id"] = cleanup_image_id
-                if image_id is not None and cleanup_image_id != image_id:
-                    raise ValidationError("cleanup refuses a substituted image tag")
-                # Remove only our tag. Never force-remove a shared image ID or prune.
-                commands.call((*engine_argv, "image", "rm", tag), "cleanup-image-tag")
-                remaining = commands.call(
-                    (*engine_argv, "image", "ls", tag, "--format", "{{.Repository}}:{{.Tag}}"),
-                    "cleanup-image-absence",
-                )
-                if remaining.strip():
-                    raise ValidationError("owned image tag remains after cleanup")
+                cleanup_image_tag(commands, engine_argv, tag, image_id, build_completed, report)
             report["cleanup"] = "success"
         except (OSError, ValueError, RunCancelled, KeyboardInterrupt) as error:
             report["status"], report["cleanup"] = "failure", "failure"
             report["cleanup_cause"] = redact(str(error), protected_values(os.environ))[:4096]
         report["outcomes"] = commands.outcomes
-        # Private Podman stores must be empty/unmounted before directory removal;
+        # Private Podman stores must be container-free/unmounted before directory removal;
         # normal shutdown never deletes another store or global Docker resources.
         if selected == "podman" and (private / "store").exists() and report["cleanup"] == "success":
             try:
+                verify_private_store_idle(
+                    commands,
+                    engine_argv,
+                    private,
+                    ARCHITECTURES[machine],
+                    rootless=False if mode == "hosted" else os.geteuid() != 0,
+                    identity=private_identity,
+                )
                 if mode == "hosted":
                     owned = tuple(
                         str(private / name)
