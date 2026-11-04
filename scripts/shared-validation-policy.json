@@ -1,0 +1,131 @@
+{
+  "schema": 3,
+  "repository": "Strukturpiloten/boxferry",
+  "jobs": [
+    "canonical-artifact-integrity",
+    "kubernetes-artifact-integrity",
+    "compose-provider-integrity",
+    "automation",
+    "release-binaries",
+    "rust",
+    "msrv",
+    "dependencies",
+    "documentation",
+    "release-metadata",
+    "semver-release-type",
+    "semver",
+    "coverage",
+    "migration-readiness",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["automation", "documentation", "lockfile-release-age"],
+    "executable-docs": ["automation", "documentation", "lockfile-release-age"],
+    "rust-source": [
+      "canonical-artifact-integrity",
+      "kubernetes-artifact-integrity",
+      "compose-provider-integrity",
+      "automation",
+      "release-binaries",
+      "rust",
+      "msrv",
+      "dependencies",
+      "release-metadata",
+      "semver-release-type",
+      "semver",
+      "coverage",
+      "migration-readiness",
+      "lockfile-release-age"
+    ]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": ["docs/public/development/"],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": ["docs/public/reference/diagnostics/rules.json"],
+  "documentation_examples_manifest": "docs/documentation-examples.toml",
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"],
+      [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "boxferry",
+        "--all-features",
+        "--test",
+        "documentation_examples"
+      ]
+    ],
+    "full": [["bash", "scripts/check-all.sh", "--check"]],
+    "rust-source": [["bash", "scripts/check-all.sh", "--check"]]
+  },
+  "path_profiles": {
+    "rust-source": ["crates/**/*.rs"],
+    "prose": ["README.md", "docs/automation.md", "docs/dependency-policy.md"]
+  },
+  "tasks": {
+    "rust-quality": {
+      "timeout_seconds": 1800,
+      "commands": [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "ci-check"],
+        ["cargo", "ci-core"],
+        ["cargo", "ci-compose"],
+        ["cargo", "ci-podman"],
+        ["cargo", "ci-quadlet"],
+        ["cargo", "ci-policy"],
+        ["cargo", "ci-clippy"],
+        ["cargo", "ci-test"],
+        ["cargo", "ci-doctest"],
+        ["cargo", "ci-doc"]
+      ]
+    },
+    "msrv": {
+      "timeout_seconds": 1200,
+      "commands": [
+        ["cargo", "ci-check"],
+        ["cargo", "ci-policy"]
+      ]
+    },
+    "coverage": {
+      "timeout_seconds": 1800,
+      "commands": [
+        ["cargo", "llvm-cov", "clean", "--locked"],
+        [
+          "cargo",
+          "llvm-cov",
+          "--locked",
+          "--no-clean",
+          "--workspace",
+          "--all-features",
+          "--all-targets",
+          "--summary-only",
+          "--fail-under-regions",
+          "82",
+          "--fail-under-functions",
+          "87",
+          "--fail-under-lines",
+          "82"
+        ]
+      ]
+    },
+    "release-metadata": {
+      "commands": [
+        ["bash", "scripts/test-release-metadata.sh"],
+        ["bash", "scripts/validate-release-metadata.sh", "--development"]
+      ]
+    },
+    "release-metadata-strict": {
+      "commands": [
+        ["bash", "scripts/test-release-metadata.sh"],
+        ["bash", "scripts/validate-release-metadata.sh", "--release"]
+      ]
+    }
+  }
+}

@@ -264,6 +264,28 @@
       ],
       "datasourceTemplate": "github-release-attachments",
       "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1",
+      "description": "Update the consumer adoption manifest at the same immutable shared revision.",
+      "managerFilePatterns": ["/^\\.github/automation\\.json$/"],
+      "matchStrings": [
+        "(?<prefix>\"revision\"[ \\t]*:[ \\t]*\")(?<currentDigest>[a-f0-9]{40})(?<suffix>\")"
+      ]
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1",
+      "description": "Update explicit shared workflow revision inputs and environment pins.",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?<prefix>(?:^|\\n)[ \\t]*(?:automation_sha|automation-sha|AUTOMATION_SHA):[ \\t]*[\"\\']?)(?<currentDigest>[a-f0-9]{40})(?<suffix>[\"\\']?)"
+      ]
     }
   ],
   "packageRules": [
@@ -508,6 +530,12 @@
       "automergeType": "pr",
       "platformAutomerge": false,
       "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Keep preset, manifest, shared workflow and source checkout revisions in one adoption PR, after ordinary Actions grouping.",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "matchPackageNames": ["Strukturpiloten/boxferry"],
+      "groupName": "Shared BoxFerry automation"
     }
   ],
   "gitIgnoredAuthors": ["317908760+strukturpiloten-release-plz[bot]@users.noreply.github.com"]
