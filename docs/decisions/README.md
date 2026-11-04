@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0093](0093-exact-candidate-cargo-tools.md) binds shared SemVer execution to the
+candidate's declared Cargo tool and compiler, with standalone tool publication-age checks.
+
 [ADR 0092](0092-shared-development-automation.md) defines BoxFerry-owned shared
 CI/development tooling, exact caller/policy/automation identities, complete release
 gates, and the narrow immutable infrastructure bootstrap exception. It partially

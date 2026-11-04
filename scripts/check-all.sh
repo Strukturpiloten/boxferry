@@ -177,6 +177,16 @@ readonly automation_uv
 PATH="$(dirname -- "${automation_uv}"):${PATH}"
 export PATH
 
+# Verify the same declared plugin/compiler pair used by shared hosted SemVer.
+# Keep the isolated Cargo home used by the final command: Cargo dispatch can
+# prefer CARGO_HOME/bin or a config alias over an apparently correct PATH tool.
+current_step="Verify exact local Cargo SemVer selection"
+semver_selection="$(env CARGO_HOME="${semver_cargo_home}" CARGO_TARGET_DIR="${semver_target_dir}" \
+  uv run --locked --project automation python -m boxferry_ci.cargo_tools verify \
+  --repository-root "${repository_root}" --package cargo-semver-checks)"
+semver_rust_channel="$(jq -er '.rust_channel' <<< "${semver_selection}")"
+readonly semver_rust_channel
+
 if [[ "${format_mode}" == "check" ]]; then
   run_step "Check Rust formatting" cargo fmt --all -- --check
   run_step "Check non-Rust files" bash scripts/check-files.sh --check
@@ -249,6 +259,6 @@ run_step "Audit dependencies, licenses, bans, and sources" cargo deny --all-feat
 run_step "Check local documentation links" lychee --config lychee.toml --root-dir . --offline \
   "${markdown_files[@]}"
 run_step "Check published API compatibility" env CARGO_HOME="${semver_cargo_home}" \
-  CARGO_TARGET_DIR="${semver_target_dir}" "${semver_check[@]}"
+  CARGO_TARGET_DIR="${semver_target_dir}" RUSTUP_TOOLCHAIN="${semver_rust_channel}" "${semver_check[@]}"
 
 printf '\nBoxFerry local validation passed all %d steps.\n' "${total_steps}"
