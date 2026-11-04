@@ -293,7 +293,7 @@ pub(crate) fn validate_action_pins(repository_root: &Path) -> Result<(), String>
                 continue;
             }
 
-            if !is_immutable_versioned_action(reference) {
+            if !is_immutable_versioned_action(reference) && !is_reviewed_shared_bootstrap(reference) {
                 errors.push(format!(
                     "{}:{} must use owner/action@<40-character SHA> # <exact release tag>",
                     path.display(),
@@ -358,6 +358,34 @@ fn is_immutable_versioned_action(reference: &str) -> bool {
         && is_exact_action_release(version.trim())
 }
 
+fn is_reviewed_shared_bootstrap(reference: &str) -> bool {
+    let Some((identity, comment)) = reference.split_once('#') else {
+        return false;
+    };
+    if comment.trim() != "reviewed bootstrap; no automation release tag exists (ADR 0092)" {
+        return false;
+    }
+    let Some((path, revision)) = identity.trim().rsplit_once('@') else {
+        return false;
+    };
+    let Some(workflow) = path.strip_prefix("Strukturpiloten/boxferry/.github/workflows/") else {
+        return false;
+    };
+    matches!(
+        workflow,
+        "shared-dependency-eligibility.yml"
+            | "shared-dependency-wait.yml"
+            | "shared-rust-ci.yml"
+            | "shared-rust-dependencies.yml"
+            | "shared-rust-semver.yml"
+            | "shared-release-prepare.yml"
+            | "shared-release-validation.yml"
+    ) && revision.len() == 40
+        && revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn is_exact_action_release(version: &str) -> bool {
     let version = version.strip_prefix('v').unwrap_or(version);
     let core = version.split_once('-').map_or(version, |(core, _prerelease)| core);
@@ -393,7 +421,7 @@ fn finish(errors: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_immutable_versioned_action;
+    use super::{is_immutable_versioned_action, is_reviewed_shared_bootstrap};
 
     #[test]
     fn accepts_a_full_sha_with_an_exact_version() {
@@ -412,5 +440,24 @@ mod tests {
     #[test]
     fn rejects_a_mutable_tag() {
         assert!(!is_immutable_versioned_action("actions/checkout@v7.0.1"));
+    }
+    #[test]
+    fn shared_bootstrap_exception_has_exact_identity_integrity_and_provenance() {
+        let sha = "a".repeat(40);
+        let suffix = " # reviewed bootstrap; no automation release tag exists (ADR 0092)";
+        let canonical = format!("Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@{sha}{suffix}");
+        assert!(is_reviewed_shared_bootstrap(&canonical));
+        for changed in [
+            canonical.replace("Strukturpiloten/boxferry", "outside/boxferry"),
+            canonical.replace("shared-rust-ci.yml", "unreviewed.yml"),
+            canonical.replace(&sha, "main"),
+            canonical.replace(&sha, &"a".repeat(39)),
+            canonical.replace(&sha, &"A".repeat(40)),
+            canonical.replace(suffix, ""),
+            canonical.replace(suffix, " # v0.1.0"),
+            canonical.replace("no automation release tag exists", "released"),
+        ] {
+            assert!(!is_reviewed_shared_bootstrap(&changed), "accepted {changed}");
+        }
     }
 }
