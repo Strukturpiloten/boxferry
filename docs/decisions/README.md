@@ -8,6 +8,12 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0092](0092-shared-development-automation.md) defines BoxFerry-owned shared
+CI/development tooling, exact caller/policy/automation identities, complete release
+gates, and the narrow immutable infrastructure bootstrap exception. It partially
+supersedes ADR 0056 for centralized Python, known mixed-impact unions, and trusted
+base-to-tested-candidate comparison; policy/classifier/unknown changes remain full.
+
 [ADR 0091](0091-trusted-main-paperless-custody-mechanism.md) owns the fixed
 trusted-main six-volume custody mechanism, preserving product and application
 acceptance boundaries and existing candidate admission.

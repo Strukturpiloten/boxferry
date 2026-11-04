@@ -1,0 +1,58 @@
+---
+name: Distribute verified shared automation
+
+on: # zizmor: ignore[dangerous-triggers] -- Trusted main code reads API metadata only; no candidate code or artifacts execute.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: shared-automation-distribution
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    name: Advance the verified automation branch
+    if: >-
+      github.repository == 'Strukturpiloten/boxferry' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out trusted default-branch service only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ github.sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Verify the executing service revision
+        shell: bash
+        env:
+          SERVICE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "${SERVICE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C _automation rev-parse HEAD)" = "${SERVICE_SHA}"
+      - name: Install the canonical locked Python toolchain
+        uses: ./_automation/.github/actions/shared-python
+      - name: Distribute the exact successfully tested main candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVICE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.distribution \
+            --event-name "${GITHUB_EVENT_NAME}" --event-path "${GITHUB_EVENT_PATH}" \
+            --implementation-revision "${SERVICE_SHA}" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" --summary "${GITHUB_STEP_SUMMARY}"

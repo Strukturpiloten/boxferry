@@ -45,17 +45,21 @@ esac
 if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ]]; then
   exit 17
 fi
+if [[ -n "${CHECK_ALL_TEST_FAIL_COMMAND:-}" && "${command_name} $*" == "${CHECK_ALL_TEST_FAIL_COMMAND}" ]]; then
+  exit 17
+fi
 if [[ -n "${CHECK_ALL_TEST_FAIL_ARGUMENT:-}" && "$*" == "${CHECK_ALL_TEST_FAIL_ARGUMENT}" ]]; then
   exit 17
 fi
 case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
+  python3:automation/src/boxferry_ci/bootstrap.py\ install-uv*) printf '%s/uv\n' "${0%/*}" ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
 esac
 MOCK
 chmod +x "${test_root}/bin/mock"
 for tool in actionlint bash cargo cargo-deny cargo-llvm-cov cargo-semver-checks cspell curl git \
-  hadolint jq lychee markdownlint-cli2 npm prettier python3 rustup shellcheck shfmt tombi uv zizmor; do
+  hadolint jq lychee markdownlint-cli2 npm podman prettier python3 rustup shellcheck shfmt tombi uv zizmor; do
   ln -s mock "${test_root}/bin/${tool}"
 done
 
@@ -97,9 +101,9 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/36\]' "${test_root}/default.output")" == 36 ]]
-grep --fixed-strings --quiet -- '[36/36] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 36 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/44\]' "${test_root}/default.output")" == 44 ]]
+grep --fixed-strings --quiet -- '[44/44] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 44 steps.' ]]
 assert_contains default "bash scripts/test-application-probes.sh"
 assert_contains check "bash scripts/test-application-probes.sh"
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
@@ -137,7 +141,7 @@ fi
 
 # Both modes must request every non-formatting validation step, in the same order.
 for mode in fix check; do
-  grep -vE '^(cargo fmt|bash scripts/check-files.sh|uv run --frozen ruff format|uv run --frozen python scripts/generate_brand_assets.py)' \
+  grep -vE '^(cargo fmt|bash scripts/check-files.sh|uv run --locked --project automation ruff format|uv run --frozen ruff format|uv run --frozen python scripts/generate_brand_assets.py)' \
     "${test_root}/${mode}.commands" > "${test_root}/${mode}.validation"
 done
 diff -u "${test_root}/fix.validation" "${test_root}/check.validation"
@@ -150,6 +154,47 @@ done
 status=0
 run_gate extra --check --fix || status=$?
 [[ "${status}" == 2 && ! -s "${test_root}/extra.commands" ]]
+
+# Shared tooling is installed and each new validation is dispatched exactly once.
+for mode in default fix check; do
+  for command in \
+    "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
+    "uv run --locked --project automation ruff check automation" \
+    "uv run --locked --project automation ty check --project automation" \
+    "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
+    "uv run --locked --project automation python -m boxferry_ci.renovate_runtime --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate" \
+    "uv run --locked --project automation python -m unittest discover -s automation/tests -v" \
+    "uv run --locked --project automation python -m boxferry_ci.compose_provider --repository-root ${test_root}/repository --verify-working-tree" \
+    "uv run --locked --project automation python scripts/kubernetes_tool_checksum_refresh.py --verify-working-tree --repository-root ${test_root}/repository"; do
+    assert_contains "${mode}" "${command}"
+    [[ "$(grep -Fxc -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
+  done
+done
+assert_contains fix "uv run --locked --project automation ruff format automation"
+assert_contains check "uv run --locked --project automation ruff format --check automation"
+for mode in fix check; do
+  if [[ "${mode}" == fix ]]; then
+    format_command="uv run --locked --project automation ruff format automation"
+  else
+    format_command="uv run --locked --project automation ruff format --check automation"
+  fi
+  for command in \
+    "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
+    "${format_command}" \
+    "uv run --locked --project automation ruff check automation" \
+    "uv run --locked --project automation ty check --project automation" \
+    "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
+    "uv run --locked --project automation python -m boxferry_ci.renovate_runtime --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate" \
+    "uv run --locked --project automation python -m unittest discover -s automation/tests -v" \
+    "uv run --locked --project automation python -m boxferry_ci.compose_provider --repository-root ${test_root}/repository --verify-working-tree" \
+    "uv run --locked --project automation python scripts/kubernetes_tool_checksum_refresh.py --verify-working-tree --repository-root ${test_root}/repository"; do
+    status=0
+    CHECK_ALL_TEST_FAIL_COMMAND="${command}" run_gate shared_failure "--${mode}" || status=$?
+    [[ "${status}" == 17 ]]
+    [[ "$(tail -n 1 "${test_root}/shared_failure.commands")" == "${command}" ]]
+    [[ "$(grep -Fc 'BoxFerry local validation passed' "${test_root}/shared_failure.output" || true)" == 0 ]]
+  done
+done
 
 # Each newly registered contract check is dispatched once and is a hard failure boundary.
 for failed_script in scripts/test-release-binaries.py scripts/test-release-emulator.sh; do

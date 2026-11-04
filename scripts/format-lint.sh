@@ -21,7 +21,7 @@ if [[ ! "${cargo_jobs}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 readonly cargo_jobs
 
-required_tools=(actionlint bash cargo git zizmor)
+required_tools=(actionlint bash cargo git python3 zizmor)
 missing_tools=()
 for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" > /dev/null 2>&1; then
@@ -36,7 +36,7 @@ if (("${#missing_tools[@]}" != 0)); then
 fi
 
 step=0
-readonly total_steps=7
+readonly total_steps=10
 started_at="${SECONDS}"
 
 run_step() {
@@ -62,6 +62,12 @@ run_step() {
   return "${status}"
 }
 
+automation_uv="$(python3 automation/src/boxferry_ci/bootstrap.py install-uv \
+  --project automation --cache-root target/shared-uv --no-path-uv)"
+readonly automation_uv
+PATH="$(dirname -- "${automation_uv}"):${PATH}"
+export PATH
+
 printf 'Using at most %s Cargo build jobs for linting.\n' "${cargo_jobs}"
 
 if [[ "${mode}" == "--check" ]]; then
@@ -71,6 +77,13 @@ else
   run_step "Format Rust" cargo fmt --all
   run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
 fi
+if [[ "${mode}" == "--check" ]]; then
+  run_step "Check shared Python formatting" uv run --locked --project automation ruff format --check automation
+else
+  run_step "Format shared Python" uv run --locked --project automation ruff format automation
+fi
+run_step "Lint shared Python" uv run --locked --project automation ruff check automation
+run_step "Check shared Python types" uv run --locked --project automation ty check --project automation
 run_step "Check unstaged whitespace errors" git --no-pager diff --check
 run_step "Check staged whitespace errors" git --no-pager diff --cached --check
 run_step "Lint GitHub Actions syntax" actionlint

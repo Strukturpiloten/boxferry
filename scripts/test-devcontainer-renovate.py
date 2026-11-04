@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import fnmatch
 import hashlib
 import io
@@ -25,9 +26,7 @@ EXPECTED_PINS = {
     ("crate", "cargo-deny"),
     ("crate", "cargo-llvm-cov"),
     ("crate", "cargo-semver-checks"),
-    ("crate", "lychee"),
     ("crate", "zizmor"),
-    ("github-releases", "rhysd/actionlint"),
 }
 
 
@@ -43,9 +42,7 @@ def extracted_pins(
     for manager in configuration["customManagers"]:
         if manager["customType"] != "regex":
             continue
-        if not any(
-            re.search(pattern[1:-1], path) for pattern in manager["managerFilePatterns"]
-        ):
+        if not any(re.search(pattern[1:-1], path) for pattern in manager["managerFilePatterns"]):
             continue
         for pattern in manager["matchStrings"]:
             pins.extend(
@@ -76,8 +73,7 @@ def validate_ownership(configuration: dict, dockerfile: str) -> list[tuple[dict,
 def effective_policy(configuration: dict, dependency: dict) -> dict:
     """Evaluate the current policy's selectors in order; reject unmodelled selectors."""
     policy = {
-        key: configuration.get(key, False)
-        for key in ("automerge", "dependencyDashboardApproval")
+        key: configuration.get(key, False) for key in ("automerge", "dependencyDashboardApproval")
     }
     policy["minimumReleaseAge"] = configuration["minimumReleaseAge"]
     for rule in configuration["packageRules"]:
@@ -115,9 +111,9 @@ class DevContainerRenovateTests(unittest.TestCase):
         )
         self.dockerfile = (ROOT / DOCKERFILE_PATH).read_text(encoding="utf-8")
 
-    def test_all_nine_operational_pins_have_one_real_extraction_owner(self) -> None:
+    def test_all_seven_operational_pins_have_one_real_extraction_owner(self) -> None:
         pins = validate_ownership(self.configuration, self.dockerfile)
-        self.assertEqual(len(pins), 9)
+        self.assertEqual(len(pins), 7)
         self.assertTrue(all(match["currentValue"] for _, match in pins))
 
     def test_missing_tool_marker_cannot_silently_drop_a_dependency(self) -> None:
@@ -203,25 +199,24 @@ class DevContainerRenovateTests(unittest.TestCase):
                 )
                 validate_ownership(self.configuration, migrated)
 
-    def test_non_major_updates_share_one_group_without_waiving_age_or_integrity(self) -> None:
+    def test_devcontainer_image_updates_keep_their_group_and_age(self) -> None:
         rules = [
             rule
             for rule in self.configuration["packageRules"]
             if rule.get("description")
-            == "Keep non-major Dev Container image and tool updates together"
+            == "Keep non-major Dev Container image updates together"
         ]
         self.assertEqual(len(rules), 1)
         self.assertEqual(rules[0]["matchManagers"], ["custom.regex"])
-        self.assertEqual(
-            rules[0]["matchFileNames"], [DOCKERFILE_PATH, "scripts/install-kubernetes-tools.sh"]
-        )
+        self.assertEqual(rules[0]["matchFileNames"], [DOCKERFILE_PATH])
         self.assertEqual(
             set(rules[0]["matchUpdateTypes"]), {"minor", "patch", "pin", "digest", "pinDigest"}
         )
         self.assertNotIn("minimumReleaseAge", rules[0])
         self.assertEqual(self.configuration["minimumReleaseAge"], "3 days")
+        self.assertNotIn("scripts/install-kubernetes-tools.sh", rules[0]["matchFileNames"])
 
-    def test_all_nine_pins_require_effective_manual_review_after_generic_rules(self) -> None:
+    def test_all_seven_pins_require_effective_manual_review_after_generic_rules(self) -> None:
         for _, match in validate_ownership(self.configuration, self.dockerfile):
             for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
                 with self.subTest(dependency=match["depName"], update=update_type):
@@ -292,6 +287,96 @@ class DevContainerRenovateTests(unittest.TestCase):
                 )
 
 
+class FileToolWrapperTests(unittest.TestCase):
+    def test_devcontainer_copies_the_canonical_three_file_closure(self) -> None:
+        dockerfile = (ROOT / DOCKERFILE_PATH).read_text(encoding="utf-8")
+        for source in (
+            "scripts/install-file-tools.sh",
+            "automation/src/boxferry_ci/tooling.py",
+            "automation/tool-artifacts.json",
+        ):
+            with self.subTest(source=source):
+                self.assertRegex(dockerfile, rf"(?m)^COPY {re.escape(source)} ")
+                self.assertTrue((ROOT / source).is_file())
+        self.assertIn(
+            "bash /tmp/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin", dockerfile
+        )
+        inventory = json.loads(
+            (ROOT / "automation/tool-artifacts.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            {row["tool"] for row in inventory["assets"]},
+            {"tombi", "shfmt", "shellcheck", "hadolint", "actionlint", "lychee"},
+        )
+        self.assertNotIn("depName=rhysd/actionlint", dockerfile)
+        self.assertNotIn("depName=lychee", dockerfile)
+
+    def test_wrapper_delegates_destination_profile_and_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            tooling = root / "automation/src/boxferry_ci"
+            shim = root / "bin"
+            for path in (scripts, tooling, shim):
+                path.mkdir(parents=True)
+            wrapper = scripts / "install-file-tools.sh"
+            wrapper.write_bytes((ROOT / "scripts/install-file-tools.sh").read_bytes())
+            (tooling / "tooling.py").write_text("# selected canonical implementation\n")
+            (root / "automation/tool-artifacts.json").write_bytes(
+                (ROOT / "automation/tool-artifacts.json").read_bytes()
+            )
+            python = shim / "python3"
+            python.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_LOG"\nexit "${TEST_EXIT:-0}"\n'
+            )
+            python.chmod(0o755)
+            log = root / "arguments"
+            environment = {
+                **os.environ,
+                "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+                "TEST_LOG": str(log),
+            }
+            for arguments, destination in (
+                ([], "/usr/local/bin"),
+                ([str(root / "tools spaces")], str(root / "tools spaces")),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        ["bash", str(wrapper), *arguments],
+                        env=environment,
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(
+                        log.read_text().splitlines(),
+                        [
+                            str(tooling / "tooling.py"),
+                            "--destination",
+                            destination,
+                            "--profile",
+                            "core",
+                        ],
+                    )
+            log.unlink()
+            result = subprocess.run(
+                ["bash", str(wrapper), "first", "second"],
+                env=environment,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(log.exists())
+            result = subprocess.run(
+                ["bash", str(wrapper), str(root / "tools")],
+                env={**environment, "TEST_EXIT": "17"},
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 17)
+            self.assertTrue(log.exists())
+
+
 class KubernetesToolRenovateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.path = "scripts/install-kubernetes-tools.sh"
@@ -302,29 +387,65 @@ class KubernetesToolRenovateTests(unittest.TestCase):
 
     def validate(self, configuration: dict, source: str) -> list[tuple[dict, re.Match]]:
         pins = extracted_pins(configuration, source, self.path)
-        expected = {
-            ("github-releases", "kubernetes-sigs/kind"),
-            ("github-releases", "kubernetes/kubernetes"),
-            ("github-releases", "helm/helm"),
-            ("github-releases", "kubernetes-sigs/kustomize"),
-        }
-        identities = [(match["datasource"], match["depName"]) for _, match in pins]
-        if len(identities) != len(expected) or set(identities) != expected:
-            raise ValueError("each Kubernetes tool needs exactly one extraction owner")
+        expected = Counter(
+            [
+                ("github-release-attachments", "kubernetes-sigs/kind"),
+                ("github-release-attachments", "kubernetes-sigs/kind"),
+                ("github-releases", "kubernetes/kubernetes"),
+                ("github-releases", "helm/helm"),
+                ("github-releases", "kubernetes-sigs/kustomize"),
+            ]
+        )
+        identities = Counter(
+            (
+                match.groupdict().get("datasource", manager.get("datasourceTemplate")),
+                match["depName"],
+            )
+            for manager, match in pins
+        )
+        if identities != expected:
+            raise ValueError("kind needs two architecture owners and other tools one each")
+        kind_pins = [match for _, match in pins if match["depName"] == "kubernetes-sigs/kind"]
+        if {match["depType"] for match in kind_pins} != {
+            "kind-linux-amd64",
+            "kind-linux-arm64",
+        }:
+            raise ValueError("kind asset owners must cover both Linux architectures")
+        if len({match["currentValue"] for match in kind_pins}) != 1:
+            raise ValueError("kind architecture owners must share one release tag")
         return pins
 
     def test_each_tool_has_one_owner_and_two_reviewed_checksums(self) -> None:
         pins = self.validate(self.configuration, self.source)
-        self.assertEqual(len(pins), len(re.findall(r'^readonly \w+_version=', self.source, re.M)))
-        for tool in ("kind", "kubectl", "helm", "kustomize"):
+        self.assertEqual(
+            len(pins), len(re.findall(r"^readonly \w+_version=", self.source, re.M)) + 2
+        )
+        for tool in ("kubectl", "helm", "kustomize"):
             self.assertEqual(
-                len(re.findall(rf'readonly {tool}_checksum="[a-f0-9]{{64}}"', self.source)), 2
+                len(re.findall(rf'readonly {tool}_checksum="[a-f0-9]{{64}}"', self.source)),
+                2,
             )
+        kind_records = re.findall(
+            r'(?m)^readonly kind_(amd64|arm64)_release="(v[0-9.]+)" '
+            r'kind_\1_checksum="([a-f0-9]{64})"$',
+            self.source,
+        )
+        self.assertEqual({record[0] for record in kind_records}, {"amd64", "arm64"})
+        self.assertEqual(len({record[1] for record in kind_records}), 1)
+        self.assertEqual(len(kind_records), 2)
 
     def test_missing_and_duplicate_extraction_are_rejected(self) -> None:
         for manager, match in self.validate(self.configuration, self.source):
-            with self.subTest(dependency=match["depName"]):
-                marker = f'# renovate: datasource={match["datasource"]} depName={match["depName"]}'
+            with self.subTest(
+                dependency=match["depName"], dep_type=match.groupdict().get("depType")
+            ):
+                datasource = match.groupdict().get("datasource") or manager.get(
+                    "datasourceTemplate"
+                )
+                marker = (
+                    f"# renovate: datasource={datasource} "
+                    f'depName={match["depName"]}'
+                )
                 with self.assertRaises(ValueError):
                     self.validate(self.configuration, self.source.replace(marker, "", 1))
                 duplicate = copy.deepcopy(self.configuration)
@@ -334,46 +455,60 @@ class KubernetesToolRenovateTests(unittest.TestCase):
 
     def test_kustomize_nested_release_tag_is_normalized(self) -> None:
         manager, _ = next(
-            item for item in self.validate(self.configuration, self.source)
+            item
+            for item in self.validate(self.configuration, self.source)
             if item[1]["depName"] == "kubernetes-sigs/kustomize"
         )
         pattern = python_pattern(manager["extractVersionTemplate"])
         self.assertEqual(re.fullmatch(pattern, "kustomize/v99.2.3")["version"], "99.2.3")
         self.assertIsNone(re.fullmatch(pattern, "kyaml/v99.2.3"))
 
-    def test_checksum_updates_always_require_review_and_nonmajor_grouping(self) -> None:
-        for _, match in self.validate(self.configuration, self.source):
+    def test_scoped_kubernetes_updates_auto_merge_without_dashboard_approval(self) -> None:
+        for manager, match in self.validate(self.configuration, self.source):
             for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
                 with self.subTest(dependency=match["depName"], update=update_type):
-                    policy = effective_policy(self.configuration, {
-                        "matchManagers": "custom.regex",
-                        "matchDatasources": match["datasource"],
-                        "matchPackageNames": match["depName"],
-                        "matchFileNames": self.path,
-                        "matchDepTypes": None,
-                        "matchUpdateTypes": update_type,
-                    })
-                    self.assertIs(policy["automerge"], False)
-                    self.assertIs(policy["dependencyDashboardApproval"], True)
+                    datasource = match.groupdict().get("datasource") or manager.get(
+                        "datasourceTemplate"
+                    )
+                    policy = effective_policy(
+                        self.configuration,
+                        {
+                            "matchManagers": "custom.regex",
+                            "matchDatasources": datasource,
+                            "matchPackageNames": match["depName"],
+                            "matchFileNames": self.path,
+                            "matchDepTypes": match.groupdict().get("depType"),
+                            "matchUpdateTypes": update_type,
+                        },
+                    )
+                    self.assertIs(policy["automerge"], True)
+                    self.assertIs(policy["dependencyDashboardApproval"], False)
                     self.assertEqual(policy["minimumReleaseAge"], "3 days")
-                    self.assertTrue(any("checksum" in note for note in policy["prBodyNotes"]))
-                    if update_type != "major":
-                        self.assertEqual(policy["groupName"], "Dev Container toolchain")
-
+                    self.assertEqual(policy["groupName"], "Kubernetes development tools")
 
 class KubernetesInstallerTests(unittest.TestCase):
     def exercise(self, machine: str, failure: str = "", system: str = "Linux") -> None:
         source = (ROOT / "scripts/install-kubernetes-tools.sh").read_text(encoding="utf-8")
         versions = dict(re.findall(r'readonly (\w+)_version="([^"]+)"', source))
+        kind_tags = dict(
+            re.findall(
+                r'(?m)^readonly kind_(amd64|arm64)_release="(v[0-9.]+)"', source
+            )
+        )
+        self.assertEqual(set(versions), {"kubectl", "helm", "kustomize"})
+        self.assertEqual(set(kind_tags), {"amd64", "arm64"})
         architecture = "arm64" if machine in ("arm64", "aarch64") else "amd64"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shim = root / "shim"
             shim.mkdir()
             assets = {}
-            binaries = {tool: f"#!/bin/sh\necho {tool}\n".encode() for tool in versions}
+            binaries = {
+                tool: f"#!/bin/sh\necho {tool}\n".encode()
+                for tool in ("kind", *versions)
+            }
             urls = {
-                "kind": f'https://github.com/kubernetes-sigs/kind/releases/download/v{versions["kind"]}/kind-linux-{architecture}',
+                "kind": f'https://github.com/kubernetes-sigs/kind/releases/download/{kind_tags[architecture]}/kind-linux-{architecture}',
                 "kubectl": f'https://dl.k8s.io/release/v{versions["kubectl"]}/bin/linux/{architecture}/kubectl',
                 "helm": f'https://get.helm.sh/helm-v{versions["helm"]}-linux-{architecture}.tar.gz',
                 "kustomize": f'https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v{versions["kustomize"]}/kustomize_v{versions["kustomize"]}_linux_{architecture}.tar.gz',
@@ -391,9 +526,21 @@ class KubernetesInstallerTests(unittest.TestCase):
                 else:
                     asset.write_bytes(payload)
                 checksum = hashlib.sha256(asset.read_bytes()).hexdigest()
-                source = re.sub(
-                    rf'{tool}_checksum="[a-f0-9]+"', f'{tool}_checksum="{checksum}"', source
-                )
+                if tool == "kind":
+                    source, count = re.subn(
+                        rf'(?m)^(readonly kind_{architecture}_release="[^"]+" '
+                        rf'kind_{architecture}_checksum=")[a-f0-9]+("$)',
+                        rf"\g<1>{checksum}\2",
+                        source,
+                        count=1,
+                    )
+                    self.assertEqual(count, 1)
+                else:
+                    source = re.sub(
+                        rf'{tool}_checksum="[a-f0-9]+"',
+                        f'{tool}_checksum="{checksum}"',
+                        source,
+                    )
                 assets[urls[tool]] = str(asset)
             if failure == "checksum":
                 (root / "helm.asset").write_bytes(b"corrupt release asset")

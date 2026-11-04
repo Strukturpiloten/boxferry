@@ -1,0 +1,302 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "BoxFerry automation interface v1: automatic dependency PRs with compatibility, integrity and age checks. Rebase behind-base branches for fresh candidate checks after age holds; this may run extra CI.",
+  "extends": ["config:best-practices"],
+  "dependencyDashboard": true,
+  "dependencyDashboardApproval": false,
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": false,
+  "minimumReleaseAge": "3 days",
+  "rebaseWhen": "behind-base-branch",
+  "minimumReleaseAgeBehaviour": "timestamp-required",
+  "internalChecksFilter": "strict",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "timezone": "Europe/Berlin",
+  "dockerfile": {
+    "enabled": false
+  },
+  "docker-compose": {
+    "enabled": false
+  },
+  "quadlet": {
+    "enabled": false
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "minimumReleaseAge": "0 days"
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Advance immutable shared-preset revisions from the independently gated automation-v1 distribution branch.",
+      "managerFilePatterns": ["/(^|/)renovate\\.json5?$/"],
+      "matchStrings": [
+        "github>Strukturpiloten/boxferry//renovate-presets/(?<preset>common|rust)#(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1",
+      "description": "Update the consumer adoption manifest at the same immutable shared revision.",
+      "managerFilePatterns": ["/^\\.github/automation\\.json$/"],
+      "matchStrings": [
+        "(?<prefix>\"revision\"[ \\t]*:[ \\t]*\")(?<currentDigest>[a-f0-9]{40})(?<suffix>\")"
+      ]
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1",
+      "description": "Update explicit shared workflow revision inputs and environment pins.",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?<prefix>(?:^|\\n)[ \\t]*(?:automation_sha|automation-sha|AUTOMATION_SHA):[ \\t]*[\"\\']?)(?<currentDigest>[a-f0-9]{40})(?<suffix>[\"\\']?)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "Strukturpiloten/boxferry",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "automation-v1",
+      "description": "Update annotated shared-source checkout refs without claiming unrelated checkout inputs.",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?<prefix># renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\\n[ \\t]*ref:[ \\t]*)(?<currentDigest>[a-f0-9]{40})"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update each canonical uv release-attachment checksum and its release annotation; the pyproject regex owns the execution version.",
+      "managerFilePatterns": ["/^automation/uv-artifacts\\.json$/"],
+      "matchStrings": [
+        "\"filename\"[ \\t]*:[ \\t]*\"(?<depType>uv-(?:x86_64|aarch64)-unknown-linux-gnu\\.tar\\.gz)\"\\s*,\\s*\"currentVersion\"[ \\t]*:[ \\t]*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"[ \\t]*:[ \\t]*\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "depNameTemplate": "astral-sh/uv",
+      "datasourceTemplate": "github-release-attachments"
+    },
+    {
+      "customType": "regex",
+      "description": "Own the uv execution constraint, which pep621 consumes but does not extract as a versioned dependency.",
+      "managerFilePatterns": ["/^(?:automation/)?pyproject\\.toml$/"],
+      "matchStrings": [
+        "\\[tool\\.uv\\][^\\[]*?required-version[ \\t]*=[ \\t]*\"==(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "depNameTemplate": "uv",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the immutable native Renovate test runtime version and OCI digest atomically.",
+      "managerFilePatterns": ["/^automation/renovate-runtime\\.json$/"],
+      "matchStrings": [
+        "\"image\"[ \\t]*:[ \\t]*\"(?<depName>ghcr\\.io/renovatebot/renovate):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update each canonical downloaded-tool release tag and architecture checksum atomically; asset filenames are computed from version-independent templates.",
+      "managerFilePatterns": ["/^automation/tool-artifacts\\.json$/"],
+      "matchStrings": [
+        "\"repository\"\\s*:\\s*\"(?<depName>tombi-toml/tombi|mvdan/sh|koalaman/shellcheck|hadolint/hadolint|rhysd/actionlint|lycheeverse/lychee)\"\\s*,\\s*\"architecture\"\\s*:\\s*\"(?<depType>x86_64|aarch64)\"\\s*,\\s*\"filenameTemplate\"\\s*:\\s*\"[^\"\\r\\n]+\"\\s*,\\s*\"memberTemplate\"\\s*:\\s*(?:null|\"[^\"\\r\\n]+\")\\s*,\\s*\"archive\"\\s*:\\s*\"(?:binary|tar\\.gz|tar\\.xz)\"\\s*,\\s*\"currentVersion\"\\s*:\\s*\"(?<currentValue>(?:v|lychee-v)[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Own the exact GitHub CLI feature lock record; native devcontainer owns only its declaration, and the guard validates matching version/source/digests.",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer-lock\\.json$/"],
+      "matchStrings": [
+        "\"(?<depName>ghcr\\.io/devcontainers/features/github-cli):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*:\\s*\\{\\s*\"version\"\\s*:\\s*\"[^\"\\n]+\"\\s*,\\s*\"resolved\"\\s*:\\s*\"ghcr\\.io/devcontainers/features/github-cli@(?<currentDigest>sha256:[a-f0-9]{64})\"\\s*,\\s*\"integrity\"\\s*:\\s*\"sha256:[a-f0-9]{64}\"\\s*\\}"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The dedicated SHA updater is the sole active owner of shared presets; native renovate-config cannot advance SHA-only refs.",
+      "matchManagers": ["renovate-config"],
+      "matchPackageNames": ["Strukturpiloten/boxferry"],
+      "enabled": false
+    },
+    {
+      "description": "Exact maintained first-party source releases are age-exempt; names, prefixes and third-party sources cannot inherit this rule.",
+      "matchDatasources": ["github-tags", "github-releases", "github-digest"],
+      "matchPackageNames": [
+        "Strukturpiloten/boxferry",
+        "Strukturpiloten/compose-lens",
+        "Strukturpiloten/podman-lens",
+        "Strukturpiloten/quadlet-lens",
+        "Strukturpiloten/docker-lens",
+        "Strukturpiloten/kubernetes-lens",
+        "Strukturpiloten/boxferry-website"
+      ],
+      "groupName": "First-party source releases",
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Atomically adopt common and Rust presets from the gated first-party tooling branch.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["Strukturpiloten/boxferry"],
+      "groupName": "Shared BoxFerry automation",
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Pin Actions and reusable workflows to immutable source commits.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Group compatible Actions and reusable workflow upgrades.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Group Python package/build declarations and their uv resolution; pep621 owns package declarations and uv.lock.",
+      "matchManagers": ["pep621"],
+      "groupName": "Python automation"
+    },
+    {
+      "description": "Keep the exact Python interpreter visible separately from package tools.",
+      "matchManagers": ["pyenv"],
+      "groupName": "Python interpreter"
+    },
+    {
+      "description": "Group Node development-tool resolution changes.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "Node development tools"
+    },
+    {
+      "description": "Synthetic lock maintenance has no registry publication time; the required dependency-age check owns introduced lock/transitive versions.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Keep preset, manifest, shared workflow and source checkout revisions in one adoption PR, after ordinary Actions grouping.",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "matchPackageNames": ["Strukturpiloten/boxferry"],
+      "groupName": "Shared BoxFerry automation",
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Update the canonical uv requirement and its authoritative setup archive checksum atomically.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-release-attachments", "pypi"],
+      "matchPackageNames": ["astral-sh/uv", "uv"],
+      "groupName": "Python automation"
+    },
+    {
+      "description": "Keep native Renovate validation runtime upgrades isolated and automatically merge after native compatibility checks.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/renovatebot/renovate"],
+      "groupName": "Renovate native test runtime",
+      "automerge": true,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Keep both architecture release tags and verified attachment checksums in one automatic compatibility-tested tool update.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-release-attachments"],
+      "matchPackageNames": [
+        "tombi-toml/tombi",
+        "mvdan/sh",
+        "koalaman/shellcheck",
+        "hadolint/hadolint",
+        "rhysd/actionlint",
+        "lycheeverse/lychee"
+      ],
+      "groupName": "Canonical downloaded tools",
+      "pinDigests": true
+    },
+    {
+      "description": "The required trusted operational guard quarantines missing-date GHCR manifests in exactly these inert image definitions.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["/^ghcr\\.io\\/.+$/"],
+      "matchFileNames": [
+        ".devcontainer/Dockerfile",
+        "automation/renovate-runtime.json",
+        "scripts/renovate-tool.json",
+        "fixtures/conformance/forgejo-application/images.tsv",
+        "fixtures/conformance/immich-application/images.tsv",
+        "fixtures/conformance/nextcloud-application/images.tsv",
+        "fixtures/conformance/observability-application/images.tsv",
+        "fixtures/conformance/paperless-ngx-application/images.tsv",
+        "fixtures/conformance/supabase-application/images.tsv",
+        "fixtures/conformance/podman-live/matrix.tsv"
+      ],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The required trusted operational guard verifies changed GHCR feature locks and quarantines their exact manifests.",
+      "matchManagers": ["devcontainer"],
+      "matchDatasources": ["docker"],
+      "matchDepTypes": ["feature"],
+      "matchPackageNames": ["ghcr.io/devcontainers/features/github-cli"],
+      "matchFileNames": [".devcontainer/devcontainer.json"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "groupName": "Dev Container GitHub CLI feature",
+      "pinDigests": false
+    },
+    {
+      "description": "The required trusted guard observes only the canonical Quay workload probe manifest; other Quay definitions keep native age requirements.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["quay.io/libpod/alpine"],
+      "matchFileNames": ["scripts/podman-live-conformance.sh"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The required trusted guard quarantines literal GitHub-hosted runner selectors; this is selector observation, not immutable runner-image evidence.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-runners"],
+      "matchPackageNames": ["ubuntu", "macos", "windows"],
+      "matchFileNames": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "Update the exact feature declaration and its committed key/version/resolved/integrity lock record atomically, leaving the nested CLI option independent.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/devcontainers/features/github-cli"],
+      "matchFileNames": [".devcontainer/devcontainer-lock.json"],
+      "groupName": "Dev Container GitHub CLI feature",
+      "autoReplaceGlobalMatch": true,
+      "pinDigests": true,
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The trusted guard verifies the reviewed public MCR Rust manifest before its observation hold.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["mcr.microsoft.com/devcontainers/rust"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The trusted guard verifies only the current Codeberg Forgejo catalogue source through its reviewed same-origin public token endpoint.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["codeberg.org/forgejo/forgejo"],
+      "matchFileNames": ["fixtures/conformance/forgejo-application/images.tsv"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    }
+  ]
+}

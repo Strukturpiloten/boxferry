@@ -1,0 +1,81 @@
+---
+name: Shared exact-candidate crate publication
+description: Validate one configured crate, refresh its registry credential, and publish idempotently after an approved caller release gate.
+inputs:
+  candidate-sha:
+    description: Exact release candidate already checked out at source.
+    required: true
+  automation-sha:
+    description: Exact shared automation revision checked out at _automation.
+    required: true
+  release-config:
+    description: Absolute path to the trusted typed release JSON policy.
+    required: true
+  package:
+    description: One crate from the complete configured publication order.
+    required: true
+  validation-sha:
+    description: Candidate SHA output by the complete shared release validation gate.
+    required: true
+  validation-result:
+    description: Result of the complete shared release validation gate; only success is accepted.
+    required: true
+  validation-only:
+    description: Must be false to request publication inside the caller's approved release environment.
+    default: "true"
+  bootstrap-token:
+    description: Optional initial-publication credential; allowed only at the policy's exact bootstrap version.
+    default: ""
+outputs:
+  version:
+    description: Verified lockstep version for this package.
+    value: ${{ steps.prepare.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - name: Check exact release gate, inventory, order, and publication state
+      id: prepare
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        RELEASE_CONFIG: ${{ inputs.release-config }}
+        PACKAGE: ${{ inputs.package }}
+        VALIDATION_SHA: ${{ inputs.validation-sha }}
+        VALIDATION_RESULT: ${{ inputs.validation-result }}
+        VALIDATION_ONLY: ${{ inputs.validation-only }}
+        BOOTSTRAP_TOKEN: ${{ inputs.bootstrap-token }}
+        BOXFERRY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -euo pipefail
+        bootstrap=false
+        if [[ -n "${BOOTSTRAP_TOKEN}" ]]; then bootstrap=true; fi
+        uv run --locked --project _automation/automation python -m boxferry_ci.release prepare-crate \
+          --repository-root source --config "${RELEASE_CONFIG}" --package "${PACKAGE}" \
+          --candidate-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+          --validation-sha "${VALIDATION_SHA}" --validation-result "${VALIDATION_RESULT}" \
+          --validation-only "${VALIDATION_ONLY}" --bootstrap "${bootstrap}"
+    - name: Authenticate only this unpublished crate to crates.io
+      id: auth
+      if: inputs.validation-only == 'false' && steps.prepare.outputs.published == 'false' && steps.prepare.outputs.bootstrap != 'true'
+      uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+    - name: Publish and wait for canonical registry visibility
+      if: inputs.validation-only == 'false' && steps.prepare.outputs.published == 'false'
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        RELEASE_CONFIG: ${{ inputs.release-config }}
+        PACKAGE: ${{ inputs.package }}
+        VALIDATION_SHA: ${{ inputs.validation-sha }}
+        VALIDATION_RESULT: ${{ inputs.validation-result }}
+        BOOTSTRAP: ${{ steps.prepare.outputs.bootstrap }}
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || inputs.bootstrap-token }}
+        BOXFERRY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -euo pipefail
+        uv run --locked --project _automation/automation python -m boxferry_ci.release publish-crate \
+          --repository-root source --config "${RELEASE_CONFIG}" --package "${PACKAGE}" \
+          --candidate-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+          --validation-sha "${VALIDATION_SHA}" --validation-result "${VALIDATION_RESULT}" \
+          --validation-only false --bootstrap "${BOOTSTRAP}"

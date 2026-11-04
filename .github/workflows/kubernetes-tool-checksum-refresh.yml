@@ -1,0 +1,79 @@
+---
+name: Kubernetes tool checksum refresh
+on: # zizmor: ignore[dangerous-triggers] -- Trusted immutable default-branch code reads PR metadata and bounded exact-SHA source text, verifies official artifacts, and never executes candidate code or artifacts.
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: kubernetes-tool-checksum-refresh-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: >-
+      github.repository == 'Strukturpiloten/boxferry' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.event.repository.default_branch == 'main' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'))
+    runs-on: ubuntu-24.04
+    # Covers setup, API revalidation, and two separately bounded 12-minute reads.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted default-branch code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Verify the immutable trusted service revision
+        shell: bash
+        run: test "$(git -C _automation rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Install the canonical locked Python toolchain
+        uses: ./_automation/.github/actions/shared-python
+
+      - name: Check trusted execution context and scan Renovate PRs
+        id: scan
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "Strukturpiloten/boxferry"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          plan_file="${RUNNER_TEMP}/kubernetes-checksum-refresh-plan.json"
+          scan_output="$(uv run --locked --project _automation/automation python \
+            _automation/scripts/kubernetes_tool_checksum_refresh.py \
+            --scan-only --plan-file "${plan_file}")"
+          test "${scan_output}" = "refresh=true" || test "${scan_output}" = "refresh=false"
+          printf 'refresh=%s\n' "${scan_output#refresh=}" >> "${GITHUB_OUTPUT}"
+          printf '%s\n' "${scan_output}"
+
+      - name: Create narrowly scoped release-plz App token
+        if: steps.scan.outputs.refresh == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+          permission-pull-requests: read
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Apply metadata-only checksum commit to the exact Renovate PR head
+        if: steps.scan.outputs.refresh == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PLZ_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python \
+            _automation/scripts/kubernetes_tool_checksum_refresh.py \
+            --apply-plan "${RUNNER_TEMP}/kubernetes-checksum-refresh-plan.json"

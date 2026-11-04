@@ -1,0 +1,15 @@
+---
+name: Locked shared Python tooling
+description: Install the canonical uv release with its upstream archive integrity and locked shared project.
+runs:
+  using: composite
+  steps:
+    - name: Install integrity-pinned uv
+      shell: bash
+      run: >-
+        python3 _automation/automation/src/boxferry_ci/bootstrap.py install-uv
+        --project _automation/automation --cache-root "${RUNNER_TEMP}/boxferry-uv"
+        --github-path "${GITHUB_PATH}" --no-path-uv
+    - name: Verify the locked shared package
+      shell: bash
+      run: uv sync --locked --project _automation/automation

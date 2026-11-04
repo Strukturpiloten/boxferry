@@ -1,0 +1,92 @@
+---
+name: Bound shared automation source
+description: Check out the caller candidate and its independently trusted policy at exact revisions.
+inputs:
+  candidate-sha:
+    description: Exact caller revision tested by this run.
+    required: true
+  automation-sha:
+    description: Exact BoxFerry automation revision already checked out at _automation.
+    required: true
+  policy-sha:
+    description: Trusted PR or merge queue base, otherwise the exact candidate.
+    required: true
+  config-path:
+    description: Repository-relative policy path in the trusted policy checkout.
+    required: true
+outputs:
+  config:
+    description: Absolute path to the independently checked out policy.
+    value: ${{ steps.policy.outputs.config }}
+runs:
+  using: composite
+  steps:
+    - name: Admit immutable caller and policy identities
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        POLICY_SHA: ${{ inputs.policy-sha }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+      run: |
+        set -euo pipefail
+        case "${GITHUB_REPOSITORY}" in
+          Strukturpiloten/boxferry|Strukturpiloten/compose-lens|Strukturpiloten/podman-lens|Strukturpiloten/quadlet-lens|Strukturpiloten/docker-lens|Strukturpiloten/kubernetes-lens|Strukturpiloten/boxferry-website) ;;
+          *) echo 'Caller repository is outside the reviewed automation contract.' >&2; exit 1 ;;
+        esac
+        for revision in "${CANDIDATE_SHA}" "${AUTOMATION_SHA}" "${POLICY_SHA}"; do
+          [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
+        done
+        test "${CANDIDATE_SHA}" = "${GITHUB_SHA}"
+        test "$(git -C _automation rev-parse HEAD)" = "${AUTOMATION_SHA}"
+        case "${EVENT_NAME}" in
+          pull_request) test "${POLICY_SHA}" = "${PR_BASE_SHA}" ;;
+          merge_group) test "${POLICY_SHA}" = "${QUEUE_BASE_SHA}" ;;
+          push|workflow_dispatch) test "${POLICY_SHA}" = "${CANDIDATE_SHA}" ;;
+          *) echo 'Unsupported validation event.' >&2; exit 1 ;;
+        esac
+    - name: Check out caller candidate
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ github.repository }}
+        ref: ${{ inputs.candidate-sha }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Check out trusted caller policy
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ github.repository }}
+        ref: ${{ inputs.policy-sha }}
+        path: _policy
+        persist-credentials: false
+    - name: Verify held candidate and policy paths
+      id: policy
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        POLICY_SHA: ${{ inputs.policy-sha }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        set -euo pipefail
+        test "$(git -C source rev-parse HEAD)" = "${CANDIDATE_SHA}"
+        test "$(git -C _policy rev-parse HEAD)" = "${POLICY_SHA}"
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+
+        root = Path('_policy').resolve(strict=True)
+        configured = os.environ['CONFIG_PATH']
+        if '\n' in configured or '\r' in configured:
+            raise SystemExit('Policy path must not contain output-control characters.')
+        relative = Path(configured)
+        if relative.is_absolute() or '..' in relative.parts or not relative.parts:
+            raise SystemExit('Policy path must remain inside its trusted checkout.')
+        config = (root / relative).resolve(strict=True)
+        if not config.is_relative_to(root) or not config.is_file():
+            raise SystemExit('Policy must be a regular file inside its trusted checkout.')
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write(f'config={config}\n')
+        PY

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boxferry-ci"
+version = "0.1.0"
+description = "Shared, repository-configured BoxFerry workspace validation"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+boxferry-ci = "boxferry_ci.__main__:main"
+
+[dependency-groups]
+# The builder is also resolved here so its transitive artifacts have lockfile hashes.
+dev = ["hatchling==1.33.0", "ruff==0.17.3", "ty==0.0.95"]
+
+[tool.uv]
+required-version = "==0.13.6"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN", "RUF"]
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.terminal]
+error-on-warning = true

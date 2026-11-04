@@ -285,6 +285,31 @@ class ValidationPlanTests(unittest.TestCase):
                 with self.assertRaises(planner.PlanError):
                     planner.verify_gate(plan, needs, POLICY, args)
 
+    def test_merge_queue_is_complete_and_bound_to_exact_base_and_tested_head(self) -> None:
+        write(self.root, "docs/public/concepts/index.md", "# Concepts\n\nQueue prose.\n")
+        head = self.commit()
+        args = arguments(self.root, "merge_group", self.base, head)
+        plan = planner.make_plan(args, POLICY)
+        self.assertEqual(plan["profile"], "full")
+        self.assertTrue(all(plan["jobs"].values()))
+        needs = {job: {"result": "success"} for job in ["validation-plan", *POLICY["jobs"]]}
+        planner.verify_gate(plan, needs, POLICY, args)
+        for key, value in (("base_sha", head), ("head_sha", self.base), ("profile", "prose")):
+            with self.subTest(key=key), self.assertRaises(planner.PlanError):
+                planner.verify_gate({**plan, key: value}, needs, POLICY, args)
+        for result in ("skipped", "failure", "cancelled", None):
+            needs["rust"]["result"] = result
+            with self.subTest(result=result), self.assertRaises(planner.PlanError):
+                planner.verify_gate(plan, needs, POLICY, args)
+        args.tested_sha = self.base
+        with self.assertRaises(planner.PlanError):
+            planner.make_plan(args, POLICY)
+        for base in ("", "main", self.base[:12], "0" * 40):
+            with self.subTest(base=base), self.assertRaises(planner.PlanError):
+                planner.make_plan(arguments(self.root, "merge_group", base, head), POLICY)
+        with self.assertRaises(planner.PlanError):
+            planner.make_plan(arguments(self.root, "merge_group", head, self.base), POLICY)
+
     def test_required_ci_is_the_real_always_running_aggregate(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         aggregates = re.findall(
@@ -300,10 +325,10 @@ class ValidationPlanTests(unittest.TestCase):
         assert dependencies is not None
         jobs = [name.strip() for name in dependencies[1].split(",") if name.strip()]
         self.assertEqual(len(jobs), len(set(jobs)))
-        self.assertEqual(set(jobs), {"release-binaries", "validation-plan", *POLICY["jobs"]})
+        self.assertEqual(set(jobs), {"release-binaries", "automation", "canonical-artifact-integrity", "kubernetes-artifact-integrity", "compose-provider-integrity", "validation-plan", *POLICY["jobs"]})
         self.assertIn('python3 "${verifier}" gate --policy-root "${policy_root}"', aggregate)
 
-    def test_binary_gate_projection_is_monotonic_and_fail_closed(self) -> None:
+    def test_mandatory_gate_projection_is_monotonic_and_fail_closed(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         blocks = re.findall(r"(?ms)^          NEEDS_JSON=\$\(python3 - <<'BINARY_NEEDS_PY'\n(.*?)^          BINARY_NEEDS_PY$", workflow)
         self.assertEqual(len(blocks), 1)
@@ -314,22 +339,78 @@ class ValidationPlanTests(unittest.TestCase):
         def project(value):
             raw = value if isinstance(value, str) else json.dumps(value)
             return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": raw}, capture_output=True, text=True, check=False)
-        valid = {**old, "release-binaries": {"result": "success"}}
+        mandatory = {job: {"result": "success"} for job in (
+            "release-binaries", "automation", "canonical-artifact-integrity",
+            "kubernetes-artifact-integrity", "compose-provider-integrity",
+        )}
+        valid = {**old, **mandatory}
         result = project(valid)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), old)
         for value in [old, [], None, "{", '{"release-binaries":{"result":"success"},"release-binaries":{"result":"success"}}']:
             self.assertNotEqual(project(value).returncode, 0)
-        for result in ["skipped", "failure", "cancelled", None, ""]:
-            with self.subTest(result=result):
-                self.assertNotEqual(project({**old, "release-binaries": {"result": result}}).returncode, 0)
-        for invalid in [None, [], "success", {}]:
-            self.assertNotEqual(project({**old, "release-binaries": invalid}).returncode, 0)
+        for required in mandatory:
+            with self.subTest(required=required, missing=True):
+                self.assertNotEqual(project({key: value for key, value in valid.items() if key != required}).returncode, 0)
+            for result in ["skipped", "failure", "cancelled", "timed_out", None, ""]:
+                with self.subTest(required=required, result=result):
+                    self.assertNotEqual(project({**valid, required: {"result": result}}).returncode, 0)
+            for invalid in [None, [], "success", {}]:
+                with self.subTest(required=required, invalid=invalid):
+                    self.assertNotEqual(project({**valid, required: invalid}).returncode, 0)
         # Projection preserves old failures, missing keys, and extra keys for the trusted verifier.
         for changed in [{**old, "rust": {"result": "failure"}}, {key: value for key, value in old.items() if key != "rust"}, {**old, "extra": {"result": "success"}}]:
-            result = project({**changed, "release-binaries": {"result": "success"}})
+            result = project({**changed, **mandatory})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), changed)
+
+    def test_producer_artifact_jobs_are_separate_mandatory_read_only_candidate_checks(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        contracts = {
+            "canonical-artifact-integrity": (15, "boxferry_ci.asset_verification", 'CANONICAL_CANDIDATE_SHA: ${{ github.sha }}', '--candidate-sha "${CANONICAL_CANDIDATE_SHA}"'),
+            "kubernetes-artifact-integrity": (17, "uv run --locked --project _automation/automation python _automation/scripts/kubernetes_tool_checksum_refresh.py", '--verify-git-ref "${GITHUB_SHA}"', '--repository-root _automation'),
+            "compose-provider-integrity": (17, "boxferry_ci.compose_provider", 'CANDIDATE_SHA: ${{ github.sha }}', '--candidate-sha "${CANDIDATE_SHA}"'),
+        }
+        renovate = json.loads((SOURCE_ROOT / ".github/renovate.json").read_text(encoding="utf-8"))
+        automation = re.search(r"(?ms)^  automation:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow)
+        self.assertIsNotNone(automation)
+        assert automation is not None
+        self.assertIn("    timeout-minutes: 10\n", automation[1])
+        for job, (timeout, command, binding, mode) in contracts.items():
+            with self.subTest(job=job):
+                matches = re.findall(r"(?ms)^  " + re.escape(job) + r":\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow)
+                self.assertEqual(len(matches), 1)
+                body = matches[0]
+                runner = re.search(r"(?m)^    runs-on: (ubuntu-([0-9]{2})\.([0-9]{2})(-arm)?)$", body)
+                self.assertIsNotNone(runner, "producer checks require a fixed GitHub-hosted Ubuntu label")
+                assert runner is not None
+                # Exercise a normal future Renovate upgrade without freezing the current version.
+                advanced = body.replace(runner[1], f"ubuntu-{int(runner[2]) + 2:02d}.{runner[3]}{runner[4] or ''}", 1)
+                self.assertNotEqual(advanced, body)
+                for candidate_body in (body, advanced):
+                    owners = []
+                    for manager in renovate["customManagers"]:
+                        if manager.get("datasourceTemplate") != "github-runners":
+                            continue
+                        paths = manager.get("managerFilePatterns", [])
+                        if not any(pattern.startswith("/") and pattern.endswith("/") and re.search(pattern[1:-1], ".github/workflows/ci.yml") for pattern in paths):
+                            continue
+                        for pattern in manager.get("matchStrings", []):
+                            matches = re.findall(pattern.replace("(?<", "(?P<"), candidate_body)
+                            owners.extend((manager, match) for match in matches)
+                    self.assertEqual(len(owners), 1, "each runner must have one existing Renovate owner")
+                    self.assertEqual(owners[0][1][0], "ubuntu")
+                for expected in (
+                    f"    timeout-minutes: {timeout}\n",
+                    "ref: ${{ github.sha }}", "path: _automation", "persist-credentials: false",
+                    "uses: ./_automation/.github/actions/shared-python", command, binding, mode,
+                    "--repository-root _automation",
+                ):
+                    self.assertIn(expected, body)
+                for forbidden in ("    if:", "    needs:", "continue-on-error", "secrets.", "secrets:", "token:", "permissions:", "contents: write", "--write", "--working-tree", "--refresh", "install-kubernetes-tools.sh", "compose-provider.sh"):
+                    self.assertNotIn(forbidden, body)
+                self.assertNotIn(command, automation[1])
+                self.assertNotIn(job, POLICY["jobs"])
 
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -349,7 +430,7 @@ class ValidationPlanTests(unittest.TestCase):
             output = Path(directory) / "github-output"
             environment = {
                 **os.environ, "BASE_SHA": self.base, "HEAD_SHA": self.base,
-                "GITHUB_SHA": self.base, "GITHUB_OUTPUT": str(output),
+                "GITHUB_SHA": self.base, "GITHUB_OUTPUT": str(output), "EVENT_NAME": "pull_request",
             }
             planned = subprocess.run(
                 [sys.executable, "-c", planner_code], env=environment,
@@ -381,6 +462,58 @@ class ValidationPlanTests(unittest.TestCase):
                 capture_output=True, text=True, check=False,
             )
             self.assertNotEqual(rejected.returncode, 0)
+
+    def test_queue_workflow_bootstrap_is_full_and_never_accepts_stale_or_skipped_results(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("  merge_group:\n    types: [checks_requested]", workflow)
+        self.assertIn("github.event.merge_group.base_sha", workflow)
+        self.assertIn("github.event.merge_group.head_sha", workflow)
+        blocks = re.findall(
+            r"(?ms)^[ \t]+python3 - <<'PY'(?: \| tee -a \"\$\{GITHUB_STEP_SUMMARY\}\")?\n(.*?)^[ \t]+PY$",
+            workflow,
+        )
+        planner_code, gate_code = (textwrap.dedent(block) for block in blocks)
+        write(self.root, "docs/public/concepts/index.md", "# Concepts\n\nQueue prose.\n")
+        head = self.commit()
+        output = self.root / "queue-output"
+        environment = {**os.environ, "EVENT_NAME": "merge_group", "BASE_SHA": self.base,
+                       "HEAD_SHA": head, "GITHUB_SHA": head, "GITHUB_OUTPUT": str(output)}
+        planned = subprocess.run([sys.executable, "-c", planner_code], cwd=self.root, env=environment,
+                                 capture_output=True, text=True, check=False)
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        fields = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        plan = json.loads(fields["plan"])
+        self.assertEqual((plan["event"], plan["base_sha"], plan["head_sha"], plan["tested_sha"]),
+                         ("merge_group", self.base, head, head))
+        self.assertTrue(all(plan["jobs"].values()))
+        needs = {job: {"result": "success"} for job in ["validation-plan", *POLICY["jobs"]]}
+        environment.update(PLAN_JSON=fields["plan"], NEEDS_JSON=json.dumps(needs))
+        valid = subprocess.run([sys.executable, "-c", gate_code], env=environment,
+                               capture_output=True, text=True, check=False)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        for result in ("skipped", "failure", "cancelled"):
+            needs["rust"]["result"] = result
+            environment["NEEDS_JSON"] = json.dumps(needs)
+            rejected = subprocess.run([sys.executable, "-c", gate_code], env=environment,
+                                      capture_output=True, text=True, check=False)
+            self.assertNotEqual(rejected.returncode, 0)
+        for key in ("BASE_SHA", "HEAD_SHA", "GITHUB_SHA"):
+            wrong = {**environment, key: self.base[:12]}
+            rejected = subprocess.run([sys.executable, "-c", planner_code], cwd=self.root, env=wrong,
+                                      capture_output=True, text=True, check=False)
+            self.assertNotEqual(rejected.returncode, 0)
+
+    def test_automation_package_is_mandatory_and_age_checks_include_queue(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        automation = workflow.split("  automation:\n", 1)[1].split("  canonical-artifact-integrity:\n", 1)[0]
+        self.assertNotIn("    if:", automation)
+        self.assertIn("uses: ./_automation/.github/actions/shared-python", automation)
+        for command in ("ruff format --check", "ruff check", "ty check", "unittest discover"):
+            self.assertIn(command, automation)
+        age = workflow.split("  lockfile-release-age:\n", 1)[1].split("  pr-gate:\n", 1)[0]
+        self.assertEqual(age.count("if: github.event_name == 'pull_request' || github.event_name == 'merge_group'"), 3)
+        self.assertIn("github.event.merge_group.base_sha", age)
+        self.assertIn("github.event.merge_group.head_sha", age)
 
 
 if __name__ == "__main__":

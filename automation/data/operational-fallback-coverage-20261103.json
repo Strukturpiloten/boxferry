@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "policy": "bounded-operational-first-seen-v1",
+  "covered_sources": [
+    "GHCR digest-pinned image declarations in the fixed readers",
+    "GHCR versioned Dev Container feature declarations with matching locks",
+    "quay.io/libpod/alpine canonical workload probe",
+    "Literal GitHub-hosted runner selectors in covered workflow grammars",
+    "Exact mcr.microsoft.com/devcontainers/rust annotated Dev Container source",
+    "Actual codeberg.org/forgejo/forgejo active catalogue source"
+  ],
+  "immutable_identity": "OCI registry/repository/manifest-SHA256; tags, paths and Git revisions are excluded",
+  "runner_evidence": "Selector observation only; no immutable hosted runner image claim",
+  "uncovered_sources": [
+    {
+      "source": "code.forgejo.org/forgejo/forgejo",
+      "status": "Not the current canonical source; no new timestamp-optional rule."
+    },
+    {
+      "source": "All other unreviewed OCI registry/repository origins",
+      "status": "Structured coverage gap only; native timestamp-required remains unchanged."
+    }
+  ],
+  "fixed_exclusions": [
+    "scripts/native-runtime-pins.sh (qualified Podman/Fedora tuple)",
+    "scripts/kind-vm-image.json (FCOS VM target)"
+  ],
+  "snapshot_integration": "The trusted eligibility service selects inert owned files, feature counterparts and existing rename evidence, and shares its existing request/deadline accounting.",
+  "limits": "The current trusted file/response/request/state budgets are retained; no images, layers, scripts, candidate configuration, or native Renovate executable run in the service.",
+  "probe_evidence": {
+    "mcr": "Current exact public manifest bytes matched committed SHA-256; schema-2 OCI index.",
+    "forgejo": "Actual current source is codeberg.org, not code.forgejo.org. Same-origin /v2/token with service container_registry yielded exact manifest bytes matching committed SHA-256; schema-2 OCI index."
+  }
+}
