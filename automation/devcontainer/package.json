@@ -1,0 +1,12 @@
+{
+  "name": "boxferry-devcontainer-tools",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Trusted official Dev Container graph generator; no install scripts.",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@devcontainers/cli": "0.89.0"
+  }
+}

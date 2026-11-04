@@ -414,6 +414,62 @@ class DependencyTests(unittest.TestCase):
         self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["results"][0]["age_evidence"], "artifact-first-seen")
 
+    def test_isolated_devcontainer_cli_integrity_keeps_full_72_hour_hold(self) -> None:
+        lock = self.head / "automation/devcontainer/package-lock.json"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/@devcontainers/cli": {
+                            "version": "0.89.0",
+                            "resolved": "https://registry.npmjs.org/@devcontainers/cli/-/cli-0.89.0.tgz",
+                            "integrity": SRI,
+                        }
+                    },
+                }
+            )
+        )
+        urls = []
+
+        def fetch(url: str) -> bytes:
+            urls.append(url)
+            return json.dumps(
+                {"name": "@devcontainers/cli", "version": "0.89.0", "dist": {"integrity": SRI}}
+            ).encode()
+
+        context = DependencyContext(
+            "strukturpiloten-release-plz[bot]",
+            "Bot",
+            "Strukturpiloten/boxferry",
+            "a" * 40,
+            "b" * 40,
+            ("automation/devcontainer/package-lock.json",),
+        )
+        initial = self.check(fetch, context=context)
+        self.assertEqual(initial["status"], "waiting")
+        self.assertFalse(initial["first_party_exempt"])
+        self.assertEqual(urls, ["https://registry.npmjs.org/%40devcontainers%2Fcli/0.89.0"])
+        before = check_dependencies(
+            self.base,
+            self.head,
+            fetch=fetch,
+            context=context,
+            state=initial["state"],
+            now=NOW + timedelta(hours=72) - timedelta(seconds=1),
+        )
+        boundary = check_dependencies(
+            self.base,
+            self.head,
+            fetch=fetch,
+            context=context,
+            state=initial["state"],
+            now=NOW + timedelta(hours=72),
+        )
+        self.assertEqual(before["status"], "waiting")
+        self.assertEqual(boundary["status"], "pass")
+
     def test_python_checks_all_locked_artifact_uploads(self) -> None:
         (self.head / "automation").mkdir()
         (self.head / "automation/uv.lock").write_text(f"""version = 1

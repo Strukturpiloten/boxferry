@@ -113,16 +113,6 @@
       ],
       "datasourceTemplate": "github-release-attachments",
       "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
-    },
-    {
-      "customType": "regex",
-      "description": "Own the exact GitHub CLI feature lock record; native devcontainer owns only its declaration, and the guard validates matching version/source/digests.",
-      "managerFilePatterns": ["/^\\.devcontainer/devcontainer-lock\\.json$/"],
-      "matchStrings": [
-        "\"(?<depName>ghcr\\.io/devcontainers/features/github-cli):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*:\\s*\\{\\s*\"version\"\\s*:\\s*\"[^\"\\n]+\"\\s*,\\s*\"resolved\"\\s*:\\s*\"ghcr\\.io/devcontainers/features/github-cli@(?<currentDigest>sha256:[a-f0-9]{64})\"\\s*,\\s*\"integrity\"\\s*:\\s*\"sha256:[a-f0-9]{64}\"\\s*\\}"
-      ],
-      "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
     }
   ],
   "packageRules": [
@@ -195,6 +185,15 @@
       "minimumReleaseAge": "0 days"
     },
     {
+      "description": "Adopt the exact Dev Container Node image with the selected shared source after producer Node CI admission; retain ordinary image age.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/library/node"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "groupName": "Shared BoxFerry automation",
+      "separateMajorMinor": false
+    },
+    {
       "description": "Update the canonical uv requirement and its authoritative setup archive checksum atomically.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["github-release-attachments", "pypi"],
@@ -245,17 +244,6 @@
       "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
-      "description": "The required trusted operational guard verifies changed GHCR feature locks and quarantines their exact manifests.",
-      "matchManagers": ["devcontainer"],
-      "matchDatasources": ["docker"],
-      "matchDepTypes": ["feature"],
-      "matchPackageNames": ["ghcr.io/devcontainers/features/github-cli"],
-      "matchFileNames": [".devcontainer/devcontainer.json"],
-      "minimumReleaseAgeBehaviour": "timestamp-optional",
-      "groupName": "Dev Container GitHub CLI feature",
-      "pinDigests": false
-    },
-    {
       "description": "The required trusted guard observes only the canonical Quay workload probe manifest; other Quay definitions keep native age requirements.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
@@ -269,17 +257,6 @@
       "matchDatasources": ["github-runners"],
       "matchPackageNames": ["ubuntu", "macos", "windows"],
       "matchFileNames": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
-      "minimumReleaseAgeBehaviour": "timestamp-optional"
-    },
-    {
-      "description": "Update the exact feature declaration and its committed key/version/resolved/integrity lock record atomically, leaving the nested CLI option independent.",
-      "matchManagers": ["custom.regex"],
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/devcontainers/features/github-cli"],
-      "matchFileNames": [".devcontainer/devcontainer-lock.json"],
-      "groupName": "Dev Container GitHub CLI feature",
-      "autoReplaceGlobalMatch": true,
-      "pinDigests": true,
       "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
@@ -297,6 +274,20 @@
       "matchPackageNames": ["codeberg.org/forgejo/forgejo"],
       "matchFileNames": ["fixtures/conformance/forgejo-application/images.tsv"],
       "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The limited Actions-hosted Renovate instance exclusively owns native feature declarations and official whole-graph locks.",
+      "matchManagers": ["devcontainer"],
+      "matchDepTypes": ["feature"],
+      "enabled": false
+    },
+    {
+      "description": "The limited feature updater exclusively owns the exact nested GitHub CLI option; other GitHub CLI packages retain their current owners.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["cli/cli"],
+      "matchFileNames": [".devcontainer/devcontainer.json"],
+      "enabled": false
     }
   ]
 }

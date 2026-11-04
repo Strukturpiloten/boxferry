@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import io
@@ -19,11 +20,13 @@ from dataclasses import replace
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+from boxferry_ci import bootstrap, runner
 from boxferry_ci import tooling as subject
+from boxferry_ci.runner import Diagnostic, RunResult
 
 ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD = b"verified executable bytes\n"
@@ -815,6 +818,262 @@ class InstallationTests(unittest.TestCase):
             code = shared_main(["tools", "--destination", "/tmp/tools", "--tools", "actionlint"])
         self.assertEqual(code, 0)
         self.assertEqual(install.call_args.args, (Path("/tmp/tools"), ("actionlint",)))
+
+
+class PythonToolExportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.project = self.root / "automation"
+        self.project.mkdir()
+        for name in ("pyproject.toml", "uv.lock", "uv-artifacts.json"):
+            shutil.copyfile(ROOT / "automation" / name, self.project / name)
+        self.versions = subject._python_versions(self.project)
+        self.environment = self.project / ".venv"
+        (self.environment / "bin").mkdir(parents=True)
+        site = self.environment / "lib/site-packages"
+        site.mkdir(parents=True)
+        self.distributions: dict[str, Mock] = {}
+        for name in ("ruff", "ty"):
+            binary = self.environment / "bin" / name
+            binary.write_bytes(b"\x7fELF" + name.encode() + b" fixture native bytes")
+            binary.chmod(0o700)
+            digest = (
+                base64.urlsafe_b64encode(hashlib.sha256(binary.read_bytes()).digest())
+                .decode()
+                .rstrip("=")
+            )
+            record = Mock()
+            record.hash = Mock(mode="sha256", value=digest)
+            distribution = Mock(version=self.versions[name], files=[record])
+            distribution.locate_file.side_effect = lambda item, name=name: str(
+                site if item == "" else site / "../../bin" / name
+            )
+            self.distributions[name] = distribution
+        self.uv = self.root / "private-uv-cache/uv"
+        self.uv.parent.mkdir()
+        self.uv.write_bytes(b"\x7fELFfixture uv bytes")
+        self.destination = self.root / "public/bin"
+        self.prefix = patch.object(subject.sys, "prefix", str(self.environment))
+        self.env = patch.dict(os.environ, {"UV_PROJECT_ENVIRONMENT": str(self.environment)})
+        self.metadata = patch.object(
+            subject.metadata, "distribution", side_effect=self.distributions.__getitem__
+        )
+        self.bootstrap = patch.object(bootstrap, "ensure_uv", return_value=self.uv)
+        self.probes = patch.object(runner, "run", side_effect=self.probe)
+        for manager in (self.prefix, self.env, self.metadata, self.bootstrap, self.probes):
+            manager.start()
+            self.addCleanup(manager.stop)
+
+    def probe(self, argv: tuple[str, ...], **kwargs: object) -> RunResult:
+        name = Path(argv[0]).name
+        self.assertEqual(argv[1:], ("--version",))
+        return RunResult(
+            "success",
+            0,
+            f"{name} {self.versions[name]}\n",
+            "",
+            0,
+            Diagnostic("version", "fixture", name, "local", "none"),
+            argv,
+        )
+
+    def export(self) -> dict[str, str]:
+        return subject.install_python_tools(self.destination, project=self.project)
+
+    def test_copies_exact_locked_binaries_without_private_cache_or_python_links(self) -> None:
+        with patch.object(bootstrap, "ensure_uv", return_value=self.uv) as acquire:
+            self.assertEqual(self.export(), self.versions)
+        acquire.assert_called_once()
+        self.assertEqual(acquire.call_args.args[0], self.project)
+        cache = acquire.call_args.args[1]
+        self.assertTrue(cache.is_relative_to(self.destination))
+        self.assertFalse(cache.is_relative_to(self.project))
+        self.assertFalse(cache.exists())
+        self.assertEqual(acquire.call_args.kwargs, {"prefer_path": False})
+        for name in ("uv", "ruff", "ty"):
+            target = self.destination / name
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+            self.assertTrue(target.read_bytes().startswith(b"\x7fELF"))
+            source = self.uv if name == "uv" else self.environment / "bin" / name
+            self.assertNotEqual(source.stat().st_ino, target.stat().st_ino)
+        self.assertFalse((self.destination / "python").exists())
+        shutil.rmtree(self.environment)
+        self.uv.unlink()
+        self.assertTrue(all((self.destination / name).is_file() for name in self.versions))
+
+    def test_readonly_project_is_unchanged_with_real_uv_cache_verification(self) -> None:
+        self.bootstrap.stop()
+        filename = bootstrap.uv_host_asset()
+        raw = io.BytesIO()
+        payload = self.uv.read_bytes()
+        with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+            archive_root = filename.removesuffix(".tar.gz")
+            directory = tarfile.TarInfo(archive_root)
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
+            for name in ("uv", "uvx"):
+                entry = tarfile.TarInfo(archive_root + "/" + name)
+                entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload))
+        archive_bytes = raw.getvalue()
+        metadata_path = self.project / "uv-artifacts.json"
+        metadata = json.loads(metadata_path.read_text())
+        for row in metadata["assets"]:
+            if row["filename"] == filename:
+                row["sha256"] = hashlib.sha256(archive_bytes).hexdigest()
+        metadata_path.write_text(json.dumps(metadata))
+        inventory = {
+            path.relative_to(self.project).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+        for path in self.project.rglob("*"):
+            path.chmod(0o555 if path.is_dir() else 0o444)
+        self.project.chmod(0o555)
+        try:
+            with (
+                patch.object(
+                    bootstrap,
+                    "download_uv_archive",
+                    side_effect=lambda version, filename, destination: destination.write_bytes(
+                        archive_bytes
+                    ),
+                ) as acquire,
+                patch.object(bootstrap, "uv_version_matches", return_value=True),
+            ):
+                self.assertEqual(self.export(), self.versions)
+            self.assertEqual(acquire.call_count, 1)
+            downloaded = acquire.call_args.args[2]
+            self.assertTrue(downloaded.is_relative_to(self.destination))
+            self.assertFalse(downloaded.exists())
+            self.assertEqual(
+                {
+                    path.relative_to(self.project).as_posix(): hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                    for path in self.project.rglob("*")
+                    if path.is_file()
+                },
+                inventory,
+            )
+            self.assertEqual(
+                set(path.name for path in self.destination.iterdir()), set(self.versions)
+            )
+            for name in self.versions:
+                self.assertFalse((self.destination / name).is_symlink())
+                self.assertEqual((self.destination / name).stat().st_mode & 0o777, 0o755)
+        finally:
+            self.project.chmod(0o755)
+            for path in self.project.rglob("*"):
+                path.chmod(0o755 if path.is_dir() else 0o644)
+
+    def test_wrong_version_or_record_digest_never_replaces_existing_binaries(self) -> None:
+        for defect in ("version", "record"):
+            with self.subTest(defect=defect):
+                self.destination.mkdir(parents=True, exist_ok=True)
+                for name in self.versions:
+                    (self.destination / name).write_bytes(b"unrelated original")
+                distribution = self.distributions["ruff"]
+                distribution.version = "9.9.9" if defect == "version" else self.versions["ruff"]
+                distribution.files[0].hash.value = (
+                    "wrong" if defect == "record" else distribution.files[0].hash.value
+                )
+                with self.assertRaises(subject.ToolError):
+                    self.export()
+                self.assertTrue(
+                    all(
+                        (self.destination / name).read_bytes() == b"unrelated original"
+                        for name in self.versions
+                    )
+                )
+
+    def test_failed_probe_leaves_targets_intact(self) -> None:
+        self.destination.mkdir(parents=True)
+        for name in self.versions:
+            (self.destination / name).write_bytes(b"original")
+        with patch.object(
+            runner,
+            "run",
+            return_value=RunResult(
+                "failed",
+                1,
+                "",
+                "bad",
+                0,
+                Diagnostic("probe", "failed", "ty", "local", "retry"),
+                ("ty", "--version"),
+            ),
+        ):
+            with self.assertRaisesRegex(subject.ToolError, "version probe"):
+                self.export()
+        self.assertTrue(
+            all((self.destination / name).read_bytes() == b"original" for name in self.versions)
+        )
+
+    def test_rejects_inactive_environment_symlink_target_and_non_native_wrapper(self) -> None:
+        with patch.object(subject.sys, "prefix", str(self.root / "other-environment")):
+            with self.assertRaisesRegex(subject.ToolError, "active locked"):
+                self.export()
+        self.destination.mkdir(parents=True)
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"keep")
+        (self.destination / "uv").symlink_to(sentinel)
+        with self.assertRaisesRegex(subject.ToolError, "linked"):
+            self.export()
+        self.assertEqual(sentinel.read_bytes(), b"keep")
+        (self.destination / "uv").unlink()
+        self.uv.write_text("#!/root/private/python\n")
+        with self.assertRaisesRegex(subject.ToolError, "standalone native"):
+            self.export()
+
+    def test_rejects_changed_lock_integrity_and_unsupported_host(self) -> None:
+        text = (self.project / "uv.lock").read_text()
+        (self.project / "uv.lock").write_text(text.replace("sha256:", "unverified:", 1))
+        # Change a Ruff wheel specifically; unrelated package integrity is owned by uv.
+        offset = text.index('name = "ruff"')
+        (self.project / "uv.lock").write_text(
+            text[:offset] + text[offset:].replace("sha256:", "unverified:")
+        )
+        with self.assertRaisesRegex(subject.ToolError, "integrity"):
+            self.export()
+        with patch.object(subject.platform, "system", return_value="Darwin"):
+            with self.assertRaisesRegex(subject.ToolError, "Linux"):
+                self.export()
+
+    def test_invalid_lock_and_active_environment_destination_fail_actionably(self) -> None:
+        with self.assertRaisesRegex(subject.ToolError, "must not modify"):
+            subject.install_python_tools(self.environment / "bin", project=self.project)
+        (self.project / "uv.lock").write_text("not valid TOML [")
+        with self.assertRaisesRegex(subject.ToolError, "restore the selected locked source"):
+            self.export()
+
+    def test_cli_can_combine_downloaded_and_python_tools_or_select_python_alone(self) -> None:
+        with (
+            patch.object(subject, "install", return_value=[]) as install,
+            patch.object(subject, "install_python_tools", return_value=self.versions) as export,
+        ):
+            self.assertEqual(
+                subject.main(["--destination", str(self.destination), "--python-tools"]), 0
+            )
+            install.assert_not_called()
+            self.assertEqual(
+                subject.main(
+                    [
+                        "--destination",
+                        str(self.destination),
+                        "--tools",
+                        "actionlint",
+                        "lychee",
+                        "--python-tools",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(install.call_args.args[1], ("actionlint", "lychee"))
+            self.assertEqual(export.call_count, 2)
 
 
 class ConsumerContractTests(unittest.TestCase):

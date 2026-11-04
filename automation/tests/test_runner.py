@@ -19,6 +19,28 @@ class Runner(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def test_resource_monitor_failure_cleans_the_held_process_group(self) -> None:
+        pid = self.root / "child.pid"
+        program = (
+            "import os,time; from pathlib import Path; "
+            "Path('child.pid').write_text(str(os.getpid())); time.sleep(30)"
+        )
+
+        def monitor() -> None:
+            if pid.exists():
+                raise ContractError("fixture disk reserve exhausted")
+
+        with self.assertRaisesRegex(ContractError, "fixture disk reserve"):
+            run(
+                (sys.executable, "-c", program),
+                cwd=self.root,
+                stage="monitor",
+                timeout_seconds=5,
+                monitor=monitor,
+            )
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pid.read_text()), 0)
+
     def test_both_streams_and_original_exit_failure_are_preserved(self) -> None:
         result = run(
             (

@@ -58,16 +58,15 @@ bash .devcontainer/verify-tools.sh
 
 Rebuild the Dev Container after pulling the fix.
 
-## Refresh the Dev Container feature lock
+## Dev Container feature updates
 
-Renovate feature updates leave the checksum-bearing lock unchanged. Regenerate it before review:
+The [locked official generator](../automation/devcontainer/) owns feature-lock generation;
+its npm declaration and lock are canonical. Installation uses `npm ci --ignore-scripts`.
+The trusted helper validates the whole graph before replacing the lock.
 
-```console
-npx --yes @devcontainers/cli@0.89.0 upgrade --workspace-folder .
-```
-
-Commit the manifest and lock file together; never replace the Renovate-managed CLI pin with
-`latest`.
+Hosted feature proposals remain held. Inactive producer code can be admitted after complete
+gates and main CI; each consumer needs explicit seed/adoption and successful native image/tool
+qualification before automatic activation. See [ADR 0094](decisions/0094-official-devcontainer-feature-updates.md).
 
 ## Local verification
 

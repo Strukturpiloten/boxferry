@@ -8201,7 +8201,6 @@ fn validate_renovate_lock_maintenance(
 
     for description in [
         "Review GitHub-hosted runner environment upgrades manually",
-        "Keep Dev Container feature versions current; the lock file owns digests",
         "Require explicit revalidation for live application and workload images",
     ] {
         let (position, rule) = package_rules
@@ -8216,6 +8215,126 @@ fn validate_renovate_lock_maintenance(
         }
     }
 
+    validate_hosted_devcontainer_ownership(renovate, package_rules, lock_position)?;
+    Ok(())
+}
+
+fn validate_hosted_devcontainer_ownership(
+    renovate: &serde_json::Value,
+    package_rules: &[serde_json::Value],
+    after_position: usize,
+) -> Result<(), String> {
+    // ADR 0094 moves generation to the limited producer; hosted owners stay inactive.
+    for selectors in [
+        serde_json::json!({"matchManagers": ["devcontainer"], "matchDepTypes": ["feature"]}),
+        serde_json::json!({"matchManagers": ["custom.regex"], "matchDatasources": ["github-releases"],
+            "matchPackageNames": ["cli/cli"], "matchFileNames": [".devcontainer/devcontainer.json"]}),
+    ] {
+        let selectors = selectors.as_object().ok_or("owner selectors must be an object")?;
+        let owners = package_rules
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| selectors.iter().all(|(key, value)| rule.get(key) == Some(value)))
+            .collect::<Vec<_>>();
+        if owners.len() != 1 {
+            return Err(
+                "hosted Dev Container features and nested GitHub CLI each need one exact disabled owner".to_owned(),
+            );
+        }
+        let (position, owner) = owners[0];
+        if position <= after_position
+            || owner["enabled"] != false
+            || [
+                "matchManagers",
+                "matchDepTypes",
+                "matchDatasources",
+                "matchPackageNames",
+                "matchFileNames",
+                "matchUpdateTypes",
+            ]
+            .iter()
+            .any(|key| !selectors.contains_key(*key) && owner.get(*key).is_some())
+        {
+            return Err(
+                "hosted Dev Container owners must be disabled after automerge rules without narrowed coverage"
+                    .to_owned(),
+            );
+        }
+    }
+    if renovate["customManagers"]
+        .as_array()
+        .ok_or("Renovate custom managers are missing")?
+        .iter()
+        .any(|manager| {
+            manager["managerFilePatterns"].as_array().is_some_and(|patterns| {
+                patterns
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .any(|pattern| pattern.contains("devcontainer-lock"))
+            })
+        })
+    {
+        return Err("official whole-graph generation must not compete with a hosted lock-record regex".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn hosted_devcontainer_ownership_rejects_wrong_or_competing_partitions() -> Result<(), String> {
+    let text = fs::read_to_string(repository_root().join(".github/renovate.json"))
+        .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
+    let renovate: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let rules = renovate["packageRules"].as_array().ok_or("missing rules")?;
+    validate_renovate_lock_maintenance(&renovate, rules)?;
+    let feature = rules
+        .iter()
+        .position(|rule| rule["matchManagers"] == serde_json::json!(["devcontainer"]))
+        .ok_or("missing feature partition")?;
+    let cli = rules
+        .iter()
+        .position(|rule| rule["matchPackageNames"] == serde_json::json!(["cli/cli"]))
+        .ok_or("missing CLI partition")?;
+    for mutation in [
+        "feature-enabled",
+        "feature-manager",
+        "feature-type",
+        "feature-narrowed",
+        "cli-enabled",
+        "cli-manager",
+        "cli-path",
+        "cli-package",
+        "cli-datasource",
+        "duplicate-owner",
+        "lock-regex",
+    ] {
+        let mut changed = renovate.clone();
+        match mutation {
+            "feature-enabled" => changed["packageRules"][feature]["enabled"] = serde_json::json!(true),
+            "feature-manager" => changed["packageRules"][feature]["matchManagers"] = serde_json::json!(["custom.regex"]),
+            "feature-type" => changed["packageRules"][feature]["matchDepTypes"] = serde_json::json!(["image"]),
+            "feature-narrowed" => changed["packageRules"][feature]["matchFileNames"] = serde_json::json!(["unrelated.json"]),
+            "cli-enabled" => changed["packageRules"][cli]["enabled"] = serde_json::json!(true),
+            "cli-manager" => changed["packageRules"][cli]["matchManagers"] = serde_json::json!(["npm"]),
+            "cli-path" => changed["packageRules"][cli]["matchFileNames"] = serde_json::json!(["package.json"]),
+            "cli-package" => changed["packageRules"][cli]["matchPackageNames"] = serde_json::json!(["unrelated/cli"]),
+            "cli-datasource" => changed["packageRules"][cli]["matchDatasources"] = serde_json::json!(["npm"]),
+            "duplicate-owner" => {
+                let duplicate = changed["packageRules"][feature].clone();
+                changed["packageRules"].as_array_mut().ok_or("missing rules")?.push(duplicate);
+            }
+            _ => changed["customManagers"].as_array_mut().ok_or("missing managers")?.push(serde_json::json!({
+                "customType": "regex", "managerFilePatterns": ["/^\\.devcontainer/devcontainer-lock\\.json$/"],
+                "matchStrings": ["(?<depName>ghcr.io/devcontainers/features/example)@(?<currentDigest>sha256:[a-f0-9]{64})"],
+                "datasourceTemplate": "docker",
+            })),
+        }
+        let changed_rules = changed["packageRules"].as_array().ok_or("missing changed rules")?;
+        if validate_renovate_lock_maintenance(&changed, changed_rules).is_ok() {
+            return Err(format!(
+                "hosted Dev Container ownership accepted counterexample `{mutation}`"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -8698,7 +8817,6 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         "Update versioned Dev Container tools",
         "Update each canonical downloaded-tool release tag and architecture checksum atomically",
         "Update directly pinned workflow tool versions",
-        "Update the documented Dev Container CLI",
         "Update the GitHub CLI installed in the Dev Container",
         "Track reviewed live-application container images",
         "Track reviewed live Podman matrix images",
@@ -9028,22 +9146,24 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
 
     let development = fs::read_to_string(root.join("docs/development-environment.md"))
         .map_err(|error| format!("failed to read development environment guide: {error}"))?;
-    let devcontainer_command = development
-        .lines()
-        .find(|line| line.starts_with("npx --yes @devcontainers/cli@"))
-        .ok_or_else(|| "Dev Container feature-lock guide must pin its Renovate-managed CLI".to_owned())?;
-    let version = devcontainer_command
-        .strip_prefix("npx --yes @devcontainers/cli@")
-        .and_then(|command| command.strip_suffix(" upgrade --workspace-folder ."))
-        .ok_or_else(|| "Dev Container feature-lock command has an unexpected shape".to_owned())?;
-    if version.split('.').count() != 3
-        || !version
-            .split('.')
-            .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+    if development.contains("npx --yes @devcontainers/cli@")
+        || !development.contains("../automation/devcontainer/")
+        || !development.contains("npm ci --ignore-scripts")
+        || !development.contains("before automatic activation")
     {
-        return Err("Dev Container feature-lock command must use an exact semantic version".to_owned());
+        return Err("Dev Container guide must use the inactive canonical locked generator contract".to_owned());
     }
-
+    let cli_manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("automation/devcontainer/package.json"))
+            .map_err(|error| format!("failed to read canonical Dev Container npm project: {error}"))?,
+    )
+    .map_err(|error| format!("invalid canonical Dev Container npm project: {error}"))?;
+    let cli_lock: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("automation/devcontainer/package-lock.json"))
+            .map_err(|error| format!("failed to read canonical Dev Container npm lock: {error}"))?,
+    )
+    .map_err(|error| format!("invalid canonical Dev Container npm lock: {error}"))?;
+    validate_devcontainer_cli_npm_ownership(&cli_manifest, &cli_lock, &renovate_value)?;
     let policy_source = fs::read_to_string(root.join("crates/boxferry/tests/repository_policy.rs"))
         .map_err(|error| format!("failed to read repository policy source: {error}"))?;
     for line in policy_source.lines() {
@@ -9057,6 +9177,203 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         }
     }
 
+    Ok(())
+}
+
+fn validate_devcontainer_cli_npm_ownership(
+    cli_manifest: &serde_json::Value,
+    cli_lock: &serde_json::Value,
+    renovate: &serde_json::Value,
+) -> Result<(), String> {
+    let declarations = cli_manifest["devDependencies"]
+        .as_object()
+        .ok_or("canonical Dev Container CLI must be a native npm development dependency")?;
+    let version = declarations
+        .get("@devcontainers/cli")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("canonical Dev Container npm project must declare its official CLI")?;
+    let locked = &cli_lock["packages"]["node_modules/@devcontainers/cli"];
+    let integrity = locked["integrity"]
+        .as_str()
+        .and_then(|value| value.strip_prefix("sha512-"));
+    if cli_manifest["private"] != true
+        || declarations.len() != 1
+        || cli_manifest.get("scripts").is_some()
+        || version.split('.').count() != 3
+        || !version
+            .split('.')
+            .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+        || cli_lock["lockfileVersion"] != 3
+        || cli_lock["packages"][""]["devDependencies"]["@devcontainers/cli"] != version
+        || locked["version"] != version
+        || locked["resolved"] != format!("https://registry.npmjs.org/@devcontainers/cli/-/cli-{version}.tgz")
+        || !integrity.is_some_and(|value| {
+            value.len() == 88
+                && value.ends_with("==")
+                && value
+                    .bytes()
+                    .take(86)
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        })
+    {
+        return Err(
+            "Dev Container CLI needs one exact native npm declaration and matching official SHA512-locked artifact"
+                .to_owned(),
+        );
+    }
+    let npm_enabled = renovate.get("enabledManagers").is_none_or(|managers| {
+        managers
+            .as_array()
+            .is_some_and(|managers| managers.iter().any(|manager| manager == "npm"))
+    }) && renovate["npm"]["enabled"] != false;
+    let npm_development_rule = renovate["packageRules"].as_array().is_some_and(|rules| {
+        rules.iter().any(|rule| {
+            rule["matchManagers"] == serde_json::json!(["npm"])
+                && rule["matchDepTypes"] == serde_json::json!(["devDependencies"])
+                && rule["enabled"] != false
+                && rule.get("matchFileNames").is_none()
+                && rule.get("matchPackageNames").is_none()
+        })
+    });
+    if !npm_enabled || !npm_development_rule {
+        return Err("canonical Dev Container CLI must retain native npm development-tool ownership".to_owned());
+    }
+    if renovate["customManagers"]
+        .as_array()
+        .ok_or("Renovate custom managers are missing")?
+        .iter()
+        .any(|manager| {
+            manager["depNameTemplate"] == "@devcontainers/cli"
+                || manager["matchStrings"].as_array().is_some_and(|patterns| {
+                    patterns.iter().filter_map(serde_json::Value::as_str).any(|pattern| {
+                        pattern.contains("@devcontainers/cli") || pattern.contains(r"@devcontainers\/cli")
+                    })
+                })
+        })
+    {
+        return Err("native npm must be the sole canonical Dev Container CLI owner".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn devcontainer_cli_npm_ownership_accepts_coherent_future_versions() -> Result<(), String> {
+    let root = repository_root();
+    let read_json = |path: &str| -> Result<serde_json::Value, String> {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("invalid {path}: {error}"))
+    };
+    let manifest = read_json("automation/devcontainer/package.json")?;
+    let lock = read_json("automation/devcontainer/package-lock.json")?;
+    let renovate = read_json(".github/renovate.json")?;
+    validate_devcontainer_cli_npm_ownership(&manifest, &lock, &renovate)?;
+    // The package and its integrity coupling, rather than today's release, own this policy.
+    let mut future_manifest = manifest.clone();
+    let mut future_lock = lock.clone();
+    let future_version = "999.998.997";
+    future_manifest["devDependencies"]["@devcontainers/cli"] = serde_json::json!(future_version);
+    future_lock["packages"][""]["devDependencies"]["@devcontainers/cli"] = serde_json::json!(future_version);
+    future_lock["packages"]["node_modules/@devcontainers/cli"]["version"] = serde_json::json!(future_version);
+    future_lock["packages"]["node_modules/@devcontainers/cli"]["resolved"] = serde_json::json!(format!(
+        "https://registry.npmjs.org/@devcontainers/cli/-/cli-{future_version}.tgz"
+    ));
+    validate_devcontainer_cli_npm_ownership(&future_manifest, &future_lock, &renovate)?;
+    Ok(())
+}
+
+#[test]
+fn devcontainer_cli_npm_ownership_rejects_integrity_drift_and_competing_owners() -> Result<(), String> {
+    let root = repository_root();
+    let read_json = |path: &str| -> Result<serde_json::Value, String> {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("invalid {path}: {error}"))
+    };
+    let manifest = read_json("automation/devcontainer/package.json")?;
+    let lock = read_json("automation/devcontainer/package-lock.json")?;
+    let renovate = read_json(".github/renovate.json")?;
+    validate_devcontainer_cli_npm_ownership(&manifest, &lock, &renovate)?;
+    for mutation in [
+        "range",
+        "root-lock",
+        "locked-version",
+        "foreign-registry",
+        "missing-integrity",
+        "weak-integrity",
+        "install-hook",
+        "npm-disabled",
+        "npm-excluded",
+        "missing-npm-rule",
+        "scoped-npm-rule",
+        "old-documentation-owner",
+        "competing-regex-capture",
+    ] {
+        let mut changed_manifest = manifest.clone();
+        let mut changed_lock = lock.clone();
+        let mut changed_renovate = renovate.clone();
+        match mutation {
+            "range" => changed_manifest["devDependencies"]["@devcontainers/cli"] = serde_json::json!("^999.998.997"),
+            "root-lock" => {
+                changed_lock["packages"][""]["devDependencies"]["@devcontainers/cli"] =
+                    serde_json::json!("999.998.997");
+            }
+            "locked-version" => {
+                changed_lock["packages"]["node_modules/@devcontainers/cli"]["version"] =
+                    serde_json::json!("999.998.997");
+            }
+            "foreign-registry" => {
+                changed_lock["packages"]["node_modules/@devcontainers/cli"]["resolved"] =
+                    serde_json::json!("https://example.invalid/cli.tgz");
+            }
+            "missing-integrity" => changed_lock["packages"]["node_modules/@devcontainers/cli"]
+                .as_object_mut()
+                .ok_or("missing locked CLI")?
+                .remove("integrity")
+                .map(|_| ())
+                .ok_or("missing integrity")?,
+            "weak-integrity" => {
+                changed_lock["packages"]["node_modules/@devcontainers/cli"]["integrity"] =
+                    serde_json::json!("sha512-unverified");
+            }
+            "install-hook" => changed_manifest["scripts"] = serde_json::json!({"install": "false"}),
+            "npm-disabled" => changed_renovate["npm"] = serde_json::json!({"enabled": false}),
+            "npm-excluded" => changed_renovate["enabledManagers"] = serde_json::json!(["custom.regex"]),
+            "missing-npm-rule" | "scoped-npm-rule" => {
+                let rules = changed_renovate["packageRules"].as_array_mut().ok_or("missing rules")?;
+                for rule in rules
+                    .iter_mut()
+                    .filter(|rule| rule["matchManagers"] == serde_json::json!(["npm"]))
+                {
+                    if mutation == "missing-npm-rule" {
+                        rule["enabled"] = serde_json::json!(false);
+                    } else {
+                        rule["matchFileNames"] = serde_json::json!(["package.json"]);
+                    }
+                }
+            }
+            "old-documentation-owner" => changed_renovate["customManagers"]
+                .as_array_mut()
+                .ok_or("missing managers")?
+                .push(serde_json::json!({
+                    "customType": "regex", "description": "Update the documented Dev Container CLI",
+                    "managerFilePatterns": ["/^docs/development-environment\\.md$/"],
+                    "depNameTemplate": "@devcontainers/cli", "datasourceTemplate": "npm",
+                    "matchStrings": ["npx --yes @devcontainers/cli@(?<currentValue>[^ ]+)"],
+                })),
+            _ => changed_renovate["customManagers"]
+                .as_array_mut()
+                .ok_or("missing managers")?
+                .push(serde_json::json!({
+                    "customType": "regex", "managerFilePatterns": ["/^docs/development-environment\\.md$/"],
+                    "matchStrings": ["npx --yes (?<depName>@devcontainers/cli)@(?<currentValue>[^ ]+)"],
+                    "datasourceTemplate": "npm",
+                })),
+        }
+        if validate_devcontainer_cli_npm_ownership(&changed_manifest, &changed_lock, &changed_renovate).is_ok() {
+            return Err(format!(
+                "canonical Dev Container npm ownership accepted counterexample `{mutation}`"
+            ));
+        }
+    }
     Ok(())
 }
 

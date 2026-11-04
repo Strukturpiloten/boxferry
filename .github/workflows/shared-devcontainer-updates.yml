@@ -1,0 +1,80 @@
+---
+name: Shared Dev Container feature updates
+on:
+  workflow_call:
+    inputs:
+      automation-sha:
+        description: Exact admitted shared source; identical to the reusable workflow ref.
+        type: string
+        required: true
+    secrets:
+      app-private-key:
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: devcontainer-updates-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  features:
+    if: >-
+      contains(fromJSON('["Strukturpiloten/boxferry","Strukturpiloten/compose-lens","Strukturpiloten/podman-lens","Strukturpiloten/quadlet-lens"]'), github.repository) &&
+      github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out immutable trusted automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.automation-sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Verify shared identity
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ inputs.automation-sha }}
+        run: |
+          set -euo pipefail
+          [[ "${AUTOMATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C _automation rev-parse HEAD)" = "${AUTOMATION_SHA}"
+      - name: Install canonical locked Python
+        uses: ./_automation/.github/actions/shared-python
+      - name: Install reviewed Node toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # renovate: datasource=node-version depName=node
+          node-version: 24.22.1
+      - name: Install integrity-locked official generator without hooks
+        shell: bash
+        run: npm ci --ignore-scripts --prefix _automation/automation/devcontainer
+      - name: Acquire the existing pinned native Renovate runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.renovate_runtime \
+            --engine docker --pin _automation/automation/renovate-runtime.json \
+            --destination "${RUNNER_TEMP}/renovate"
+      - name: Create one-repository feature updater App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-statuses: read
+      - name: Run bounded feature owners and official whole-graph maintenance
+        shell: bash
+        env:
+          RENOVATE_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          BOXFERRY_NODE="$(command -v node)"
+          export BOXFERRY_NODE
+          uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_updates service \
+            --automation "${GITHUB_WORKSPACE}/_automation" --runtime "${RUNNER_TEMP}/renovate"

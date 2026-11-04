@@ -17,6 +17,9 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+from boxferry_ci.devcontainer_updates import limited_config
 
 ROOT = Path(__file__).resolve().parents[2]
 PRESETS = ROOT / "renovate-presets"
@@ -149,25 +152,6 @@ def assert_automatic_policy(config: dict[str, Any]) -> None:
             "updateType": "major",
         },
     ]
-    examples.extend(
-        [
-            {
-                "manager": "devcontainer",
-                "datasource": "docker",
-                "depType": "feature",
-                "packageName": "ghcr.io/devcontainers/features/github-cli",
-                "fileName": ".devcontainer/devcontainer.json",
-                "updateType": "major",
-            },
-            {
-                "manager": "custom.regex",
-                "datasource": "docker",
-                "packageName": "ghcr.io/devcontainers/features/github-cli",
-                "fileName": ".devcontainer/devcontainer-lock.json",
-                "updateType": "major",
-            },
-        ]
-    )
     for dependency in examples:
         result = effective(config, dependency)
         if (
@@ -194,33 +178,21 @@ def assert_automatic_policy(config: dict[str, Any]) -> None:
     ):
         raise AssertionError("late consumer rule breaks isolated first-party release policy")
 
-    feature = effective(
-        config,
+    for dependency in (
         {
             "manager": "devcontainer",
-            "datasource": "docker",
             "depType": "feature",
-            "packageName": "ghcr.io/devcontainers/features/github-cli",
             "fileName": ".devcontainer/devcontainer.json",
         },
-    )
-    lock = effective(
-        config,
         {
             "manager": "custom.regex",
-            "datasource": "docker",
-            "packageName": "ghcr.io/devcontainers/features/github-cli",
-            "fileName": ".devcontainer/devcontainer-lock.json",
+            "datasource": "github-releases",
+            "packageName": "cli/cli",
+            "fileName": ".devcontainer/devcontainer.json",
         },
-    )
-    if not feature.get("groupName") or feature.get("groupName") != lock.get("groupName"):
-        raise AssertionError("late consumer policy separates the feature declaration and lock")
-    if any(
-        value.get("minimumReleaseAgeBehaviour") != "timestamp-optional" for value in (feature, lock)
     ):
-        raise AssertionError(
-            "late consumer policy strands a covered feature update without timestamps"
-        )
+        if effective(config, dependency).get("enabled") is not False:
+            raise AssertionError("hosted App must yield feature ownership to limited updater")
 
 
 def _shared() -> dict[str, Any]:
@@ -248,6 +220,59 @@ class PresetTests(unittest.TestCase):
             )
             self.assertEqual(result["rebaseWhen"], "behind-base-branch")
             self.assertEqual(result["minimumReleaseAge"], "3 days")
+
+    def test_devcontainer_node_image_couples_source_without_changing_age_or_other_owners(
+        self,
+    ) -> None:
+        config = _shared()
+        rule = next(
+            rule
+            for rule in config["packageRules"]
+            if rule.get("matchPackageNames") == ["docker.io/library/node"]
+        )
+        self.assertEqual(rule["matchManagers"], ["custom.regex"])
+        self.assertEqual(rule["matchDatasources"], ["docker"])
+        self.assertEqual(rule["matchFileNames"], [".devcontainer/Dockerfile"])
+        self.assertNotIn("minimumReleaseAge", rule)
+        self.assertFalse(rule["separateMajorMinor"])
+        node = {
+            "manager": "custom.regex",
+            "datasource": "docker",
+            "packageName": "docker.io/library/node",
+            "fileName": ".devcontainer/Dockerfile",
+        }
+        for update in ("major", "minor", "patch", "digest"):
+            result = effective(config, {**node, "updateType": update})
+            self.assertEqual(result["groupName"], "Shared BoxFerry automation")
+            self.assertEqual(result["minimumReleaseAge"], "3 days")
+            self.assertEqual(result["minimumReleaseAgeBehaviour"], "timestamp-required")
+            self.assertFalse(result["separateMajorMinor"])
+        before = copy.deepcopy(config)
+        before["packageRules"].remove(rule)
+        counterexamples = (
+            {**node, "packageName": "docker.io/library/node-extra"},
+            {**node, "fileName": "Dockerfile"},
+            {**node, "manager": "dockerfile"},
+            {**node, "datasource": "node-version"},
+            {
+                "manager": "custom.regex",
+                "datasource": "node-version",
+                "packageName": "node",
+                "fileName": ".github/workflows/ci.yml",
+                "updateType": "major",
+            },
+            {"manager": "cargo", "datasource": "crate", "packageName": "compose-lens"},
+            {
+                "manager": "github-actions",
+                "datasource": "github-digest",
+                "packageName": "Strukturpiloten/boxferry",
+            },
+        )
+        for dependency in counterexamples:
+            with self.subTest(dependency=dependency):
+                self.assertEqual(effective(config, dependency), effective(before, dependency))
+        source = effective(config, counterexamples[-1])
+        self.assertEqual(source["minimumReleaseAge"], "0 days")
 
     def test_ordinary_age_and_missing_timestamp_policy_are_explicit(self) -> None:
         config = _shared()
@@ -485,7 +510,7 @@ class PresetTests(unittest.TestCase):
                     "packageName": "ghcr.io/devcontainers/features/github-cli",
                     "fileName": ".devcontainer/devcontainer.json",
                 },
-                True,
+                False,
             ),
             (
                 {
@@ -594,7 +619,7 @@ class PresetTests(unittest.TestCase):
                     "packageName": "ghcr.io/devcontainers/features/github-cli",
                     "fileName": ".devcontainer/devcontainer-lock.json",
                 },
-                True,
+                False,
             ),
             (
                 {
@@ -835,63 +860,57 @@ class NativePresetTests(unittest.TestCase):
       assert.equal(result.dependencyDashboardApproval, false);
       assert.equal(result.rebaseWhen, "behind-base-branch");
     }
+    const defaults = require(base+"config/defaults.js").getConfig();
+    const { generateBranchName } = require(base+"workers/repository/updates/branch-name.js");
+    const { generateBranchConfig } = require(base+"workers/repository/updates/generate.js");
+    const sourceAdoption = await applyPackageRules({...defaults,...shared,
+      manager:"regex",datasource:"github-digest",depName:"Strukturpiloten/boxferry",
+      packageName:"Strukturpiloten/boxferry",packageFile:".github/automation.json",
+      updateType:"digest",currentValue:"automation-v1",newValue:"automation-v1",
+      currentDigest:old,newDigest:next,isDigest:true});
+    const nodeImage = await applyPackageRules({...defaults,...shared,
+      manager:"regex",datasource:"docker",depName:"docker.io/library/node",
+      packageName:"docker.io/library/node",packageFile:".devcontainer/Dockerfile",
+      updateType:"major",currentValue:"24.0.0",newValue:"25.0.0",newVersion:"25.0.0",newMajor:25,
+      currentDigest:"sha256:"+digest,newDigest:"sha256:"+"b".repeat(64)});
+    assert.equal(nodeImage.minimumReleaseAge,"3 days");
+    assert.equal(nodeImage.minimumReleaseAgeBehaviour,"timestamp-required");
+    assert.equal(nodeImage.separateMajorMinor,false);
+    assert.equal(sourceAdoption.minimumReleaseAge,"0 days");
+    generateBranchName(sourceAdoption);
+    generateBranchName(nodeImage);
+    assert.equal(nodeImage.branchName,sourceAdoption.branchName);
+    const coupledBranch=generateBranchConfig([sourceAdoption,nodeImage]);
+    assert.equal(coupledBranch.upgrades.length,2);
+    assert.equal(coupledBranch.groupName,"Shared BoxFerry automation");
+    const waitingBranch=generateBranchConfig([{...sourceAdoption,pendingChecks:false},
+      {...nodeImage,pendingChecks:true}]);
+    assert.equal(waitingBranch.upgrades.length,1);
+    assert.equal(waitingBranch.upgrades[0].depName,"Strukturpiloten/boxferry");
+    assert.equal(nodeImage.minimumReleaseAge,"3 days");
+    const agedNode={...nodeImage,pendingChecks:false};
+    generateBranchName(agedNode);
+    assert.equal(agedNode.branchName,sourceAdoption.branchName);
+    const readyBranch=generateBranchConfig([{...sourceAdoption,pendingChecks:false},agedNode]);
+    assert.equal(readyBranch.upgrades.length,2);
+    const ordinaryCrate=await applyPackageRules({...defaults,...shared,manager:"cargo",
+      datasource:"crate",depName:"compose-lens",packageName:"compose-lens",updateType:"minor"});
+    assert.equal(ordinaryCrate.groupName,"First-party Rust releases");
+    assert.equal(ordinaryCrate.minimumReleaseAge,"0 days");
+    for(const change of [{packageName:"docker.io/library/alpine"},
+      {packageFile:"other/Dockerfile"},{manager:"dockerfile"},
+      {datasource:"node-version",packageName:"node",packageFile:".github/workflows/ci.yml"}]) {
+      const unrelated=await applyPackageRules({...defaults,...shared,manager:"regex",
+        datasource:"docker",packageName:"docker.io/library/node",depName:"docker.io/library/node",
+        packageFile:".devcontainer/Dockerfile",updateType:"major",...change});
+      assert.notEqual(unrelated.groupName,"Shared BoxFerry automation");
+      assert.equal(unrelated.minimumReleaseAge,"3 days");
+    }
     const featureName = "ghcr.io/devcontainers/features/github-cli";
     const featurePath = ".devcontainer/devcontainer.json";
     const featureLockPath = ".devcontainer/devcontainer-lock.json";
-    const lockContent = JSON.stringify(
-      {
-        features: {
-          [featureName + ":1.1.0"]: {
-            version: "1.1.0",
-            resolved: featureName + "@sha256:" + digest,
-            integrity: "sha256:" + digest,
-          },
-        },
-      },
-      null,
-      2,
-    );
-    const lockManager = common.customManagers.find((manager) =>
-      manager.managerFilePatterns.includes(
-        "/^\\.devcontainer/devcontainer-lock\\.json$/",
-      ),
-    );
-    assert.ok(lockManager, "the feature lock needs one custom owner");
-    const lockExtracted = extract(lockContent, featureLockPath, lockManager);
-    if (fs.existsSync(root + "/" + featureLockPath)) {
-      const liveLock = extract(fs.readFileSync(root + "/" + featureLockPath,"utf8"),
-        featureLockPath,lockManager);
-      assert.equal(liveLock?.deps.filter(dep => dep.depName===featureName).length,1);
-    }
-    assert.equal(lockExtracted.deps.length, 1);
-    const lockEffective = await applyPackageRules({
-      ...shared,
-      ...lockExtracted.deps[0],
-      manager: "regex",
-      packageName: featureName,
-      packageFile: featureLockPath,
-    });
-    assert.equal(lockEffective.minimumReleaseAgeBehaviour, "timestamp-optional");
-    assert.equal(lockEffective.autoReplaceGlobalMatch, true);
-    const lockUpdated = await doAutoReplace(
-      {
-        ...lockManager,
-        ...lockEffective,
-        manager: "regex",
-        depIndex: 0,
-        packageFile: featureLockPath,
-        newValue: "1.2.0",
-        newDigest: "sha256:" + "b".repeat(64),
-      },
-      lockContent,
-      false,
-    );
-    assert.equal(
-      lockUpdated,
-      lockContent
-        .replaceAll("1.1.0", "1.2.0")
-        .replaceAll("sha256:" + digest, "sha256:" + "b".repeat(64)),
-    );
+    assert.equal(common.customManagers.some(manager =>
+      manager.managerFilePatterns.some(pattern => pattern.includes("devcontainer-lock"))), false);
     const devcontainer = require(base + "modules/manager/devcontainer/index.js");
     const { matchRegexOrGlobList } = require(base + "util/string-match.js");
     assert.equal(
@@ -913,8 +932,7 @@ class NativePresetTests(unittest.TestCase):
       packageName: featureName,
       packageFile: featurePath,
     });
-    assert.equal(declarationEffective.groupName, lockEffective.groupName);
-    assert.equal(declarationEffective.pinDigests, false);
+    assert.equal(declarationEffective.enabled, false);
     const declarationUpdated = await doAutoReplace(
       {
         ...declarationEffective,
@@ -938,9 +956,89 @@ class NativePresetTests(unittest.TestCase):
       depName: "cli/cli",
       packageFile: featurePath,
     });
-    assert.notEqual(cliOption.groupName, lockEffective.groupName);
+    assert.equal(cliOption.enabled, false);
     assert.equal(cliOption.minimumReleaseAgeBehaviour, "timestamp-required");
     replacements += 2;
+    // Execute the unmodified pinned ESM prune algorithm with no real platform writes.
+    const vm = require("node:vm");
+    const context = vm.createContext({});
+    const removed = [], visited = [];
+    const prefix = "renovate-devcontainer/";
+    const stubs = {
+      "../../../constants/error-messages.js": {},
+      "../../../util/regex.js": {regEx: value => new RegExp(value)},
+      "../../../config/global.js": {GlobalConfig: {get: () => undefined}},
+      "../../../util/string.js": {uniqueStrings:
+        (value,index,array) => array.indexOf(value)===index},
+      "../../../logger/index.js": {logger: new Proxy({}, {get:()=>()=>{}})},
+      "../../../util/git/index.js": {getBranchList:()=>
+        [prefix+"features",prefix+"lock-file-maintenance","unrelated"],
+        setUserRepoConfig:()=>{}},
+      "../../../modules/platform/scm.js": {scm:{isBranchModified:async branch=>{
+        visited.push(branch);return false;},
+        deleteBranch:async branch=>removed.push(branch)}},
+      "../../../modules/platform/index.js": {platform:{findPr:async()=>null}},
+      "../../../modules/platform/comment.js": {ensureComment:()=>{
+        throw Error("unexpected comment");}},
+      "../process/index.js": {isMultiBaseBranch:()=>false},
+      "../reconfigure/utils.js": {getReconfigureBranchName: value=>value+"reconfigure"},
+      "@sindresorhus/is": {isNonEmptyStringAndNotWhitespace:
+        value=>typeof value==="string"&&!!value.trim()},
+    };
+    const pruneModule = new vm.SourceTextModule(
+      fs.readFileSync(base+"workers/repository/finalize/prune.js","utf8"),{context});
+    await pruneModule.link(specifier=>{
+      assert.ok(Object.hasOwn(stubs,specifier),"unreviewed native prune import "+specifier);
+      const values=stubs[specifier];
+      return new vm.SyntheticModule(Object.keys(values),function(){
+        for(const [name,value] of Object.entries(values))this.setExport(name,value);
+      },{context});
+    });
+    await pruneModule.evaluate();
+    const pruneConfig={repoIsOnboarded:true,defaultBranch:"main",
+      branchPrefix:prefix,pruneStaleBranches:true};
+    await pruneModule.namespace.pruneStaleBranches(pruneConfig,[]);
+    assert.deepEqual(removed,[prefix+"features"]);
+    assert.deepEqual(visited,[prefix+"features"]);
+    removed.length=0;visited.length=0;
+    await pruneModule.namespace.pruneStaleBranches(pruneConfig,[prefix+"features"]);
+    assert.deepEqual(removed,[]);
+    assert.deepEqual(visited,[]);
+    GlobalConfig.set({localDir:root});
+    const npmExtractor = require(base+"modules/manager/npm/extract/index.js");
+    const cliManifest = "automation/devcontainer/package.json";
+    const cliPackage = await npmExtractor.extractPackageFile(
+      fs.readFileSync(root+"/"+cliManifest,"utf8"),cliManifest,{});
+    assert.equal(cliPackage.managerData.npmLock,"automation/devcontainer/package-lock.json");
+    assert.equal(cliPackage.deps.filter(dep=>dep.depName==="@devcontainers/cli").length,1);
+    for(const manager of common.customManagers) {
+      assert.equal(extract(fs.readFileSync(root+"/"+cliManifest,"utf8"),cliManifest,manager),null);
+    }
+    GlobalConfig.set({localDir:temporary});
+    const limited = JSON.parse(process.argv[3]);
+    const optionManager = limited.customManagers[0];
+    const option = extract(declaration,featurePath,optionManager);
+    assert.equal(option.deps.length,1);
+    assert.equal(option.deps[0].depName,"cli/cli");
+    const optionUpdated = await doAutoReplace({...optionManager,...option.deps[0],
+      manager:"regex",depIndex:0,packageFile:featurePath,newValue:"2.104.0"},declaration,false);
+    assert.equal(JSON.parse(optionUpdated).features[featureName+":1.1.0"].version,"2.104.0");
+    assert.equal(extract('{"version":"2.103.2"}',featurePath,optionManager),null);
+    for(const [depType,enabled] of [["feature",true],["image",false],["node",false],
+      ["go",false],["python",false],["ruby",false]]) {
+      const actual = await applyPackageRules({...limited,manager:"devcontainer",depType,
+        packageName:featureName,packageFile:featurePath});
+      assert.equal(actual.enabled,enabled);
+      assert.equal(actual.minimumReleaseAge,"3 days");
+      assert.equal(actual.groupName,"Dev Container features");
+    }
+    const limitedOption = await applyPackageRules({...limited,...option.deps[0],manager:"regex",
+      packageName:"cli/cli",packageFile:featurePath});
+    assert.equal(limitedOption.minimumReleaseAge,"3 days");
+    assert.equal(limitedOption.dependencyDashboardApproval,false);
+    assert.equal(limitedOption.automerge,true);
+    assert.equal(limitedOption.groupName,"Dev Container features");
+    replacements++;
     const timestampCases = [
       [
         "regex",
@@ -956,7 +1054,7 @@ class NativePresetTests(unittest.TestCase):
         "ghcr.io/devcontainers/features/github-cli",
         ".devcontainer/devcontainer.json",
         "feature",
-        true,
+        false,
       ],
       [
         "regex",
@@ -1047,7 +1145,7 @@ class NativePresetTests(unittest.TestCase):
         "ghcr.io/devcontainers/features/github-cli",
         ".devcontainer/devcontainer-lock.json",
         null,
-        true,
+        false,
       ],
       [
         "devcontainer",
@@ -1156,8 +1254,20 @@ class NativePresetTests(unittest.TestCase):
   process.exit(1);
 });
 """
+        with patch.dict(os.environ, {"BOXFERRY_NODE": "/trusted/node"}):
+            limited = limited_config(
+                "Strukturpiloten/boxferry", Path("/trusted/source"), Path("/trusted/python")
+            )
         completed = subprocess.run(
-            ["node", "-e", script, str(runtime), str(ROOT)],
+            [
+                "node",
+                "--experimental-vm-modules",
+                "-e",
+                script,
+                str(runtime),
+                str(ROOT),
+                json.dumps(limited),
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,

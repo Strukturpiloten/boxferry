@@ -7,15 +7,18 @@ Runner observation concerns a selector; hosted runner images remain mutable.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import json
 import re
+import tarfile
 import urllib.error
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -274,48 +277,310 @@ def _image_json(text: str, path: str) -> list[Pin]:
     return [_ref(document["image"], path, 1)]
 
 
+def _feature_source(source: str) -> tuple[str, str]:
+    """Return a reviewed OCI identity and a numeric selector or exact digest."""
+    match = FEATURE_REF.fullmatch(source)
+    if match is not None:
+        identity = f"{match['registry']}/{match['name']}"
+        selector = match["version"]
+        if re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,2}", selector) is None:
+            raise OperationalError("feature selector needs a numeric major, minor or exact version")
+    else:
+        pin = _ref(source, FEATURE_LOCK, 1)
+        if pin.version:
+            raise OperationalError("feature source cannot combine a tag and digest")
+        identity, selector = f"{pin.source}/{pin.name}", pin.digest
+    if not identity.startswith("ghcr.io/") or any(
+        part in {"", ".", ".."} for part in identity.split("/")
+    ):
+        raise OperationalError("feature source is outside the reviewed public OCI registry")
+    return identity, selector
+
+
 def _features(root: Path) -> tuple[dict[str, object], dict[str, Pin], dict[str, str]]:
     declaration = _read(root, FEATURE)
     lock = _read(root, FEATURE_LOCK)
     declared = _json(declaration).get("features", {}) if declaration is not None else {}
-    locked = _json(lock).get("features", {}) if lock is not None else {}
+    lock_document = _json(lock) if lock is not None else {"features": {}}
+    if set(lock_document) != {"features"}:
+        raise OperationalError("feature lock document has unsupported fields")
+    locked = lock_document["features"]
     if not isinstance(declared, dict) or not isinstance(locked, dict):
         raise OperationalError("Dev Container features and feature lock must be objects")
-    if len(declared.keys() | locked.keys()) > MAX_PINS:
-        raise OperationalError("feature inventory exceeds its identity bound")
+    if len(declared.keys() | locked.keys()) > MAX_FILES:
+        raise OperationalError("feature graph exceeds its node bound")
     signatures: dict[str, object] = {}
     valid: dict[str, Pin] = {}
     errors: dict[str, str] = {}
-    for source in declared.keys() | locked.keys():
+    edges: dict[str, list[str]] = {}
+    for source in sorted(declared.keys() | locked.keys()):
         entry = locked.get(source)
         signatures[source] = (source in declared, declared.get(source), entry)
-        if not isinstance(source, str) or source not in declared:
-            errors[source] = "feature lock contains an undeclared feature"
-            continue
-        match = FEATURE_REF.fullmatch(source)
-        if match is None:
-            errors[source] = "feature declaration needs an exact canonical version"
-            continue
-        if not isinstance(entry, dict):
-            errors[source] = "changed feature requires its committed immutable feature lock"
-            continue
-        if set(entry) != {"version", "resolved", "integrity"}:
-            errors[source] = "feature lock fields differ from the owned updater grammar"
-            continue
         try:
+            identity, selector = _feature_source(source)
+            if source in declared and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", selector) is None:
+                raise OperationalError("feature declaration needs exact canonical version")
+            if not isinstance(entry, dict):
+                raise OperationalError(
+                    "changed feature requires its committed immutable feature lock"
+                )
+            if set(entry) not in (
+                {"version", "resolved", "integrity"},
+                {"version", "resolved", "integrity", "dependsOn"},
+            ):
+                raise OperationalError("feature lock fields differ from official graph grammar")
+            version = entry["version"]
+            if (
+                not isinstance(version, str)
+                or re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version)
+                is None
+            ):
+                raise OperationalError("feature lock needs an exact semantic version")
             pin = _ref(entry["resolved"], FEATURE_LOCK, 1)
             if (
-                entry.get("version") != match["version"]
-                or pin.version
-                or pin.source != match["registry"]
-                or pin.name != match["name"]
-                or entry.get("integrity") != pin.digest
+                pin.version
+                or identity != f"{pin.source}/{pin.name}"
+                or entry["integrity"] != pin.digest
+                or (selector.startswith("sha256:") and selector != pin.digest)
+                or (
+                    not selector.startswith("sha256:")
+                    and version.split(".")[: len(selector.split("."))] != selector.split(".")
+                )
             ):
                 raise OperationalError("feature version, source and lock integrity disagree")
-            valid[source] = replace(pin, version=match["version"])
-        except (OperationalError, TypeError, KeyError):
-            errors[source] = "feature version, source and lock integrity disagree"
+            dependencies = entry.get("dependsOn", [])
+            if (
+                not isinstance(dependencies, list)
+                or any(not isinstance(item, str) for item in dependencies)
+                or len(dependencies) != len(set(dependencies))
+                or len(dependencies) > MAX_FILES
+            ):
+                raise OperationalError(
+                    "feature lock dependencies must be bounded unique source IDs"
+                )
+            edges[source] = dependencies
+            valid[source] = replace(pin, version=version)
+        except (OperationalError, TypeError, KeyError) as error:
+            errors[source] = str(error)
+    visiting: set[str] = set()
+    reached: set[str] = set()
+
+    def visit(source: str) -> None:
+        if source in visiting:
+            raise OperationalError("feature dependency graph contains a cycle")
+        if source in reached:
+            return
+        if source not in valid:
+            raise OperationalError(
+                "feature dependency graph node is missing or unsupported: official selector "
+                "alias collapse needs reviewed identity/options resolution; use explicit "
+                "distinct dependency IDs until this shape is supported"
+            )
+        visiting.add(source)
+        for dependency in edges[source]:
+            visit(dependency)
+        visiting.remove(source)
+        reached.add(source)
+
+    try:
+        for source in declared:
+            visit(source)
+        if reached != locked.keys():
+            raise OperationalError("feature lock contains an unreachable orphan node")
+    except OperationalError as error:
+        for source in signatures:
+            errors.setdefault(source, str(error))
     return signatures, valid, errors
+
+
+def _registry_request(pin: Pin, request: Request) -> Request:
+    """Return a bounded caller-owned request with only anonymous, exact-origin auth."""
+    from .dependencies import fetch_oci_blob
+
+    token: str | None = None
+
+    def acquire(url: str, headers: Mapping[str, str]) -> bytes:
+        if "/blobs/sha256:" in url:
+            return fetch_oci_blob(url, headers, request)
+        return request(url, headers)
+
+    def get(url: str, headers: Mapping[str, str]) -> bytes:
+        nonlocal token
+        origin = f"https://{pin.source}/v2/{pin.name}/"
+        if not url.startswith(origin):
+            raise OperationalError("feature content request escaped its immutable origin")
+        try:
+            return acquire(
+                url, {**headers, **({"Authorization": "Bearer " + token} if token else {})}
+            )
+        except urllib.error.HTTPError as error:
+            if error.code != 401 or token is not None:
+                raise
+            error.close()
+            query = urllib.parse.urlencode(
+                {"service": "ghcr.io", "scope": f"repository:{pin.name}:pull"}
+            )
+            response = _json(request(f"https://ghcr.io/token?{query}", {}))
+            candidate = response.get("token", response.get("access_token"))
+            if (
+                not isinstance(candidate, str)
+                or not candidate
+                or len(candidate) > 16384
+                or re.search(r"[\r\n]", candidate)
+            ):
+                raise OperationalError(
+                    "anonymous feature authentication returned invalid evidence"
+                ) from None
+            token = candidate
+            return acquire(url, {**headers, "Authorization": "Bearer " + token})
+
+    return get
+
+
+def _feature_metadata(pin: Pin, request: Request, now: datetime) -> dict[str, Any]:
+    """Verify the manifest, every content descriptor, and inert packaged Feature metadata.
+
+    No archive member is extracted and no Feature installer is executed. The caller's
+    shared byte/request budget applies to config and archive requests too.
+    """
+    get = _registry_request(pin, request)
+    base = f"https://{pin.source}/v2/{pin.name}"
+    body = get(
+        f"{base}/manifests/{pin.digest}", {"Accept": "application/vnd.oci.image.manifest.v1+json"}
+    )
+    if "sha256:" + hashlib.sha256(body).hexdigest() != pin.digest:
+        raise OperationalError("feature manifest bytes differ from pinned SHA-256")
+    document = _json(body)
+    if (
+        type(document.get("schemaVersion")) is not int
+        or document["schemaVersion"] != 2
+        or document.get("mediaType") != "application/vnd.oci.image.manifest.v1+json"
+    ):
+        raise OperationalError("feature manifest needs the supported OCI schema")
+    config, layers = document.get("config"), document.get("layers")
+    if not isinstance(config, dict) or not isinstance(layers, list) or len(layers) != 1:
+        raise OperationalError("feature manifest needs one config and one archive")
+    if (
+        config.get("mediaType") != "application/vnd.devcontainers"
+        or not isinstance(layers[0], dict)
+        or layers[0].get("mediaType") != "application/vnd.devcontainers.layer.v1+tar"
+    ):
+        raise OperationalError("feature content has an unsupported media type")
+    contents: list[bytes] = []
+    for descriptor in (config, *layers):
+        digest, size = descriptor.get("digest"), descriptor.get("size")
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[a-f0-9]{64}", digest) is None
+            or type(size) is not int
+            or not 0 <= size <= MAX_FILE_BYTES
+        ):
+            raise OperationalError("feature content descriptor exceeds its identity/size bound")
+        content = get(f"{base}/blobs/{digest}", {})
+        if len(content) != size or "sha256:" + hashlib.sha256(content).hexdigest() != digest:
+            raise OperationalError("feature content bytes differ from descriptor size or SHA-256")
+        contents.append(content)
+    if _json(contents[0]) != {}:
+        raise OperationalError("feature OCI configuration has unsupported fields")
+    annotations = document.get("annotations")
+    if annotations is None:
+        annotations = {}
+    if not isinstance(annotations, dict):
+        raise OperationalError("feature manifest annotations are malformed")
+    created = annotations.get("org.opencontainers.image.created")
+    if created is not None:
+        if not isinstance(created, str):
+            raise OperationalError("feature manifest publication time is malformed")
+        _instant(created, now)
+    annotated = annotations.get("dev.containers.metadata")
+    if annotated is not None and not isinstance(annotated, str):
+        raise OperationalError("feature metadata annotation is malformed")
+    metadata = _json(annotated) if annotated is not None else None
+    packaged: dict[str, Any] | None = None
+    total, names = 0, set()
+    try:
+        archive_bytes = contents[1]
+        if archive_bytes.startswith(b"\x1f\x8b"):
+            with gzip.GzipFile(fileobj=io.BytesIO(archive_bytes)) as compressed:
+                archive_bytes = compressed.read(MAX_FILE_BYTES + 1)
+        if len(archive_bytes) > MAX_FILE_BYTES:
+            raise OperationalError("feature archive exceeds its decompression byte bound")
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+            for index, member in enumerate(archive):
+                path = PurePosixPath(member.name)
+                if (
+                    index >= MAX_FILES
+                    or path.is_absolute()
+                    or ".." in path.parts
+                    or member.name in names
+                    or not (member.isdir() or member.isfile())
+                ):
+                    raise OperationalError(
+                        "feature archive contains unsupported or duplicate members"
+                    )
+                names.add(member.name)
+                total += member.size
+                if total > MAX_FILE_BYTES:
+                    raise OperationalError("feature archive exceeds its unpacked byte bound")
+                if path.as_posix().removeprefix("./") == "devcontainer-feature.json":
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise OperationalError("feature archive metadata is not regular content")
+                    packaged = _json(stream.read(MAX_FILE_BYTES + 1))
+    except tarfile.TarError as error:
+        raise OperationalError("feature archive is malformed") from error
+    if metadata is None:
+        metadata = packaged
+    if (
+        metadata is None
+        or packaged != metadata
+        or metadata.get("version") != pin.version
+        or metadata.get("id") != pin.name.rsplit("/", 1)[1]
+    ):
+        raise OperationalError("feature archive, manifest metadata and locked version disagree")
+    return metadata
+
+
+def validate_feature_graph(
+    root: Path, request: Request, *, now: datetime | None = None
+) -> dict[str, Pin]:
+    """Validate a complete official lock graph against digest-verified OCI content.
+
+    This proves content and dependency edges, not eligibility by age. Required
+    ``check_operational`` independently holds every introduced digest for 72 hours
+    in its trusted exact-digest ledger, including transitive-only changes.
+    """
+    _signatures, valid, errors = _features(root)
+    if errors:
+        raise OperationalError(next(iter(errors.values())))
+    document = _json(_read(root, FEATURE_LOCK) or '{"features":{}}')["features"]
+    requests, consumed = 0, 0
+
+    def bounded(url: str, headers: Mapping[str, str]) -> bytes:
+        nonlocal requests, consumed
+        requests += 1
+        if requests > MAX_FILES:
+            raise OperationalError("feature graph exceeded its aggregate metadata request bound")
+        body = request(url, headers)
+        if not isinstance(body, bytes) or len(body) > MAX_FILE_BYTES:
+            raise OperationalError("feature graph metadata exceeded its per-response byte bound")
+        consumed += len(body)
+        if consumed > MAX_SNAPSHOT_BYTES:
+            raise OperationalError("feature graph metadata exceeded its aggregate byte bound")
+        return body
+
+    for source, pin in valid.items():
+        metadata = _feature_metadata(pin, bounded, now or datetime.now(UTC))
+        dependencies = metadata.get("dependsOn", {})
+        if not isinstance(dependencies, dict) or any(
+            not isinstance(value, dict) for value in dependencies.values()
+        ):
+            raise OperationalError("feature metadata dependencies have unsupported options")
+        if set(dependencies) != set(document[source].get("dependsOn", [])):
+            raise OperationalError(
+                "feature lock dependencies disagree with verified Feature metadata"
+            )
+    return valid
 
 
 def _yaml_content(line: str, quote: str | None) -> tuple[str, str | None]:
@@ -568,11 +833,18 @@ def check_operational(
                         "changed operational input is missing from exact snapshots"
                     )
         before, after = _inventory(base), _inventory(head)
-        old_features, old_valid, _ = _features(base)
+        old_features, old_valid, old_feature_errors = _features(base)
         new_features, new_valid, feature_errors = _features(head)
         for source in old_features.keys() | new_features.keys():
             if old_features.get(source) != new_features.get(source) and source in feature_errors:
                 raise OperationalError(feature_errors[source])
+        if old_features != new_features:
+            validate_feature_graph(head, request, now=now)
+            # An invalid old graph cannot launder previously orphaned identities
+            # into accepted preexisting dependencies. The shared ledger still
+            # preserves any independently established exact-digest observation.
+            if old_feature_errors:
+                old_valid = {}
         for pin in old_valid.values():
             before[pin.key] = pin
         for pin in new_valid.values():
@@ -580,6 +852,20 @@ def check_operational(
         introduced = [after[key] for key in sorted(after.keys() - before.keys())]
         if sum(pin.covered or pin.kind == "unsupported-runner" for pin in introduced) > remaining:
             raise OperationalError("combined introduced identities exceed their request bound")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        retryable = (
+            not isinstance(error, urllib.error.HTTPError) or error.code == 429 or error.code >= 500
+        )
+        report["results"].append(
+            {
+                "ecosystem": "operational",
+                "status": "failure",
+                "reason": "feature graph metadata acquisition: " + type(error).__name__,
+                "retry_at": _format(now + timedelta(hours=1)) if retryable else None,
+                "retry_eligible": retryable,
+            }
+        )
+        return report
     except (OperationalError, ValueError, TypeError, KeyError, OSError) as error:
         report["results"].append(
             {

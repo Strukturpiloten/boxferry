@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import sys
+import tarfile
 import tempfile
 import unittest
 import urllib.error
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from boxferry_ci.dependencies import (
     DependencyContext,
     DependencyError,
+    OciBlobRedirect,
     _NoMetadataRedirect,
     check_dependencies,
     fetch_metadata,
@@ -31,6 +33,7 @@ from boxferry_ci.operational import (
     OperationalError,
     Pin,
     snapshot_paths,
+    validate_feature_graph,
     verify_manifest,
 )
 
@@ -61,6 +64,41 @@ def digest(data: bytes) -> str:
 
 def image(data: bytes, *, source: str = "ghcr.io/example/tool", tag: str = "1.0.0") -> str:
     return f"{source}:{tag}@{digest(data)}"
+
+
+def feature_bundle(
+    name: str = "github-cli", version: str = "1.1.0", dependencies: dict[str, Any] | None = None
+) -> list[bytes]:
+    metadata: dict[str, Any] = {"id": name, "version": version}
+    if dependencies is not None:
+        metadata["dependsOn"] = dependencies
+    packaged = json.dumps(metadata).encode()
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        member = tarfile.TarInfo("devcontainer-feature.json")
+        member.size = len(packaged)
+        archive.addfile(member, io.BytesIO(packaged))
+    config, layer = b"{}", output.getvalue()
+    body = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": MEDIA,
+            "config": {
+                "mediaType": "application/vnd.devcontainers",
+                "digest": digest(config),
+                "size": len(config),
+            },
+            "layers": [
+                {
+                    "mediaType": "application/vnd.devcontainers.layer.v1+tar",
+                    "digest": digest(layer),
+                    "size": len(layer),
+                }
+            ],
+            "annotations": {"dev.containers.metadata": json.dumps(metadata)},
+        }
+    ).encode()
+    return [body, config, layer]
 
 
 class Registry:
@@ -150,7 +188,9 @@ class OperationalTests(unittest.TestCase):
         source = f"ghcr.io/devcontainers/features/github-cli:{version}"
         self.write(root, FEATURE, json.dumps({"features": {source: {"version": option}}}))
         if locked:
-            value = data or self.blob
+            bundle = feature_bundle(version=version)
+            self.registry.blobs.update({digest(blob): blob for blob in bundle})
+            value = data or bundle[0]
             entry = {
                 "version": version,
                 "resolved": f"ghcr.io/devcontainers/features/github-cli@{digest(value)}",
@@ -295,7 +335,7 @@ class OperationalTests(unittest.TestCase):
         self.features(self.head, option="2.104.0")
         report = self.check()
         self.assertEqual(report["status"], "pass")
-        self.assertEqual(self.registry.calls, [])
+        self.assertEqual(len(self.registry.calls), 3)
 
     def test_feature_lock_removal_and_duplicate_json_keys_fail(self) -> None:
         self.features(self.base)
@@ -303,6 +343,194 @@ class OperationalTests(unittest.TestCase):
         self.assertEqual(self.check()["status"], "failure")
         self.write(self.head, FEATURE, '{"features":{},"features":{}}')
         self.assertEqual(self.check()["status"], "failure")
+
+    def graph(
+        self,
+        *,
+        dependency: str = "ghcr.io/devcontainers/features/common-utils:2",
+        child_version: str = "2.4.1",
+    ) -> dict[str, Any]:
+        root = "ghcr.io/devcontainers/features/github-cli:1.1.0"
+        parent = feature_bundle(dependencies={dependency: {"configureZshAsDefaultShell": False}})
+        child = feature_bundle(name="common-utils", version=child_version)
+        self.registry = Registry([*parent, *child], authenticate=True)
+        self.write(self.head, FEATURE, json.dumps({"features": {root: {}}}))
+        locked = {
+            "features": {
+                root: {
+                    "version": "1.1.0",
+                    "resolved": "ghcr.io/devcontainers/features/github-cli@" + digest(parent[0]),
+                    "integrity": digest(parent[0]),
+                    "dependsOn": [dependency],
+                },
+                dependency: {
+                    "version": child_version,
+                    "resolved": "ghcr.io/devcontainers/features/common-utils@" + digest(child[0]),
+                    "integrity": digest(child[0]),
+                },
+            }
+        }
+        self.write(self.head, FEATURE_LOCK, json.dumps(locked))
+        return locked
+
+    def test_official_transitive_graph_metadata_content_and_all_member_age(self) -> None:
+        self.graph()
+        report = self.check()
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(len(report["results"]), 2)
+        self.assertEqual(len(report["state"]["first_seen"]), 2)
+        later = self.check(now=NOW + timedelta(hours=72), state=report["state"])
+        self.assertEqual(later["status"], "pass")
+        self.assertEqual(self.check(now=NOW + timedelta(hours=72))["status"], "waiting")
+
+    def test_transitive_numeric_minor_and_digest_selectors(self) -> None:
+        self.graph(dependency="ghcr.io/devcontainers/features/common-utils:2.4")
+        self.assertEqual(len(validate_feature_graph(self.head, self.registry)), 2)
+        child = feature_bundle(name="common-utils", version="2.4.1")
+        self.graph(dependency="ghcr.io/devcontainers/features/common-utils@" + digest(child[0]))
+        self.assertEqual(len(validate_feature_graph(self.head, self.registry)), 2)
+        self.graph(child_version="3.0.0")
+        self.assertEqual(self.check()["status"], "failure")
+
+    def test_orphan_missing_cycle_unknown_field_and_metadata_edge_mismatch(self) -> None:
+        for fault in ("orphan", "missing", "cycle", "field", "metadata"):
+            with self.subTest(fault=fault):
+                lock = self.graph()
+                root, child = list(lock["features"])
+                if fault == "orphan":
+                    lock["features"][root].pop("dependsOn")
+                elif fault == "missing":
+                    del lock["features"][child]
+                elif fault == "cycle":
+                    lock["features"][child]["dependsOn"] = [root]
+                elif fault == "field":
+                    lock["features"][child]["install"] = "candidate-command"
+                else:
+                    lock["features"].pop(child)
+                    lock["features"][root].pop("dependsOn")
+                self.write(self.head, FEATURE_LOCK, json.dumps(lock))
+                self.assertEqual(self.check()["status"], "failure")
+
+    def test_feature_layer_integrity_and_packaged_metadata_are_independent(self) -> None:
+        lock = self.graph()
+        child = next(key for key in lock["features"] if key.endswith(":2"))
+        manifest_body = self.registry.blobs[lock["features"][child]["integrity"]]
+        layer_digest = json.loads(manifest_body)["layers"][0]["digest"]
+        self.registry.blobs[layer_digest] = b"not the held archive"
+        report = self.check()
+        self.assertEqual(report["status"], "failure")
+        self.assertEqual(report["state"]["first_seen"], {})
+
+    def test_transitive_only_republication_starts_its_own_hold(self) -> None:
+        self.graph()
+        first = self.check()
+        for path in (FEATURE, FEATURE_LOCK):
+            self.write(self.base, path, (self.head / path).read_text())
+        lock = self.graph(child_version="2.4.2")
+        self.assertEqual(len(lock["features"]), 2)
+        report = self.check(now=NOW + timedelta(days=4), state=first["state"])
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["results"][0]["version"], "2.4.2")
+
+    def test_invalid_base_orphan_cannot_launder_a_new_reachable_identity(self) -> None:
+        lock = self.graph()
+        for path in (FEATURE, FEATURE_LOCK):
+            self.write(self.base, path, (self.head / path).read_text())
+        source = next(iter(lock["features"]))
+        lock["features"][source].pop("dependsOn")
+        self.write(self.base, FEATURE_LOCK, json.dumps(lock))
+        report = self.check()
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(len(report["results"]), 2)
+
+    def test_missing_optional_annotation_uses_verified_packaged_metadata(self) -> None:
+        lock = self.graph()
+        source = next(iter(lock["features"]))
+        old_digest = lock["features"][source]["integrity"]
+        manifest = json.loads(self.registry.blobs.pop(old_digest))
+        manifest.pop("annotations")
+        body = json.dumps(manifest).encode()
+        self.registry.blobs[digest(body)] = body
+        lock["features"][source]["integrity"] = digest(body)
+        lock["features"][source]["resolved"] = (
+            "ghcr.io/devcontainers/features/github-cli@" + digest(body)
+        )
+        self.write(self.head, FEATURE_LOCK, json.dumps(lock))
+        self.assertEqual(len(validate_feature_graph(self.head, self.registry)), 2)
+
+    def test_standalone_graph_rejects_float_schema_and_noncanonical_transitive_semver(self) -> None:
+        lock = self.graph()
+        source = next(iter(lock["features"]))
+        entry = lock["features"][source]
+        manifest = json.loads(self.registry.blobs[entry["integrity"]])
+        manifest["schemaVersion"] = 2.0
+        encoded = json.dumps(manifest).encode()
+        self.registry.blobs[digest(encoded)] = encoded
+        entry["integrity"] = digest(encoded)
+        entry["resolved"] = entry["resolved"].rsplit("@", 1)[0] + "@" + digest(encoded)
+        self.write(self.head, FEATURE_LOCK, json.dumps(lock))
+        with self.assertRaisesRegex(OperationalError, "supported OCI schema"):
+            validate_feature_graph(self.head, self.registry)
+        self.graph(child_version="2.04.1")
+        with self.assertRaisesRegex(OperationalError, "exact semantic version"):
+            validate_feature_graph(self.head, self.registry)
+
+    def test_realistic_config_and_layer_redirects_share_all_request_budgets(self) -> None:
+        self.graph()
+        underlying = self.registry
+        redirects: list[tuple[str, dict[str, str]]] = []
+
+        def request(url: str, headers: Mapping[str, str]) -> bytes:
+            if url.startswith("https://pkg-containers.githubusercontent.com/"):
+                redirects.append((url, dict(headers)))
+                return underlying.blobs[url.split("?", 1)[0].rsplit("/", 1)[1]]
+            if "/blobs/sha256:" in url:
+                underlying.calls.append((url, dict(headers)))
+                raise OciBlobRedirect(
+                    "https://pkg-containers.githubusercontent.com/ghcr1/blobs/"
+                    + url.rsplit("/", 1)[1]
+                    + "?sig=synthetic-private"
+                )
+            return underlying(url, headers)
+
+        self.assertEqual(len(validate_feature_graph(self.head, request)), 2)
+        self.assertEqual(len(redirects), 4)
+        self.assertTrue(all(headers == {} for _url, headers in redirects))
+        with patch("boxferry_ci.dependencies.MAX_METADATA_REQUESTS", 6):
+            report = check_dependencies(
+                self.base, self.head, now=NOW, context=self.context(), fetch_request=request
+            )
+        self.assertEqual(report["status"], "failure")
+        self.assertTrue(report["retry_eligible"])
+        self.assertEqual(report["state"]["first_seen"], {})
+        self.assertNotIn("synthetic-private", json.dumps(report))
+
+    def test_official_selector_alias_collapse_is_explicitly_unsupported(self) -> None:
+        lock = self.graph()
+        child = next(source for source in lock["features"] if source.endswith(":2"))
+        lock["features"][child + ".4"] = lock["features"].pop(child)
+        self.write(self.head, FEATURE_LOCK, json.dumps(lock))
+        with self.assertRaisesRegex(OperationalError, "selector alias collapse"):
+            validate_feature_graph(self.head, self.registry)
+
+    def test_feature_future_and_malformed_publication_times_fail_before_observation(self) -> None:
+        for created in ("2030-01-01T00:00:00Z", "not-a-date", 42):
+            with self.subTest(created=created):
+                lock = self.graph()
+                source = next(iter(lock["features"]))
+                body = json.loads(self.registry.blobs[lock["features"][source]["integrity"]])
+                body["annotations"]["org.opencontainers.image.created"] = created
+                encoded = json.dumps(body).encode()
+                self.registry.blobs[digest(encoded)] = encoded
+                lock["features"][source]["integrity"] = digest(encoded)
+                lock["features"][source]["resolved"] = (
+                    "ghcr.io/devcontainers/features/github-cli@" + digest(encoded)
+                )
+                self.write(self.head, FEATURE_LOCK, json.dumps(lock))
+                report = self.check()
+                self.assertEqual(report["status"], "failure")
+                self.assertEqual(report["state"]["first_seen"], {})
 
     def test_runner_direct_include_and_marked_matrix_selectors(self) -> None:
         text = """---

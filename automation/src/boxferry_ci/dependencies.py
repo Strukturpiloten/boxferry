@@ -11,11 +11,15 @@ import base64
 import hashlib
 import json
 import re
+import signal
+import threading
+import time
 import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.message import Message
@@ -252,6 +256,7 @@ def _packages(root: Path) -> set[Package]:
     for name, parser in (
         ("Cargo.lock", _cargo),
         ("package-lock.json", _npm),
+        ("automation/devcontainer/package-lock.json", _npm),
         ("uv.lock", _uv),
         ("automation/uv.lock", _uv),
     ):
@@ -289,6 +294,87 @@ def _format(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+OCI_BLOB_SECONDS = 30
+OCI_BLOB_REDIRECTS = 1
+_OCI_BLOB = re.compile(r"https://ghcr\.io/v2/[a-z0-9_./-]+/blobs/(?P<digest>sha256:[a-f0-9]{64})\Z")
+
+
+class OciBlobRedirect(DependencyError):
+    """One unlogged Location, usable only by the immutable OCI blob reader."""
+
+    def __init__(self, location: str) -> None:
+        super().__init__("OCI blob redirect requires bounded content acquisition")
+        self.location = location
+
+
+@contextmanager
+def _oci_blob_deadline() -> Generator[float]:
+    # Match the canonical asset reader's main-thread wall-clock guard. A socket
+    # timeout alone does not bound a peer which trickles bytes indefinitely.
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        raise DependencyError("OCI blob acquisition requires a main-thread wall-clock guard")
+    if signal.getitimer(signal.ITIMER_REAL)[0]:
+        raise DependencyError("OCI blob acquisition requires its own wall-clock budget")
+    previous = signal.getsignal(signal.SIGALRM)
+
+    def exhausted(_number: int, _frame: object) -> None:
+        raise TimeoutError("OCI blob acquisition exceeded its aggregate deadline")
+
+    signal.signal(signal.SIGALRM, exhausted)
+    try:
+        deadline = time.monotonic() + OCI_BLOB_SECONDS
+        signal.setitimer(signal.ITIMER_REAL, OCI_BLOB_SECONDS)
+        yield deadline
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def fetch_oci_blob(url: str, headers: Mapping[str, str], request: FetchRequest) -> bytes:
+    """Follow only GHCR's observed single signed CDN hop for one exact blob.
+
+    Every HTTP attempt uses the caller's request/byte accounting. The ordinary
+    metadata transport still refuses redirects; this helper alone handles its
+    typed immutable-blob redirect. Signed query strings are never diagnostic data.
+    """
+    match = _OCI_BLOB.fullmatch(url)
+    if match is None or any(
+        part in {"", ".", ".."} for part in urllib.parse.urlparse(url).path.split("/")[1:]
+    ):
+        raise DependencyError("OCI blob needs an exact reviewed credential-free HTTPS identity")
+    digest = match["digest"]
+    with _oci_blob_deadline() as deadline:
+        current, forwarded = url, dict(headers)
+        for hop in range(OCI_BLOB_REDIRECTS + 1):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("OCI blob acquisition exceeded its aggregate deadline")
+            try:
+                data = request(current, forwarded)
+            except OciBlobRedirect as redirect:
+                target = urllib.parse.urlparse(redirect.location)
+                if (
+                    hop >= OCI_BLOB_REDIRECTS
+                    or len(redirect.location) > 16384
+                    or target.scheme != "https"
+                    or target.netloc != "pkg-containers.githubusercontent.com"
+                    or target.path != "/ghcr1/blobs/" + digest
+                    or target.fragment
+                ):
+                    raise DependencyError(
+                        "OCI blob redirect is outside the exact reviewed CDN identity"
+                    ) from None
+                current, forwarded = redirect.location, {}
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("OCI blob acquisition exceeded its aggregate deadline")
+            if not isinstance(data, bytes) or len(data) > MAX_METADATA_BYTES:
+                raise DependencyError("OCI blob content exceeds its byte bound")
+            if "sha256:" + hashlib.sha256(data).hexdigest() != digest:
+                raise DependencyError("OCI blob content differs from the requested SHA-256")
+            return data
+    raise DependencyError("OCI blob acquisition exceeded its redirect bound")
+
+
 class _NoMetadataRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -301,6 +387,9 @@ class _NoMetadataRedirect(urllib.request.HTTPRedirectHandler):
     ) -> urllib.request.Request | None:
         # Exact registry endpoints need no redirect. Refusing before forwarding
         # also keeps credentials and logical request accounting on one origin.
+        fp.close()
+        if code == 307 and _OCI_BLOB.fullmatch(req.full_url):
+            raise OciBlobRedirect(newurl)
         raise DependencyError("registry metadata redirects are not allowed")
 
 

@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import io
 import json
+import tarfile
 import tempfile
 import unittest
 from collections.abc import Mapping
@@ -102,6 +103,39 @@ class OperationalSnapshots(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.repository = self.root / "candidate"
         self.repository.mkdir()
+        metadata = {"id": "github-cli", "version": "1.1.0"}
+        encoded_metadata = json.dumps(metadata).encode()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as stream:
+            member = tarfile.TarInfo("devcontainer-feature.json")
+            member.size = len(encoded_metadata)
+            stream.addfile(member, io.BytesIO(encoded_metadata))
+        config, layer = b"{}", archive.getvalue()
+
+        def digest(content: bytes) -> str:
+            return "sha256:" + hashlib.sha256(content).hexdigest()
+
+        manifest = json.dumps(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {
+                    "mediaType": "application/vnd.devcontainers",
+                    "size": len(config),
+                    "digest": digest(config),
+                },
+                "layers": [
+                    {
+                        "mediaType": "application/vnd.devcontainers.layer.v1+tar",
+                        "size": len(layer),
+                        "digest": digest(layer),
+                    }
+                ],
+                "annotations": {"dev.containers.metadata": json.dumps(metadata)},
+            }
+        ).encode()
+        self.feature_blobs = {digest(body): body for body in (manifest, config, layer)}
+        feature_digest = digest(manifest)
         feature = "ghcr.io/devcontainers/features/github-cli:1.1.0"
         declared = json.dumps({"features": {feature: {"version": "2.103.2"}}}).encode()
         lock = json.dumps(
@@ -109,8 +143,8 @@ class OperationalSnapshots(unittest.TestCase):
                 "features": {
                     feature: {
                         "version": "1.1.0",
-                        "resolved": "ghcr.io/devcontainers/features/github-cli@" + DIGEST,
-                        "integrity": DIGEST,
+                        "resolved": "ghcr.io/devcontainers/features/github-cli@" + feature_digest,
+                        "integrity": feature_digest,
                     }
                 }
             }
@@ -144,6 +178,8 @@ class OperationalSnapshots(unittest.TestCase):
             return b'{"token":"synthetic-pull-token"}'
         if "Authorization" not in values:
             raise urllib.error.HTTPError(url, 401, "anonymous pull", Message(), None)
+        if url.rsplit("/", 1)[1] in self.feature_blobs:
+            return self.feature_blobs[url.rsplit("/", 1)[1]]
         if url.endswith("/manifests/" + DIGEST):
             return MANIFEST
         raise AssertionError("snapshot test attempted an unexpected metadata endpoint")
@@ -200,7 +236,7 @@ class OperationalSnapshots(unittest.TestCase):
         self.assertTrue(any(args == ("show", BASE + ":" + OLD) for args in self.git_calls))
         self.assertTrue(any(args == ("show", HEAD + ":" + LOCK) for args in self.git_calls))
         self.assertFalse(any("exploit.py" in " ".join(args) for args in self.git_calls))
-        self.assertEqual(len(self.http_calls), 3)
+        self.assertEqual(len(self.http_calls), 8)
 
     def test_cli_directory_mode_has_no_author_exemption_or_git_trust_flag(self) -> None:
         roots = {BASE: self.root / "base", HEAD: self.root / "head"}
@@ -253,7 +289,7 @@ class OperationalSnapshots(unittest.TestCase):
         self.assertTrue(any(path.startswith("contents/" + LOCK) for path in api.seen))
         self.assertFalse(any(path.startswith("contents/scripts/exploit.py") for path in api.seen))
         self.assertEqual(api.requests, len(api.seen) + len(self.http_calls))
-        self.assertEqual(len(self.http_calls), 3)
+        self.assertEqual(len(self.http_calls), 8)
 
     def test_api_existing_selector_reused_and_renamed_is_not_new(self) -> None:
         self.files[HEAD][NEW] = self.files[BASE][OLD]
@@ -266,7 +302,7 @@ class OperationalSnapshots(unittest.TestCase):
             )
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["results"], [])
-        self.assertEqual(self.http_calls, [])
+        self.assertEqual(len(self.http_calls), 5)
         self.assertFalse(any(path.startswith("contents/" + NEW) for path in api.seen))
         self.assertEqual(sum(path.startswith("git/trees/") for path in api.seen), 2)
 

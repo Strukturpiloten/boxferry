@@ -6,6 +6,12 @@ versioned migration-scenario expectations and separate observed evidence.
 ADRs explain durable constraints and why they were chosen. Current work should start with the
 active table; superseded records are history and are read only when that history matters.
 
+## Proposed decisions
+
+[ADR 0094](0094-official-devcontainer-feature-updates.md) records the limited official-generator
+updater, complete Feature graph and native candidate qualification contract. Producer admission
+can retain inactive code; consumer seed/adoption and successful qualification precede activation.
+
 ## Active decisions
 
 [ADR 0093](0093-exact-candidate-cargo-tools.md) binds shared SemVer execution to the
