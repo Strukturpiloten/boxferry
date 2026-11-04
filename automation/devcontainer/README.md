@@ -5,6 +5,10 @@ with `npm ci --ignore-scripts --prefix automation/devcontainer`. The package is
 MIT-licensed and comes from the public npm registry; the lock records its
 published integrity. No upstream implementation is copied into BoxFerry.
 
+The local qualifier gives npm distinct empty user and global config files inside
+its private preparation directory, alongside its private home and cache. Keep
+these config paths distinct: npm rejects loading the same path for both scopes.
+
 The trusted `boxferry_ci.devcontainer_updates` helper runs `devcontainer upgrade`
 in private scratch without candidate hooks, App tokens, Docker credentials or
 host configuration. It validates the complete OCI Feature graph before replacing

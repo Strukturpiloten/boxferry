@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -64,7 +65,9 @@ class LocalEntry(unittest.TestCase):
         self.commands: list[subject.validation.Commands] = []
         self.node_version = "v" + NODE
         self.install_error = False
+        self.install_cancel = False
         self.mutate_install = False
+        self.npm_config_paths: list[Path] = []
         self.snapshot_policy = policy(self.repository)
         self.configure(self.repository)
         test = self
@@ -121,6 +124,23 @@ class LocalEntry(unittest.TestCase):
                 if stage == "node-version":
                     return test.node_version
                 if stage == "install-official-cli":
+                    user_config = Path(self.env["NPM_CONFIG_USERCONFIG"])
+                    global_config = Path(self.env["NPM_CONFIG_GLOBALCONFIG"])
+                    test.npm_config_paths.extend((user_config, global_config))
+                    test.assertNotEqual(user_config, global_config)
+                    for config in (user_config, global_config):
+                        test.assertTrue(config.is_relative_to(self.private))
+                        test.assertTrue(config.is_file())
+                        test.assertEqual(config.read_bytes(), b"")
+                        test.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+                    test.assertEqual(self.env["NPM_CONFIG_CACHE"], str(self.private / "npm-cache"))
+                    test.assertEqual(self.env["HOME"], str(self.private / "home"))
+                    test.assertNotIn("NPM_CONFIG_TOKEN", self.env)
+                    test.assertNotIn("NODE_AUTH_TOKEN", self.env)
+                    test.assertNotEqual(self.env["NPM_CONFIG_USERCONFIG"], os.devnull)
+                    test.assertNotEqual(self.env["NPM_CONFIG_GLOBALCONFIG"], os.devnull)
+                    if test.install_cancel:
+                        raise subject.RunCancelled("official install cancelled")
                     if test.install_error:
                         raise subject.validation.ValidationError("official install failed")
                     if test.mutate_install:
@@ -231,7 +251,9 @@ class LocalEntry(unittest.TestCase):
         install = next(event[1] for event in self.events if event[0] == "install-official-cli")
         self.assertEqual(install["argv"][1:], ("ci", "--ignore-scripts", "--no-audit", "--no-fund"))
         self.assertTrue(str(install["cwd"]).endswith(subject.validation.CLI_PROJECT))
-        self.assertEqual(install["env"]["NPM_CONFIG_USERCONFIG"], os.devnull)
+        self.assertEqual(install["env"]["NPM_CONFIG_USERCONFIG"], str(self.npm_config_paths[0]))
+        self.assertEqual(install["env"]["NPM_CONFIG_GLOBALCONFIG"], str(self.npm_config_paths[1]))
+        self.assertTrue(all(not config.exists() for config in self.npm_config_paths))
         self.assertEqual(
             result["policy_config_sha256"],
             hashlib.sha256(json.dumps(self.snapshot_policy).encode()).hexdigest(),
@@ -450,6 +472,18 @@ class LocalEntry(unittest.TestCase):
             self.assertEqual(result["status"], "failure", result)
             self.assertEqual(result["preparation_cleanup"], "success")
             self.assertFalse(self.mocks[3].called)
+            if install:
+                self.assertEqual(len(self.npm_config_paths), 2)
+                self.assertTrue(all(not config.exists() for config in self.npm_config_paths))
+
+    def test_cancelled_cli_install_removes_private_config_files(self) -> None:
+        self.install_cancel = True
+        result = self.execute()
+        self.assertEqual(result["status"], "failure")
+        self.assertEqual(result["preparation_cleanup"], "success")
+        self.assertEqual(len(self.npm_config_paths), 2)
+        self.assertTrue(all(not config.exists() for config in self.npm_config_paths))
+        self.assertFalse(self.mocks[3].called)
 
     def test_preparation_input_drift_does_not_rebase_the_held_fingerprint(self) -> None:
         self.mutate_install = True
@@ -578,10 +612,11 @@ class LocalEntry(unittest.TestCase):
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["engine"], "podman")
         self.assertEqual(result["preparation_cleanup"], "success")
-        with patch.object(subject, "_install_cli", side_effect=subject.RunCancelled("cancelled")):
-            result = self.execute()
+        self.install_cancel = True
+        result = self.execute()
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["preparation_cleanup"], "success")
+        self.assertTrue(all(not config.exists() for config in self.npm_config_paths))
 
     def test_main_replaces_stale_receipt_on_failed_preparation(self) -> None:
         self.output.write_text('{"status":"success"}')

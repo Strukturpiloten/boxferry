@@ -146,10 +146,17 @@ def _install_cli(automation: Path, private: Path, commands: validation.Commands)
         raise validation.ValidationError("host Node differs from the selected canonical authority")
     # npm's env-node launcher must use the exact Node whose version was verified.
     commands.env["PATH"] = str(Path(node).parent) + os.pathsep + commands.env["PATH"]
+    user_config = private / "npm-user.npmrc"
+    global_config = private / "npm-global.npmrc"
+    for config in (user_config, global_config):
+        config.touch(mode=0o600, exist_ok=False)
+        config.chmod(0o600)
+    if user_config == global_config:
+        raise validation.ValidationError("npm user and global config must be distinct")
     commands.env.update(
         NPM_CONFIG_CACHE=str(private / "npm-cache"),
-        NPM_CONFIG_USERCONFIG=os.devnull,
-        NPM_CONFIG_GLOBALCONFIG=os.devnull,
+        NPM_CONFIG_USERCONFIG=str(user_config),
+        NPM_CONFIG_GLOBALCONFIG=str(global_config),
     )
     commands.call(
         (npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"),
