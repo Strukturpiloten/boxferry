@@ -205,7 +205,7 @@ run_step "Prepare the integrity-pinned native Renovate test runtime" \
   --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate
 export BOXFERRY_RENOVATE_PACKAGE="${repository_root}/target/tools/renovate"
 run_step "Test shared automation contracts" \
-  uv run --locked --project automation python -m unittest discover -s automation/tests -v
+  uv run --locked --project automation python -m boxferry_ci.test_reporting --repository-root . --start-directory automation/tests
 run_step "Verify candidate Compose provider artifact integrity" \
   uv run --locked --project automation python -m boxferry_ci.compose_provider \
   --repository-root "${repository_root}" --verify-working-tree

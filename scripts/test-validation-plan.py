@@ -508,8 +508,16 @@ class ValidationPlanTests(unittest.TestCase):
         automation = workflow.split("  automation:\n", 1)[1].split("  canonical-artifact-integrity:\n", 1)[0]
         self.assertNotIn("    if:", automation)
         self.assertIn("uses: ./_automation/.github/actions/shared-python", automation)
-        for command in ("ruff format --check", "ruff check", "ty check", "unittest discover"):
+        self.assertIn("    timeout-minutes: 10\n", automation)
+        for command in ("ruff format --check", "ruff check", "ty check"):
             self.assertIn(command, automation)
+        reporter_command = (
+            "uv run --locked --project _automation/automation python -m boxferry_ci.test_reporting "
+            "--repository-root _automation --start-directory _automation/automation/tests"
+        )
+        self.assertEqual(automation.count(f"        run: {reporter_command}\n"), 1)
+        self.assertEqual(workflow.count("python -m boxferry_ci.test_reporting"), 1)
+        self.assertNotIn("python -m unittest", automation)
         age = workflow.split("  lockfile-release-age:\n", 1)[1].split("  pr-gate:\n", 1)[0]
         self.assertEqual(age.count("if: github.event_name == 'pull_request' || github.event_name == 'merge_group'"), 3)
         self.assertIn("github.event.merge_group.base_sha", age)

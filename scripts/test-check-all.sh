@@ -170,7 +170,7 @@ for mode in default fix check; do
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
     "uv run --locked --project automation python -m boxferry_ci.renovate_runtime --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate" \
-    "uv run --locked --project automation python -m unittest discover -s automation/tests -v" \
+    "uv run --locked --project automation python -m boxferry_ci.test_reporting --repository-root . --start-directory automation/tests" \
     "uv run --locked --project automation python -m boxferry_ci.compose_provider --repository-root ${test_root}/repository --verify-working-tree" \
     "uv run --locked --project automation python scripts/kubernetes_tool_checksum_refresh.py --verify-working-tree --repository-root ${test_root}/repository"; do
     assert_contains "${mode}" "${command}"
@@ -203,7 +203,7 @@ for mode in fix check; do
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
     "uv run --locked --project automation python -m boxferry_ci.renovate_runtime --engine podman --pin automation/renovate-runtime.json --destination target/tools/renovate" \
-    "uv run --locked --project automation python -m unittest discover -s automation/tests -v" \
+    "uv run --locked --project automation python -m boxferry_ci.test_reporting --repository-root . --start-directory automation/tests" \
     "uv run --locked --project automation python -m boxferry_ci.compose_provider --repository-root ${test_root}/repository --verify-working-tree" \
     "uv run --locked --project automation python scripts/kubernetes_tool_checksum_refresh.py --verify-working-tree --repository-root ${test_root}/repository"; do
     status=0
