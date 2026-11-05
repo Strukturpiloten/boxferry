@@ -13,12 +13,14 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import traceback
 import unittest
 from collections.abc import Callable
 from http.client import HTTPMessage
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from boxferry_ci import bootstrap
 
@@ -1023,6 +1025,147 @@ class UvBootstrapTests(unittest.TestCase):
         self.assertIsNone(request.get_header("Authorization"))
         self.assertEqual(output.read_bytes(), b"uv!")
         self.assertEqual(opener.return_value.open.call_args.kwargs["timeout"], 30)
+
+    def test_downloader_reports_http_status_and_asset_without_private_error_data(self) -> None:
+        private = "PRIVATE-UV-HTTP-CANARY"
+        headers = HTTPMessage()
+        headers["Authorization"] = private
+        for filename in bootstrap.UV_ASSETS.values():
+            for status in (403, 404, 429, 503):
+                with self.subTest(filename=filename, status=status):
+                    body = io.BytesIO(private.encode())
+                    error = HTTPError(
+                        f"https://user:{private}@example.invalid/asset?signature={private}",
+                        status,
+                        private,
+                        headers,
+                        body,
+                    )
+                    with (
+                        patch.object(bootstrap, "build_opener") as opener,
+                        self.assertRaises(bootstrap.BootstrapError) as caught,
+                    ):
+                        opener.return_value.open.side_effect = error
+                        bootstrap.download_uv_archive("0.13.6", filename, self.root / "failed")
+                    message = str(caught.exception)
+                    self.assertIn(f"HTTP status {status}", message)
+                    self.assertIn(f"uv 0.13.6 asset {filename}", message)
+                    self.assertIn("check release availability", message)
+                    self.assertIn("then rerun", message)
+                    self.assertNotIn(private, "".join(traceback.format_exception(caught.exception)))
+                    self.assertNotIn("https://", message)
+                    self.assertEqual(
+                        body.tell(), 0, "never inspect a response body for diagnostics"
+                    )
+                    self.assertTrue(caught.exception.__suppress_context__)
+                    opener.return_value.open.assert_called_once()
+                    self.assertFalse((self.root / "failed").exists())
+
+    def test_downloader_classifies_transport_timeout_and_io_without_exception_text(self) -> None:
+        private = "PRIVATE-UV-TRANSPORT-CANARY"
+
+        class UnprintableTransport(URLError):
+            def __str__(self) -> str:
+                raise AssertionError("transport diagnostics must not format an exception")
+
+        for error, category, guidance in (
+            (URLError(private), "transport failure", "proxy and TLS"),
+            (UnprintableTransport(private), "transport failure", "proxy and TLS"),
+            (ConnectionResetError(private), "transport failure", "proxy and TLS"),
+            (TimeoutError(private), "request timed out", "check network access"),
+            (URLError(TimeoutError(private)), "request timed out", "check network access"),
+            (PermissionError(private), "I/O failure", "writable cache storage"),
+        ):
+            with (
+                self.subTest(category=category, error_type=type(error).__name__),
+                patch.object(bootstrap, "build_opener") as opener,
+                self.assertRaises(bootstrap.BootstrapError) as caught,
+            ):
+                opener.return_value.open.side_effect = error
+                bootstrap.download_uv_archive(
+                    "0.13.6", bootstrap.UV_ASSETS["aarch64"], self.root / "failed"
+                )
+            self.assertIn(category, str(caught.exception))
+            self.assertIn(guidance, str(caught.exception))
+            self.assertIn(bootstrap.UV_ASSETS["aarch64"], str(caught.exception))
+            self.assertNotIn(private, "".join(traceback.format_exception(caught.exception)))
+            self.assertNotIn("UnprintableTransport", str(caught.exception))
+            opener.return_value.open.assert_called_once()
+
+    def test_downloader_bounds_diagnostics_and_rejects_untrusted_http_status_values(self) -> None:
+        private = "PRIVATE-UV-STATUS-CANARY"
+        for status in (None, private, True, 99, 600, 10**1000):
+            error = HTTPError(
+                "https://example.invalid/" + private, 400, private, HTTPMessage(), None
+            )
+            with (
+                patch.object(error, "code", status),
+                patch.object(bootstrap, "build_opener") as opener,
+                self.assertRaises(bootstrap.BootstrapError) as caught,
+            ):
+                opener.return_value.open.side_effect = error
+                bootstrap.download_uv_archive(
+                    "1" * 10000 + ".2.3", bootstrap.UV_ASSETS["x86_64"], self.root / "failed"
+                )
+            message = str(caught.exception)
+            self.assertIn("HTTP failure with unavailable status", message)
+            self.assertNotIn(private, "".join(traceback.format_exception(caught.exception)))
+            self.assertLess(len(message), 512)
+
+    def test_downloader_redacts_timeout_during_response_read(self) -> None:
+        private = "PRIVATE-UV-READ-CANARY"
+
+        class Response(io.BytesIO):
+            def __init__(self) -> None:
+                super().__init__()
+                self.headers: dict[str, str] = {}
+
+            def read(self, size: int | None = -1) -> bytes:
+                raise TimeoutError(private)
+
+        response = Response()
+        with (
+            patch.object(bootstrap, "build_opener") as opener,
+            self.assertRaises(bootstrap.BootstrapError) as caught,
+        ):
+            opener.return_value.open.return_value = response
+            bootstrap.download_uv_archive(
+                "0.13.6", bootstrap.UV_ASSETS["x86_64"], self.root / "partial"
+            )
+        self.assertIn("request timed out", str(caught.exception))
+        self.assertNotIn(private, "".join(traceback.format_exception(caught.exception)))
+        self.assertTrue(response.closed)
+        self.assertEqual((self.root / "partial").read_bytes(), b"")
+        opener.return_value.open.assert_called_once()
+
+    def test_failed_download_cli_reports_safe_reason_without_installing_or_retrying(self) -> None:
+        private = "PRIVATE-UV-CLI-CANARY"
+        error = HTTPError(
+            "https://example.invalid/?signature=" + private, 503, private, HTTPMessage(), None
+        )
+        stderr = io.StringIO()
+        with (
+            patch.object(bootstrap, "build_opener") as opener,
+            patch.object(bootstrap, "uv_host_asset", return_value=bootstrap.UV_ASSETS["x86_64"]),
+            patch("sys.stderr", stderr),
+        ):
+            opener.return_value.open.side_effect = error
+            result = bootstrap.install_uv_cli(
+                [
+                    "--project",
+                    str(self.project),
+                    "--cache-root",
+                    str(self.cache),
+                    "--no-path-uv",
+                ]
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("HTTP status 503", stderr.getvalue())
+        self.assertIn(bootstrap.UV_ASSETS["x86_64"], stderr.getvalue())
+        self.assertNotIn(private, stderr.getvalue())
+        opener.return_value.open.assert_called_once()
+        self.assertFalse(list(self.cache.rglob("uv")))
+        self.assertFalse(list(self.cache.rglob("*.tar.gz")))
 
     def test_downloader_enforces_declared_actual_and_time_bounds(self) -> None:
         class Response(io.BytesIO):

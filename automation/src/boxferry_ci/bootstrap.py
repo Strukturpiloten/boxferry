@@ -26,6 +26,7 @@ import tomllib
 from http.client import HTTPMessage
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -584,7 +585,7 @@ class UvArchiveRedirect(HTTPRedirectHandler):
 
 
 def download_uv_archive(version: str, filename: str, destination: Path) -> None:
-    """Download bounded official bytes; the caller checks their pinned SHA256."""
+    """Download bounded bytes with redacted failure guidance; caller checks pinned SHA256."""
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or filename not in UV_ASSETS.values():
         raise BootstrapError("invalid canonical uv release or asset identity")
     request = Request(
@@ -611,9 +612,32 @@ def download_uv_archive(version: str, filename: str, destination: Path) -> None:
                     )
                 output.write(chunk)
     except OSError as error:
+        # HTTP reasons, URLs, headers and transport messages may contain credentials.
+        # Only an actual bounded integer status and fixed categories are diagnostic data.
+        if isinstance(error, HTTPError):
+            status = error.code
+            detail = (
+                f"HTTP status {status}"
+                if type(status) is int and 100 <= status <= 599
+                else "HTTP failure with unavailable status"
+            )
+            guidance = "check release availability and access to the reviewed GitHub release hosts"
+        elif isinstance(error, TimeoutError) or (
+            isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
+        ):
+            detail = "request timed out"
+            guidance = "check network access to the reviewed GitHub release hosts"
+        elif isinstance(error, (URLError, ConnectionError)):
+            detail = "transport failure"
+            guidance = "check network, proxy and TLS access to the reviewed GitHub release hosts"
+        else:
+            detail = "I/O failure"
+            guidance = "check network access and writable cache storage"
+        release = version if len(version) <= 64 else version[:64] + "..."
         raise BootstrapError(
-            f"official uv archive acquisition failed: {type(error).__name__}"
-        ) from error
+            f"official uv archive acquisition failed for uv {release} asset {filename}: "
+            f"{detail}; {guidance}, then rerun"
+        ) from None
 
 
 def extract_uv_binary(archive: Path, filename: str, destination: Path) -> str:
