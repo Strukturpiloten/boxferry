@@ -26,6 +26,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
+    with:
+      api_purpose: published
 
   release-metadata:
     name: Validate release metadata
@@ -152,6 +154,7 @@ jobs:
       - name: Require every validation prerequisite to succeed
         shell: bash
         env:
+          PUBLISHED_API_CANDIDATE: ${{ needs.deterministic.outputs.published_api_candidate_sha }}
           DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           READINESS_RESULT: ${{ needs.migration-readiness.result }}
@@ -159,6 +162,10 @@ jobs:
           BINARY_RESULT: ${{ needs.release-binary-evidence.result }}
         run: |
           set -euo pipefail
+          if [[ "${PUBLISHED_API_CANDIDATE}" != "${GITHUB_SHA}" ]]; then
+            echo 'Release requires exact-candidate published API evidence; development success is insufficient.' >&2
+            exit 1
+          fi
           for result in "${DETERMINISTIC_RESULT}" "${RELEASE_METADATA_RESULT}" \
             "${READINESS_RESULT}" "${EVIDENCE_RESULT}" "${BINARY_RESULT}"; do
             if [[ "${result}" != success ]]; then

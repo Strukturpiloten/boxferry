@@ -112,3 +112,10 @@ selected working tree.
 
 The installer records kind and Kustomize release-asset checksums, kubectl's `dl.k8s.io` checksum,
 and Helm's `get.helm.sh` checksum. Other tooling ownership remains.
+
+### API baseline policy ownership
+
+[ADR 0096](decisions/0096-development-and-published-api-baselines.md) changes no pin values.
+The reused SemVer Action and added evidence-upload occurrence retain native GitHub Actions
+extraction, grouping and approvals. Existing Cargo/compiler and consumer automation-pin
+owners remain authoritative; no custom manager or version inventory is added.

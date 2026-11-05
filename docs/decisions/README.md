@@ -18,6 +18,9 @@ can retain inactive code; consumer seed/adoption and successful qualification pr
 
 ## Active decisions
 
+[ADR 0096](0096-development-and-published-api-baselines.md) separates trusted development
+API comparisons from published release compatibility and exact-candidate evidence.
+
 [ADR 0093](0093-exact-candidate-cargo-tools.md) binds shared SemVer execution to the
 candidate's declared Cargo tool and compiler, with standalone tool publication-age checks.
 

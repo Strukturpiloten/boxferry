@@ -67,10 +67,10 @@ def _policy(args: argparse.Namespace) -> Policy:
     config = args.config or args.policy_root / "scripts/validation-policy.json"
     policy = load_policy(config)
     if args.automation_sha:
+        from boxferry_ci.bootstrap import automation_identity
+
         expected = exact_sha(args.automation_sha, "automation SHA")
-        actual = git_text(Path(__file__).resolve().parents[3], "rev-parse", "HEAD")
-        if actual != expected:
-            raise ContractError("automation checkout does not match the requested immutable SHA")
+        automation_identity(args.repository_root, expected, allow_dirty_self=True)
     if args.command in {"run", "run-local"}:
         if args.tested_sha and git_text(args.repository_root, "rev-parse", "HEAD") != exact_sha(
             args.tested_sha, "tested SHA"

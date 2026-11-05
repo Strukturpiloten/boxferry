@@ -96,6 +96,9 @@ Cleanup is not test evidence. Run the complete gate after the final edit when re
 ./scripts/check-all.sh
 ```
 
+API checks use [trusted development baselines](decisions/0096-development-and-published-api-baselines.md);
+retain `target/api-baseline-local.json` and follow explicit fetch guidance.
+
 It formats first; edits invalidate results. Focused checks cannot replace it. Contributors unable
 to complete it may push after lightweight cleanup succeeds and rely on required GitHub checks;
 merging requires those checks to pass.
