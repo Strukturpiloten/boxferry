@@ -17,6 +17,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from boxferry_ci import eligibility as subject
+from boxferry_ci import recovery
 
 NOW = datetime(2026, 11, 3, 12, tzinfo=UTC)
 BASE, HEAD, SOURCE, IMPLEMENTATION, TREE = (letter * 40 for letter in "abcef")
@@ -38,7 +39,12 @@ class API(subject.GitHub):
         value = self.responses.get(suffix)
         if not isinstance(value, dict):
             raise subject.MissingResource(suffix)
-        return deepcopy(value)
+        result = deepcopy(value)
+        if "event" in result:
+            result.setdefault("created_at", "2026-11-01T12:00:00Z")
+        for run in result.get("workflow_runs", []):
+            run.setdefault("created_at", "2026-11-01T12:00:00Z")
+        return result
 
     def items(self, suffix: str) -> list[dict[str, Any]]:
         value = self.responses.get(suffix)
@@ -74,6 +80,7 @@ def zip_state(value: dict[str, Any], name: str = subject.STATE_FILE) -> bytes:
 def run_metadata(run_id: int = 10, implementation: str = IMPLEMENTATION) -> dict[str, Any]:
     return {
         "id": run_id,
+        "run_attempt": 1,
         "event": "schedule",
         "path": subject.WORKFLOW_PATH,
         "repository": {"full_name": REPOSITORY},
@@ -97,13 +104,14 @@ def state_payload(run_id: int = 10) -> dict[str, Any]:
         "workflow_path": subject.WORKFLOW_PATH,
         "implementation_revision": IMPLEMENTATION,
         "run_id": run_id,
+        "run_attempt": 1,
         "observed_at": NOW.isoformat(),
         "dependency_state": {
             "schema_version": 1,
             "first_seen": {"f" * 64: "2026-10-30T12:00:00Z"},
         },
         "reruns": {},
-        "reports": {HEAD: {"status": "pass", "candidate_sha": HEAD}},
+        "reports": {HEAD: {"status": "pass", "candidate_sha": HEAD, "base_sha": BASE}},
     }
 
 
@@ -114,7 +122,8 @@ def pr_metadata(number: int = 17, source_head: str = SOURCE, merge: str = HEAD) 
         "mergeable": True,
         "merge_commit_sha": merge,
         "base": {"sha": BASE, "ref": "main", "repo": {"full_name": REPOSITORY}},
-        "head": {"sha": source_head},
+        "head": {"sha": source_head, "repo": {"full_name": REPOSITORY}},
+        "title": "ci: maintain dependencies",
         "user": {"login": "renovate[bot]", "type": "Bot"},
     }
 
@@ -184,6 +193,38 @@ def ci_run(run_id: int = 50) -> dict[str, Any]:
 
 class EligibilityTests(unittest.TestCase):
     def setUp(self) -> None:
+        verifier = patch("boxferry_ci.queue_tree.verify_queue_tree")
+        self.tree_proof = verifier.start()
+        self.addCleanup(verifier.stop)
+        # These existing tests own eligibility/receipt decisions. The checkpoint
+        # protocol has its own independent matrix and real-service integration suite.
+        context_patch = patch.object(
+            recovery,
+            "service_context",
+            side_effect=lambda api, current, previous, implementation, branch, now: (
+                recovery.ServiceContext(
+                    previous,
+                    {
+                        "protocol": 1,
+                        "floor": now.isoformat(),
+                        "service_created_at": now.isoformat(),
+                        "authority": True,
+                        "fence": None,
+                        "pending": [],
+                    },
+                    now,
+                    current["id"],
+                    current["run_attempt"],
+                    True,
+                    True,
+                )
+            ),
+        )
+        effect_patch = patch.object(recovery, "require_effect")
+        context_patch.start()
+        effect_patch.start()
+        self.addCleanup(context_patch.stop)
+        self.addCleanup(effect_patch.stop)
         self.api = API()
         self.api.responses[""] = {"default_branch": "main"}
         self.api.responses[f"compare/{BASE}...main"] = {"status": "ahead"}
@@ -449,7 +490,11 @@ class EligibilityTests(unittest.TestCase):
                 "target_url": f"https://github.com/{REPOSITORY}/actions/runs/10",
             }
         ]
-        self.assertIsNone(subject.candidate_receipt(self.api, HEAD, IMPLEMENTATION, "main", NOW))
+        self.assertIsNone(
+            subject.candidate_receipt(
+                self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha=BASE
+            )
+        )
 
     def test_pull_request_target_is_neither_execution_nor_historical_state_source(self) -> None:
         self.historical_state()
@@ -678,7 +723,7 @@ class EligibilityTests(unittest.TestCase):
                 calls += 1
                 return {
                     "ref": "refs/heads/main",
-                    "object": {"type": "commit", "sha": BASE if calls < 4 else "9" * 40},
+                    "object": {"type": "commit", "sha": BASE if calls < 2 else "9" * 40},
                 }
             return get(suffix)
 
@@ -686,13 +731,248 @@ class EligibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(subject.EligibilityError, "queue target branch moved"):
                 subject.queue_candidate(self.api, HEAD, "main")
 
-    def test_exact_queue_head_still_requires_current_pr_synthetic_tree(self) -> None:
+    def test_current_queue_ignores_stale_independent_pr_synthetic_tree(self) -> None:
         self.queue([self.node()])
         merge = "7" * 40
         self.api.responses["pulls/17"]["merge_commit_sha"] = merge
         self.bind_merge(merge, tree="8" * 40)
-        with self.assertRaisesRegex(subject.EligibilityError, "no unique exact source PR"):
+        self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+        self.tree_proof.assert_called_once_with(
+            REPOSITORY, BASE, SOURCE, HEAD, deadline=self.api.deadline - 30
+        )
+        self.assertNotIn(f"git/commits/{merge}", self.api.read_paths)
+
+    def test_current_queue_source_marker_uses_independent_actual_tested_tree(self) -> None:
+        merge = "7" * 40
+        self.queue([self.node(head=SOURCE)])
+        self.api.responses["pulls/17"]["merge_commit_sha"] = merge
+        self.api.responses[f"compare/{BASE}...{merge}"] = {
+            "status": "diverged",
+            "merge_base_commit": {"sha": "0" * 40},
+        }
+        candidate = subject.queue_candidate(self.api, HEAD, "main")
+        self.assertEqual(
+            (candidate.head, candidate.source_head, candidate.title),
+            (HEAD, SOURCE, "ci: maintain dependencies"),
+        )
+        self.tree_proof.assert_called_once_with(
+            REPOSITORY, BASE, SOURCE, HEAD, deadline=self.api.deadline - 30
+        )
+        self.assertNotIn(f"compare/{BASE}...{merge}", self.api.read_paths)
+
+    def test_current_queue_rejects_every_moving_authoritative_identity(self) -> None:
+        for movement in (
+            "head",
+            "title",
+            "author",
+            "source-repo",
+            "target-ref",
+            "base",
+            "queue",
+            "protection",
+        ):
+            with self.subTest(movement=movement):
+                self.setUp()
+                self.queue([self.node(head=SOURCE)])
+
+                def mutate(*_args: object, movement: str = movement, **_kwargs: object) -> None:
+                    pull = self.api.responses["pulls/17"]
+                    if movement == "head":
+                        pull["head"]["sha"] = "9" * 40
+                    elif movement == "title":
+                        pull["title"] = "feat!: changed SemVer intent"
+                    elif movement == "author":
+                        pull["user"]["login"] = "different-bot"
+                    elif movement == "source-repo":
+                        pull["head"]["repo"]["full_name"] = "attacker/fork"
+                    elif movement == "target-ref":
+                        pull["base"]["ref"] = "another-target"
+                    elif movement == "base":
+                        self.api.responses["git/ref/heads/main"]["object"]["sha"] = "9" * 40
+                    elif movement == "queue":
+                        self.api.graph["data"]["repository"]["mergeQueue"]["entries"]["nodes"][0][
+                            "headCommit"
+                        ]["oid"] = "9" * 40
+                    else:
+                        self.api.responses["rules/branches/main?per_page=100&page=1"][0][
+                            "parameters"
+                        ]["max_entries_to_merge"] = 2
+
+                self.tree_proof.side_effect = mutate
+                with self.assertRaises(subject.EligibilityError):
+                    subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_current_queue_rejects_foreign_or_invalid_pr_identity_before_objects(self) -> None:
+        for field in ("source", "target", "author", "number", "title"):
+            with self.subTest(field=field):
+                self.setUp()
+                self.queue([self.node()])
+                pull = self.api.responses["pulls/17"]
+                if field == "source":
+                    pull["head"]["repo"]["full_name"] = "attacker/fork"
+                elif field == "target":
+                    pull["base"]["repo"]["full_name"] = "attacker/fork"
+                elif field == "author":
+                    pull["user"]["type"] = "Organization"
+                elif field == "number":
+                    pull["number"] = 18
+                else:
+                    pull["title"] = "private\n::error::untrusted"
+                with self.assertRaises(subject.EligibilityError):
+                    subject.queue_candidate(self.api, HEAD, "main")
+                self.tree_proof.assert_not_called()
+
+    def test_current_queue_tree_failure_and_expired_budget_never_use_legacy_fallback(self) -> None:
+        from boxferry_ci.queue_tree import QueueTreeError
+
+        self.queue([self.node(head=SOURCE)])
+        self.tree_proof.side_effect = QueueTreeError("queue candidate tree differs")
+        with self.assertRaisesRegex(subject.EligibilityError, "tree differs"):
             subject.queue_candidate(self.api, HEAD, "main")
+        self.assertNotIn(f"git/commits/{HEAD}", self.api.read_paths)
+        self.tree_proof.reset_mock(side_effect=True)
+        self.api.deadline = subject.time.monotonic() + 10
+        with self.assertRaisesRegex(subject.EligibilityError, "remaining metadata time budget"):
+            subject.queue_candidate(self.api, HEAD, "main")
+        self.tree_proof.assert_not_called()
+
+    def test_exact_queue_marker_preferred_over_waiting_h_markers(self) -> None:
+        self.queue([self.node(), self.node(18, head="7" * 40, source="7" * 40)])
+        with patch("boxferry_ci.queue_tree.matching_queue_sources") as matching:
+            self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+        matching.assert_not_called()
+        self.assertNotIn("pulls/18", self.api.read_paths)
+
+    def test_source_marker_backlog_requires_one_full_set_tree_match(self) -> None:
+        other = "7" * 40
+        self.queue([self.node(head=SOURCE), self.node(18, head=other, source=other)])
+        self.api.responses["pulls/18"] = pr_metadata(18, other)
+        self.api.responses["pulls/18"]["mergeable"] = False
+        with patch("boxferry_ci.queue_tree.matching_queue_sources", return_value={SOURCE}) as match:
+            self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+            match.assert_called_once_with(
+                REPOSITORY, BASE, (SOURCE, other), HEAD, deadline=self.api.deadline - 30
+            )
+        self.tree_proof.assert_not_called()
+        for matches in (set(), {SOURCE, other}, {other}):
+            with (
+                self.subTest(matches=matches),
+                patch("boxferry_ci.queue_tree.matching_queue_sources", return_value=matches),
+                self.assertRaises(subject.EligibilityError),
+            ):
+                subject.queue_candidate(self.api, HEAD, "main")
+
+    def test_source_marker_backlog_rejects_unknown_metadata_and_over_bound(self) -> None:
+        for mergeable in (None, "false", 0):
+            other = "7" * 40
+            self.queue([self.node(head=SOURCE), self.node(18, head=other, source=other)])
+            self.api.responses["pulls/18"] = pr_metadata(18, other)
+            self.api.responses["pulls/18"]["mergeable"] = mergeable
+            with (
+                self.subTest(mergeable=mergeable),
+                patch("boxferry_ci.queue_tree.matching_queue_sources") as match,
+                self.assertRaises((subject.EligibilityError, subject.CandidateComputationPending)),
+            ):
+                subject.queue_candidate(self.api, HEAD, "main")
+            match.assert_not_called()
+        self.queue([self.node(17 + index, head=SOURCE) for index in range(21)])
+        with self.assertRaisesRegex(subject.EligibilityError, "budget"):
+            subject.queue_candidate(self.api, HEAD, "main")
+        self.assertNotIn("pulls/19", self.api.read_paths)
+
+    def test_current_proved_queue_classifies_breaking_title_with_stale_rest_base(self) -> None:
+        from boxferry_ci.release import QueueBinding, queue_release_type
+
+        self.queue([self.node()])
+        pull = self.api.responses["pulls/17"]
+        pull["base"]["sha"] = "0" * 40
+        pull["merge_commit_sha"] = "7" * 40
+        pull["title"] = "feat(api)!: replace public type"
+
+        def resolve() -> QueueBinding:
+            candidate = subject.queue_candidate(self.api, HEAD, "main")
+            return QueueBinding(
+                candidate.base,
+                candidate.head,
+                candidate.number,
+                candidate.source_head,
+                candidate.title,
+                candidate.queue_target,
+                REPOSITORY,
+                candidate.actor_login,
+                candidate.actor_type,
+            )
+
+        self.assertEqual(
+            queue_release_type(BASE, HEAD, resolve, lambda number: self.api.get(f"pulls/{number}")),
+            "major",
+        )
+        self.assertEqual(self.tree_proof.call_count, 2)
+        self.assertNotIn(f"git/commits/{'7' * 40}", self.api.read_paths)
+
+    def test_combined_service_current_queue_stale_pr_metadata_never_enters_recovery_effects(
+        self,
+    ) -> None:
+        from boxferry_ci.queue_tree import QueueTreeError
+
+        for valid_tree in (True, False):
+            with self.subTest(valid_tree=valid_tree):
+                self.setUp()
+                self.pending_callback("merge_group")
+                self.api.responses["pulls/17"] = pr_metadata(merge="7" * 40)
+                self.api.responses["pulls/17"]["base"]["sha"] = "0" * 40
+                self.api.responses["actions/runs/50"].update(
+                    status="completed", conclusion="success"
+                )
+                report = {
+                    "status": "pass",
+                    "candidate_sha": HEAD,
+                    "base_sha": BASE,
+                    "source_head_sha": SOURCE,
+                    "pull_request": 17,
+                    "scope": "merge_group",
+                    "state": {"schema_version": 1, "first_seen": {}},
+                }
+                if not valid_tree:
+                    self.tree_proof.side_effect = QueueTreeError("independent tree mismatch")
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(subject, "evaluate", return_value=deepcopy(report)) as evaluate,
+                    patch.object(subject, "rerun_ready") as retry,
+                ):
+                    output = Path(temporary) / subject.STATE_FILE
+
+                    def run_service(output: Path = output) -> dict[str, Any]:
+                        return subject.service(
+                            self.api,
+                            event_name="workflow_run",
+                            event={"action": "completed", "workflow_run": {"id": 50}},
+                            implementation=IMPLEMENTATION,
+                            run_id=11,
+                            output=output,
+                            now=NOW,
+                        )
+
+                    if valid_tree:
+                        payload = run_service()
+                        self.assertEqual(payload["reports"][HEAD]["base_sha"], BASE)
+                        self.assertEqual(payload["reports"][HEAD]["source_head_sha"], SOURCE)
+                        self.assertEqual(payload["recoveries"], {})
+                        self.assertEqual(payload["infrastructure_errors"], [])
+                        self.assertTrue(payload["recovery_frontier"]["authority"])
+                        self.assertEqual(json.loads(output.read_text()), payload)
+                        self.assertGreaterEqual(self.tree_proof.call_count, 2)
+                        self.assertTrue(
+                            all(path == f"statuses/{HEAD}" for path, _ in self.api.posted)
+                        )
+                    else:
+                        with self.assertRaisesRegex(subject.EligibilityError, "tree mismatch"):
+                            run_service()
+                        self.assertFalse(output.exists())
+                        self.assertEqual(self.api.posted, [])
+                        evaluate.assert_not_called()
+                    retry.assert_not_called()
+                self.assertNotIn(f"git/commits/{'7' * 40}", self.api.read_paths)
 
     def test_queue_backlog_does_not_mean_multi_entry_candidate(self) -> None:
         waiting = [
@@ -716,20 +996,17 @@ class EligibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(subject.EligibilityError, "no unique exact source PR"):
             subject.queue_candidate(self.api, HEAD, "main")
 
-    def test_queue_fallback_requires_exact_base_current_source_and_full_tree(self) -> None:
-        self.queue([self.node(head=SOURCE)])
-        self.api.responses[f"git/commits/{HEAD}"] = {"tree": {"sha": TREE}}
-        self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
-        self.api.responses[f"git/commits/{HEAD}"] = {"tree": {"sha": "d" * 40}}
-        # Synthetic PR and queue identities can differ while trees match.
-        merge = "f" * 40
+    def test_legacy_synthetic_queue_hint_keeps_exact_source_and_full_tree_contract(self) -> None:
+        merge = "7" * 40
+        self.queue([self.node(head=merge)])
         self.api.responses["pulls/17"] = pr_metadata(merge=merge)
         self.bind_merge(merge)
-        self.api.responses[f"git/commits/{merge}"] = {"tree": {"sha": TREE}}
+        self.api.responses[f"git/commits/{HEAD}"] = {"tree": {"sha": "d" * 40}}
         with self.assertRaises(subject.EligibilityError):
             subject.queue_candidate(self.api, HEAD, "main")
         self.api.responses[f"git/commits/{HEAD}"] = {"tree": {"sha": TREE}}
         self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
+        self.tree_proof.assert_not_called()
         self.api.responses["pulls/17"]["head"]["sha"] = "9" * 40
         with self.assertRaises(subject.EligibilityError):
             subject.queue_candidate(self.api, HEAD, "main")
@@ -749,8 +1026,10 @@ class EligibilityTests(unittest.TestCase):
             patch.object(self.api, "request", wraps=self.api.request) as request,
         ):
             self.assertEqual(subject.queue_candidate(self.api, HEAD, "main").number, 17)
-        items.assert_called_once_with("rules/branches/main?per_page=100&page=1")
-        request.assert_called_once_with(
+        self.assertEqual(items.call_count, 2)
+        items.assert_called_with("rules/branches/main?per_page=100&page=1")
+        self.assertEqual(request.call_count, 2)
+        request.assert_called_with(
             "POST",
             "/graphql",
             {
@@ -1676,15 +1955,25 @@ jobs_extra:
             "target_url": f"https://github.com/{REPOSITORY}/actions/runs/10",
         }
         self.api.responses[f"commits/{HEAD}/statuses?per_page=100"] = [status]
-        report = subject.candidate_receipt(self.api, HEAD, IMPLEMENTATION, "main", NOW)
-        self.assertEqual(report, {"candidate_sha": HEAD, "status": "pass"})
+        report = subject.candidate_receipt(
+            self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha=BASE
+        )
+        self.assertEqual(report, {"candidate_sha": HEAD, "base_sha": BASE, "status": "pass"})
         self.api.responses["actions/runs/10"]["event"] = "pull_request"
-        self.assertIsNone(subject.candidate_receipt(self.api, HEAD, IMPLEMENTATION, "main", NOW))
+        self.assertIsNone(
+            subject.candidate_receipt(
+                self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha=BASE
+            )
+        )
         self.api.responses["actions/runs/10"] = run_metadata()
         state = state_payload()
         state["reports"][HEAD]["candidate_sha"] = SOURCE
         self.api.archives[100] = zip_state(state)
-        self.assertIsNone(subject.candidate_receipt(self.api, HEAD, IMPLEMENTATION, "main", NOW))
+        self.assertIsNone(
+            subject.candidate_receipt(
+                self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha=BASE
+            )
+        )
 
     def test_waiting_and_policy_failure_are_distinct_from_pass_and_required_ci(self) -> None:
         for result, expected in (
@@ -1700,7 +1989,9 @@ jobs_extra:
             self.assertEqual(self.api.posted[-1][1]["state"], expected)
             self.assertEqual(self.api.posted[-1][1]["context"], "Dependency eligibility")
         self.api.responses[f"commits/{HEAD}/statuses?per_page=100"] = []
-        result = subject.wait_for_candidate(self.api, HEAD, IMPLEMENTATION, timeout=0)
+        result = subject.wait_for_candidate(
+            self.api, HEAD, IMPLEMENTATION, timeout=0, expected_base_sha=BASE
+        )
         self.assertEqual(result["status"], "waiting")
         self.assertTrue(result["retry_eligible"])
 

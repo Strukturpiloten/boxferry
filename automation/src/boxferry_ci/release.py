@@ -50,6 +50,59 @@ class QueueBinding:
     head: str
     number: int
     source_head: str
+    title: str = ""
+    target_branch: str = ""
+    repository: str = ""
+    actor_login: str = ""
+    actor_type: str = ""
+
+
+def _queue_title(binding: QueueBinding, pull: object) -> str:
+    """Validate just source identity/title; unrelated synthetic metadata may lag."""
+    if not isinstance(pull, dict):
+        raise ReleaseError("authoritative queue source PR is unavailable")
+    base, head, title = pull.get("base"), pull.get("head"), pull.get("title")
+    if (
+        pull.get("state") != "open"
+        or pull.get("number") != binding.number
+        or not isinstance(base, dict)
+        or not isinstance(head, dict)
+        or head.get("sha") != binding.source_head
+        or not isinstance(title, str)
+        or not 1 <= len(title) <= 512
+        or any(char in title for char in "\r\n\0")
+        or (bool(binding.title) and title != binding.title)
+    ):
+        raise ReleaseError("queue source PR title is not bound to its live exact identity")
+    if binding.target_branch:
+        from .eligibility import REPOSITORIES as QUEUE_REPOSITORIES
+
+        actor = pull.get("user")
+        if (
+            binding.repository not in QUEUE_REPOSITORIES
+            or not binding.title
+            or not binding.actor_login
+            or binding.actor_type not in {"User", "Bot"}
+            or base.get("ref") != binding.target_branch
+            or not isinstance(base.get("repo"), dict)
+            or base["repo"].get("full_name") != binding.repository
+            or not isinstance(head.get("repo"), dict)
+            or head["repo"].get("full_name") != binding.repository
+            or not isinstance(actor, dict)
+            or actor.get("login") != binding.actor_login
+            or actor.get("type") != binding.actor_type
+        ):
+            raise ReleaseError("current proved queue source/target/author identity changed")
+    elif (
+        base.get("sha") != binding.base
+        or binding.repository
+        or binding.actor_login
+        or binding.actor_type
+    ):
+        # Only the independently proved current queue contract can tolerate the
+        # stale REST base SHA. Historical synthetic hints retain exact-base rules.
+        raise ReleaseError("legacy queue source PR does not bind the exact base")
+    return title
 
 
 def queue_release_type(
@@ -70,27 +123,8 @@ def queue_release_type(
         or before.number < 1
     ):
         raise ReleaseError("authoritative queue entry does not match the exact tested comparison")
-    pull = read_pull(before.number)
-    if not isinstance(pull, dict):
-        raise ReleaseError("authoritative queue source PR is unavailable")
-    base, head, title = pull.get("base"), pull.get("head"), pull.get("title")
-    if (
-        pull.get("state") != "open"
-        or pull.get("number") != before.number
-        or not isinstance(base, dict)
-        or base.get("sha") != before.base
-        or not isinstance(head, dict)
-        or head.get("sha") != before.source_head
-        or not isinstance(title, str)
-        or not title
-        or len(title) > 512
-        or "\n" in title
-        or "\r" in title
-    ):
-        raise ReleaseError(
-            "queue source PR title is not bound to the live exact source head and base"
-        )
-    if resolve() != before:
+    title = _queue_title(before, read_pull(before.number))
+    if resolve() != before or _queue_title(before, read_pull(before.number)) != title:
         raise ReleaseError(
             "authoritative merge queue identity changed during SemVer classification"
         )
@@ -348,7 +382,15 @@ def main(argv: list[str] | None = None) -> int:
             def resolve() -> QueueBinding:
                 candidate = queue_candidate(api, args.candidate_sha, args.default_branch)
                 return QueueBinding(
-                    candidate.base, candidate.head, candidate.number, candidate.source_head
+                    candidate.base,
+                    candidate.head,
+                    candidate.number,
+                    candidate.source_head,
+                    candidate.title,
+                    candidate.queue_target,
+                    api.repository if candidate.queue_target else "",
+                    candidate.actor_login if candidate.queue_target else "",
+                    candidate.actor_type if candidate.queue_target else "",
                 )
 
             try:

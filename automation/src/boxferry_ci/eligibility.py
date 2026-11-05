@@ -1,22 +1,23 @@
-"""Metadata-only dependency eligibility, trusted persistence and candidate receipts.
+"""Metadata-only dependency policy, trusted persistence and exact-base receipts.
 
-The privileged service runs ONLY from the default-branch caller on
-schedule or workflow_run. It never checks out a candidate,
-loads candidate Git configuration, invokes candidate commands or consumes candidate
-artifacts. Its write token is used only for dependency statuses and one bounded
-rerun of an unchanged, read-only CI workflow. Required CI is never synthesized.
+Only the fixed default-branch service has a write token. It reads inert metadata;
+untrusted run/attempt hints locate historical objects but never supply authority
+or establish the original tested SHA. Effects are limited to dependency statuses,
+a bounded unchanged-workflow retry or the fixed Renovate rebase-label handoff.
+Required CI is never synthesized and candidate commands are never executed.
 
-First-seen timestamps come only from artifacts whose GitHub run metadata proves the
-expected trusted caller, event, default-branch ancestry and immutable shared
-implementation. A lost/expired/invalid artifact starts a new conservative hold.
-The read-only candidate job validates the same provenance and exact-SHA report.
-Queue composition currently supports one entry; wider groups fail explicitly.
+Trusted completed runs establish persisted observations, reports and reservations.
+Missing age evidence starts a conservative hold; ambiguous effect history suspends
+the retry budget. The immutable candidate reader requires its exact SHA and base.
+Queue composition supports one entry; wider or incomplete proof fails explicitly.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
+import importlib
 import io
 import json
 import os
@@ -36,6 +37,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 if TYPE_CHECKING:
     from .operational import SnapshotCache
 
+ADMISSION_READER_CONTRACT = 2
 STATUS_CONTEXT = "Dependency eligibility"
 WORKFLOW_PATH = ".github/workflows/dependency-eligibility.yml"
 SHARED_WORKFLOW_PATH = (
@@ -363,6 +365,10 @@ def validate_state(
         or value.get("workflow_path") != WORKFLOW_PATH
     ):
         raise EligibilityError("trusted artifact provenance does not match the verified run")
+    if "run_attempt" in value and (
+        type(value["run_attempt"]) is not int or value["run_attempt"] < 1
+    ):
+        raise EligibilityError("trusted service artifact has an invalid run attempt")
     observed = utc(value.get("observed_at"))
     if observed > now:
         raise EligibilityError("trusted artifact observation is in the future")
@@ -409,6 +415,67 @@ def validate_state(
         revision(key)
         if type(run) is not int or run < 1:
             raise EligibilityError("trusted rerun ledger has an invalid run identifier")
+    frontier = value.get("recovery_frontier")
+    if frontier is not None:
+        if (
+            not isinstance(frontier, dict)
+            or type(frontier.get("protocol")) is not int
+            or frontier["protocol"] != 1
+            or type(frontier.get("authority")) is not bool
+            or not (frontier.get("fence") is None or isinstance(frontier["fence"], str))
+            or len(frontier.get("fence") or "") > 2000
+            or not isinstance(frontier.get("pending", []), list)
+            or len(frontier.get("pending", [])) > 100
+        ):
+            raise EligibilityError("trusted recovery frontier is malformed")
+        utc(frontier.get("service_created_at"))
+        if frontier.get("floor") is not None:
+            utc(frontier["floor"])
+        elif frontier["authority"]:
+            raise EligibilityError("trusted recovery frontier has no immutable effect floor")
+        predecessor = frontier.get("predecessor_run_id")
+        if predecessor is not None and (type(predecessor) is not int or predecessor < 1):
+            raise EligibilityError("trusted recovery frontier predecessor is malformed")
+        for pending in frontier.get("pending", []):
+            if not isinstance(pending, dict) or any(
+                type(pending.get(key)) is not int or pending[key] < 1
+                for key in ("run_id", "run_attempt")
+            ):
+                raise EligibilityError("trusted recovery frontier attempt fence is malformed")
+    recoveries = value.get("recoveries", {})
+    if not isinstance(recoveries, dict) or len(recoveries) > 4096:
+        raise EligibilityError("trusted recovery reservation ledger is malformed")
+    for key, entry in recoveries.items():
+        if (
+            not isinstance(key, str)
+            or re.fullmatch(r"[0-9a-f]{64}", key) is None
+            or not isinstance(entry, dict)
+            or entry.get("phase") not in {"prepared", "attempted", "uncertain", "suspended"}
+            or entry.get("kind") not in {"retained-graph", "handoff", "native-legacy-handoff"}
+            or type(entry.get("original_run_id")) is not int
+            or entry["original_run_id"] < 1
+            or type(entry.get("original_attempt")) is not int
+            or entry["original_attempt"] < 1
+            or type(entry.get("prepared_service_run")) is not int
+            or entry["prepared_service_run"] < 1
+        ):
+            raise EligibilityError("trusted recovery reservation has invalid bindings")
+        for binding_name in ("source_head_sha", "authority"):
+            revision(entry.get(binding_name))
+        if entry["kind"] == "native-legacy-handoff":
+            revision(entry.get("merge_base_sha"))
+            if (
+                not isinstance(entry.get("transition_fingerprint"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", entry["transition_fingerprint"]) is None
+                or "hinted_candidate_sha" in entry
+                or "hinted_base_sha" in entry
+            ):
+                raise EligibilityError("native handoff reservation has invalid current-only proof")
+        else:
+            for binding_name in ("hinted_candidate_sha", "hinted_base_sha"):
+                revision(entry.get(binding_name))
+        if utc(entry.get("prepared_at")) > observed:
+            raise EligibilityError("trusted recovery reservation is from the future")
     return value
 
 
@@ -491,6 +558,8 @@ class Candidate:
     actor_login: str
     actor_type: str
     scope: str
+    title: str = ""
+    queue_target: str = ""
 
 
 def target_revision(api: GitHub, branch: str) -> str:
@@ -613,7 +682,7 @@ def pr_candidate(api: GitHub, number: int, *, expected_target: str | None = None
     return Candidate(base, merge, number, source, actor_login, actor_type, "pull_request")
 
 
-def require_single_entry_queue(api: GitHub, default_branch: str) -> None:
+def require_single_entry_queue(api: GitHub, default_branch: str) -> list[dict[str, Any]]:
     """Read effective active rules using the documented Metadata:read endpoint."""
     rules = api.items(f"rules/branches/{quote(default_branch, safe='')}?per_page=100&page=1")
     # A full first page may omit another applicable rule. Do not authorize from
@@ -631,6 +700,7 @@ def require_single_entry_queue(api: GitHub, default_branch: str) -> None:
         for key in ("max_entries_to_build", "max_entries_to_merge")
     ):
         raise EligibilityError("dependency eligibility requires reviewed one-entry queue limits")
+    return rules
 
 
 def queue_graphql_errors(response: object) -> str:
@@ -698,10 +768,9 @@ def queue_graphql_errors(response: object) -> str:
     return "; ".join(summaries)
 
 
-def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
-    """Bind a one-entry group to live queue metadata and the original PR author."""
+def _queue_entries(api: GitHub, default_branch: str) -> list[dict[str, Any]]:
+    """Read the complete bounded authoritative queue snapshot."""
     owner, name = api.repository.split("/")
-    require_single_entry_queue(api, default_branch)
     query = (
         "query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name){"
         "mergeQueue(branch:$branch){entries(first:100){totalCount nodes{baseCommit{oid} "
@@ -734,8 +803,167 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
         or not all(isinstance(node, dict) for node in nodes)
     ):
         raise EligibilityError("merge queue entry metadata is truncated or exceeds its bound")
+    return nodes
+
+
+def _queue_pr_identity(
+    api: GitHub, number: int, branch: str, *, allow_conflicted: bool = False
+) -> tuple[str, str, str, str]:
+    """Bind source identity without relying on the synthetic PR merge tree."""
+    pr = api.get(f"pulls/{number}")
+    base, head, actor, title = pr.get("base"), pr.get("head"), pr.get("user"), pr.get("title")
+    if (
+        pr.get("number") != number
+        or not isinstance(pr.get("state"), str)
+        or pr["state"] not in {"open", "closed"}
+        or not isinstance(base, dict)
+        or base.get("ref") != branch
+        or not isinstance(base.get("repo"), dict)
+        or base["repo"].get("full_name") != api.repository
+        or not isinstance(head, dict)
+        or not isinstance(head.get("repo"), dict)
+        or head["repo"].get("full_name") != api.repository
+        or not isinstance(actor, dict)
+        or not isinstance(actor.get("login"), str)
+        or not actor["login"]
+        or not isinstance(actor.get("type"), str)
+        or actor["type"] not in {"User", "Bot"}
+        or not isinstance(title, str)
+        or not 1 <= len(title) <= 512
+        or any(char in title for char in "\r\n\0")
+    ):
+        raise EligibilityError("current queue source PR identity/title is foreign or malformed")
+    source = revision(head.get("sha"))
+    merge = revision(pr["merge_commit_sha"]) if pr.get("merge_commit_sha") is not None else None
+    pending_identity = (branch, source, actor["login"], actor["type"])
+    if pr["state"] == "closed":
+        raise ClosedPullRequest(number, pending_identity, merge)
+    if "mergeable" in pr and pr["mergeable"] is None:
+        raise CandidateComputationPending(number, pending_identity, merge)
+    if pr.get("mergeable") is not True and not (allow_conflicted and pr.get("mergeable") is False):
+        raise EligibilityError("current queue PR mergeability is conflicted or malformed")
+    return source, actor["login"], actor["type"], title
+
+
+def _current_queue_candidate(
+    api: GitHub,
+    head: str,
+    default_branch: str,
+    base: str,
+    nodes: list[dict[str, Any]],
+    rules: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+) -> Candidate:
+    from .queue_tree import MAX_SOURCES, QueueTreeError, matching_queue_sources, verify_queue_tree
+
+    if not 1 <= len(selected) <= MAX_SOURCES:
+        raise EligibilityError("current queue source selection exceeds its object/request budget")
+    identities: list[tuple[int, tuple[str, str, str, str]]] = []
+    for node in selected:
+        number = node["pullRequest"].get("number")
+        if type(number) is not int or number < 1:
+            raise EligibilityError("queue entry has no authoritative source PR")
+        try:
+            identity = _queue_pr_identity(
+                api, number, default_branch, allow_conflicted=len(selected) > 1
+            )
+        except (CandidateComputationPending, ClosedPullRequest) as pending:
+            if (
+                node["pullRequest"].get("headRefOid") != pending.source_head
+                or node["headCommit"].get("oid") not in {head, pending.source_head}
+                or target_revision(api, default_branch) != base
+            ):
+                raise EligibilityError(
+                    "unready queue PR does not match its exact source binding"
+                ) from pending
+            raise
+        source = identity[0]
+        if node["pullRequest"].get("headRefOid") != source or node["headCommit"].get("oid") not in {
+            head,
+            source,
+        }:
+            raise EligibilityError("current queue source head differs from the live PR")
+        identities.append((number, identity))
+    # All H-marker possibilities share one fetch, scratch and wall-clock budget;
+    # waiting entries must not multiply per-entry transfer/deadline allowances.
+    if time.monotonic() >= api.deadline - 30:
+        raise EligibilityError("queue tree proof lacks remaining metadata time budget")
+    try:
+        if len(identities) == 1:
+            verify_queue_tree(
+                api.repository, base, identities[0][1][0], head, deadline=api.deadline - 30
+            )
+            matches = {identities[0][1][0]}
+        else:
+            matches = matching_queue_sources(
+                api.repository,
+                base,
+                tuple(identity[0] for _number, identity in identities),
+                head,
+                deadline=api.deadline - 30,
+            )
+    except QueueTreeError as error:
+        raise EligibilityError(str(error)) from error
+    matched = [(number, identity) for number, identity in identities if identity[0] in matches]
+    if len(matched) != 1:
+        raise EligibilityError(
+            "queue candidate has no unique source; multi-entry groups unsupported"
+        )
+    for number, identity in identities:
+        if (
+            _queue_pr_identity(
+                api, number, default_branch, allow_conflicted=identity[0] not in matches
+            )
+            != identity
+        ):
+            raise EligibilityError(
+                "current queue PR source/author/title changed during verification"
+            )
+    if target_revision(api, default_branch) != base:
+        raise EligibilityError("queue target branch moved during verification; next event rechecks")
+    if require_single_entry_queue(api, default_branch) != rules:
+        raise EligibilityError("queue protection changed during verification")
+    if _queue_entries(api, default_branch) != nodes:
+        raise EligibilityError("queue composition changed during verification")
+    if target_revision(api, default_branch) != base or time.monotonic() >= api.deadline:
+        raise EligibilityError("queue target moved or proof expired; next event rechecks")
+    number, (source, actor_login, actor_type, title) = matched[0]
+    return Candidate(
+        base, head, number, source, actor_login, actor_type, "merge_group", title, default_branch
+    )
+
+
+def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
+    """Bind current tested queues separately from historical synthetic PR hints."""
+    revision(head)
+    rules = require_single_entry_queue(api, default_branch)
+    nodes = _queue_entries(api, default_branch)
     base = target_revision(api, default_branch)
     require_ancestor(api, base, head)
+    built = [
+        node
+        for node in nodes
+        if isinstance(node.get("baseCommit"), dict)
+        and node["baseCommit"].get("oid") == base
+        and isinstance(node.get("headCommit"), dict)
+        and isinstance(node["headCommit"].get("oid"), str)
+        and SHA.fullmatch(node["headCommit"]["oid"])
+    ]
+    exact = [node for node in built if node["headCommit"]["oid"] == head]
+    if len(exact) > 1:
+        raise EligibilityError(
+            "queue candidate has multiple entries; multi-entry groups unsupported"
+        )
+    current = exact or [
+        node
+        for node in built
+        if isinstance(node.get("pullRequest"), dict)
+        and node["headCommit"]["oid"] == node["pullRequest"].get("headRefOid")
+    ]
+    if current:
+        if any(not isinstance(node.get("pullRequest"), dict) for node in current):
+            raise EligibilityError("queue entry has no authoritative source PR")
+        return _current_queue_candidate(api, head, default_branch, base, nodes, rules, current)
     matching: list[Candidate] = []
     candidate_tree: str | None = None
     for node in nodes:
@@ -1297,6 +1525,7 @@ def rerun_ready(
     default_branch: str,
     *,
     implementation: str | None = None,
+    service_created_at: datetime | None = None,
 ) -> None:
     """After age eligibility changes, rerun once; never repair or expand a workflow."""
     if candidate.head in ledger:
@@ -1316,6 +1545,8 @@ def rerun_ready(
                 continue
             if prs[0].get("base", {}).get("sha") != candidate.base:
                 continue
+        if service_created_at is not None and utc(run.get("created_at")) > service_created_at:
+            return
         if run.get("status") != "completed" or run.get("conclusion") != "failure":
             return
         # A candidate cannot use the trusted service to launch a modified workflow.
@@ -1363,8 +1594,9 @@ def rerun_ready(
             return
         if not still_current(api, candidate, default_branch):
             return
-        api.post(f"actions/runs/{run_id}/rerun-failed-jobs", {})
+        # Reserve the normal path's original run before a possibly ambiguous POST.
         ledger[candidate.head] = run_id
+        api.post(f"actions/runs/{run_id}/rerun-failed-jobs", {})
         return
 
 
@@ -1403,6 +1635,7 @@ def service(
     run_id: int,
     output: Path,
     now: datetime | None = None,
+    run_attempt: int | None = None,
 ) -> dict[str, Any]:
     """One serialized trusted service run; policy failure still persists evidence."""
     now = now or datetime.now(UTC)
@@ -1417,13 +1650,21 @@ def service(
     # cannot substitute a different current run or an implementation revision.
     current_run = api.get(f"actions/runs/{run_id}")
     if (
-        current_run.get("event") != event_name
+        current_run.get("id") != run_id
+        or current_run.get("event") != event_name
         or current_run.get("path") != WORKFLOW_PATH
         or current_run.get("head_branch") != default_branch
         or current_run.get("repository", {}).get("full_name") != api.repository
         or service_revision(current_run) != implementation
     ):
         raise EligibilityError("current service run is not the trusted default-branch caller")
+    service_attempt = current_run.get("run_attempt")
+    if (
+        type(service_attempt) is not int
+        or service_attempt < 1
+        or (run_attempt is not None and run_attempt != service_attempt)
+    ):
+        raise EligibilityError("current service run has no exact positive attempt identity")
     head = revision(current_run.get("head_sha"))
     if api.get(f"compare/{head}...{quote(default_branch, safe='')}").get("status") not in {
         "ahead",
@@ -1431,17 +1672,28 @@ def service(
     }:
         raise EligibilityError("current service policy is outside trusted default-branch history")
     previous = previous_state(api, implementation, default_branch, now)
+    from .recovery import RecoveryRefused, recover, require_effect, service_context
+
+    effect_context = service_context(
+        api, current_run, previous, implementation, default_branch, now
+    )
+    previous = effect_context.previous
     dependency_state = (
         {"schema_version": 1, "first_seen": {}}
         if previous is None
         else previous["dependency_state"]
     )
     ledger = {} if previous is None else previous["reruns"]
+    recoveries = {} if previous is None else previous.get("recoveries", {})
     scan_cursor = 0 if previous is None else previous.get("scan_cursor", 0)
     initial_scan_cursor = scan_cursor
     evaluated_cursor: int | None = None
     candidates: list[Candidate] = []
     errors: list[str] = []
+    if effect_context.frontier.get("fence"):
+        errors.append(f"Recovery suspended: {effect_context.frontier['fence']}")
+    if effect_context.frontier.get("pending"):
+        errors.append("Recovery deferred: another service attempt has no completed closure yet")
     deferred: list[dict[str, Any]] = []
     no_action: list[dict[str, Any]] = []
     if event_name == "workflow_run":
@@ -1577,9 +1829,36 @@ def service(
             )
             report_status(api, report, receipt_run_id)
             reports[candidate.head] = report
-            if ready_receipt:
-                rerun_ready(api, candidate, ledger, default_branch, implementation=implementation)
-        except EligibilityError as error:
+            if ready_receipt and effect_context.can_effect:
+                require_effect(api, effect_context, implementation, default_branch)
+                rerun_ready(
+                    api,
+                    candidate,
+                    ledger,
+                    default_branch,
+                    implementation=implementation,
+                    service_created_at=effect_context.created_at,
+                )
+            try:
+                if candidate.head in ledger:
+                    continue
+                dependency_state = recover(
+                    api,
+                    candidate,
+                    report,
+                    dependency_state,
+                    previous,
+                    recoveries,
+                    reports,
+                    implementation=implementation,
+                    service_run=run_id,
+                    branch=default_branch,
+                    now=now,
+                    context=effect_context,
+                )
+            except RecoveryRefused as error:
+                errors.append(f"PR {candidate.number}: older-base recovery refused: {error}")
+        except (EligibilityError, RecoveryRefused) as error:
             errors.append(f"PR {candidate.number}: {error}")
             if api.requests >= 450 or time.monotonic() >= api.deadline - 30:
                 if event_name == "schedule":
@@ -1592,10 +1871,13 @@ def service(
         "repository": api.repository,
         "workflow_path": WORKFLOW_PATH,
         "run_id": run_id,
+        "run_attempt": service_attempt,
         "implementation_revision": implementation,
         "observed_at": now.isoformat(),
         "dependency_state": dependency_state,
         "reruns": ledger,
+        "recoveries": recoveries,
+        "recovery_frontier": effect_context.frontier,
         "scan_cursor": scan_cursor,
         "reports": reports,
         "state_source": (
@@ -1622,14 +1904,48 @@ def service(
     return payload
 
 
+def reader_contract(content: bytes) -> int:
+    """Inspect an immutable reader's own static capability, never an artifact flag."""
+    if len(content) > MAX_FILE_BYTES:
+        raise EligibilityError("admission reader capability source exceeds its byte bound")
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError) as error:
+        raise EligibilityError("admission reader capability source is malformed") from error
+    declarations: list[ast.Assign | ast.AnnAssign] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(
+            isinstance(target, ast.Name) and target.id == "ADMISSION_READER_CONTRACT"
+            for target in targets
+        ):
+            declarations.append(node)
+    if not declarations:
+        return 1
+    if (
+        len(declarations) != 1
+        or declarations[0] not in tree.body
+        or not isinstance(declarations[0].value, ast.Constant)
+        or type(declarations[0].value.value) is not int
+        or declarations[0].value.value != 2
+    ):
+        raise EligibilityError("admission reader declares an unknown or malformed capability")
+    return 2
+
+
 def candidate_receipt(
     api: GitHub,
     head: str,
     implementation: str,
     default_branch: str,
     now: datetime,
+    *,
+    expected_base_sha: str,
 ) -> dict[str, Any] | None:
-    """Accept only exact-SHA reports from a completed trusted service run."""
+    """Accept an exact SHA/base/implementation report from a completed trusted run."""
+    revision(expected_base_sha)
     statuses = api.items(f"commits/{head}/statuses?per_page=100")
     for status in statuses[:100]:
         if status.get("context") != STATUS_CONTEXT:
@@ -1651,8 +1967,14 @@ def candidate_receipt(
             implementation=implementation,
             now=now,
         )
+        if "run_attempt" in payload and payload["run_attempt"] != run.get("run_attempt"):
+            return None
         report = payload["reports"].get(head)
-        if not isinstance(report, dict) or report.get("candidate_sha") != head:
+        if (
+            not isinstance(report, dict)
+            or report.get("candidate_sha") != head
+            or report.get("base_sha") != expected_base_sha
+        ):
             return None
         expected = {"pass": "success", "waiting": "pending", "failure": "failure"}.get(
             report.get("status")
@@ -1664,11 +1986,12 @@ def candidate_receipt(
 
 
 def wait_for_candidate(
-    api: GitHub, head: str, implementation: str, timeout: int = 90
+    api: GitHub, head: str, implementation: str, timeout: int = 90, *, expected_base_sha: str
 ) -> dict[str, Any]:
     """Bounded read-only wait; age waiting never becomes a synthetic success."""
     revision(head)
     revision(implementation)
+    revision(expected_base_sha)
     if not 0 <= timeout <= 120:
         raise EligibilityError("candidate status wait must be between zero and 120 seconds")
     default_branch = api.get("").get("default_branch")
@@ -1677,7 +2000,14 @@ def wait_for_candidate(
     deadline = time.monotonic() + timeout
     while True:
         try:
-            report = candidate_receipt(api, head, implementation, default_branch, datetime.now(UTC))
+            report = candidate_receipt(
+                api,
+                head,
+                implementation,
+                default_branch,
+                datetime.now(UTC),
+                expected_base_sha=expected_base_sha,
+            )
         except EligibilityError:
             report = None
         if report is not None:
@@ -1687,6 +2017,7 @@ def wait_for_candidate(
             return {
                 "status": "waiting",
                 "candidate_sha": head,
+                "base_sha": expected_base_sha,
                 "retry_eligible": True,
                 "reason": (
                     "Trusted exact-candidate eligibility receipt is not ready; "
@@ -1714,6 +2045,11 @@ def summary(payload: dict[str, Any]) -> str:
             f"; next automatic recheck after {report['retry_at']}" if report.get("retry_at") else ""
         )
         lines.append(f"- PR #{report['pull_request']}, `{head}`: {report['status']}{retry}.")
+    for reservation in payload.get("recoveries", {}).values():
+        lines.append(
+            f"- Older-base {reservation['kind']} for CI run {reservation['original_run_id']}: "
+            f"{reservation['phase']}. {reservation.get('reason', '')}"
+        )
     for item in payload.get("deferred_candidates", []):
         lines.append(
             f"- Deferred PR #{item['pull_request']}, source `{item['source_head_sha']}`: "
@@ -1731,6 +2067,8 @@ def summary(payload: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
+    capability = subcommands.add_parser("reader-contract")
+    capability.add_argument("--module-path", required=True, type=Path)
     for command in ("service", "wait"):
         child = subcommands.add_parser(command)
         child.add_argument("--repository", required=True, choices=sorted(REPOSITORIES))
@@ -1740,12 +2078,22 @@ def main(argv: list[str] | None = None) -> int:
             child.add_argument("--event-name", required=True, choices=sorted(ALLOWED_EVENTS))
             child.add_argument("--event-path", type=Path, required=True)
             child.add_argument("--run-id", type=int, required=True)
+            child.add_argument("--run-attempt", type=int, required=True)
             child.add_argument("--output", type=Path, required=True)
         else:
             child.add_argument("--candidate-sha", required=True)
+            child.add_argument("--expected-base-sha", required=True)
             child.add_argument("--timeout", type=int, default=90)
     options = parser.parse_args(argv)
     try:
+        if options.command == "reader-contract":
+            path = options.module_path
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+                raise EligibilityError(
+                    "immutable admission reader module must be a bounded regular file"
+                )
+            print(reader_contract(path.read_bytes()))
+            return 0
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not token:
             raise EligibilityError("GitHub token is required for authoritative metadata")
@@ -1760,12 +2108,17 @@ def main(argv: list[str] | None = None) -> int:
                 event=event,
                 implementation=options.implementation_revision,
                 run_id=options.run_id,
+                run_attempt=options.run_attempt,
                 output=options.output,
             )
             code = 0  # A policy hold/failure must retain trusted state and its report.
         else:
             payload = wait_for_candidate(
-                api, options.candidate_sha, options.implementation_revision, options.timeout
+                api,
+                options.candidate_sha,
+                options.implementation_revision,
+                options.timeout,
+                expected_base_sha=options.expected_base_sha,
             )
             code = 0 if payload.get("status") == "pass" else 1
         rendered = summary(payload)
@@ -1780,4 +2133,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Dispatch through the canonical module so local helpers share API/error classes.
+    raise SystemExit(importlib.import_module("boxferry_ci.eligibility").main())

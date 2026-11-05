@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -142,6 +143,75 @@ class ReleaseTests(unittest.TestCase):
                 lambda: (_ for _ in ()).throw(release.ReleaseError("unsupported queue")),
                 lambda _number: pull,
             )
+
+    def test_queue_semver_rejects_title_changes_between_each_authoritative_read(self) -> None:
+        title = "feat(api)!: replace public type"
+        binding = release.QueueBinding(SHA, AUTOMATION, 42, "c" * 40, title)
+        pull = {
+            "number": 42,
+            "state": "open",
+            "base": {"sha": SHA},
+            "head": {"sha": binding.source_head},
+            "title": title,
+        }
+        changed = {**pull, "title": "fix: retain public type"}
+        with self.assertRaises(release.ReleaseError):
+            release.queue_release_type(SHA, AUTOMATION, lambda: binding, lambda _number: changed)
+        identities = iter(
+            (
+                binding,
+                release.QueueBinding(SHA, AUTOMATION, 42, binding.source_head, changed["title"]),
+            )
+        )
+        with self.assertRaises(release.ReleaseError):
+            release.queue_release_type(
+                SHA, AUTOMATION, lambda: next(identities), lambda _number: pull
+            )
+        reads = iter((pull, changed))
+        with self.assertRaises(release.ReleaseError):
+            release.queue_release_type(
+                SHA, AUTOMATION, lambda: binding, lambda _number: next(reads)
+            )
+
+    def test_current_queue_stale_base_requires_fixed_repository_target_source_author_and_title(
+        self,
+    ) -> None:
+        title = "feat(api)!: change public type"
+        repository = "Strukturpiloten/boxferry"
+        binding = release.QueueBinding(
+            SHA, AUTOMATION, 42, "c" * 40, title, "main", repository, "renovate[bot]", "Bot"
+        )
+        pull: dict[str, Any] = {
+            "number": 42,
+            "state": "open",
+            "title": title,
+            "base": {"sha": "d" * 40, "ref": "main", "repo": {"full_name": repository}},
+            "head": {"sha": binding.source_head, "repo": {"full_name": repository}},
+            "user": {"login": "renovate[bot]", "type": "Bot"},
+        }
+        self.assertEqual(
+            release.queue_release_type(SHA, AUTOMATION, lambda: binding, lambda _number: pull),
+            "major",
+        )
+        for field in ("source", "source-repo", "target", "target-repo", "author", "title"):
+            changed = deepcopy(pull)
+            if field == "source":
+                changed["head"]["sha"] = "f" * 40
+            elif field == "source-repo":
+                changed["head"]["repo"]["full_name"] = "attacker/fork"
+            elif field == "target":
+                changed["base"]["ref"] = "another-target"
+            elif field == "target-repo":
+                changed["base"]["repo"]["full_name"] = "attacker/fork"
+            elif field == "author":
+                changed["user"]["login"] = "different-bot"
+            else:
+                changed["title"] = "fix: altered intent"
+            reads = iter((pull, changed))
+            with self.subTest(field=field), self.assertRaises(release.ReleaseError):
+                release.queue_release_type(
+                    SHA, AUTOMATION, lambda: binding, lambda _number, reads=reads: next(reads)
+                )
 
     def test_missing_extra_and_wrong_candidate_prerequisites_fail(self) -> None:
         for needs in (
