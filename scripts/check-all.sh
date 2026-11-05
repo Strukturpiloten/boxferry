@@ -37,10 +37,9 @@ case "${1:---fix}" in
 esac
 readonly format_mode
 
-# Public API compatibility normally infers the release type from the package
-# versions. An explicitly recorded breaking change may validate the intended
-# pre-1.0 release with the same major rule used by CI. Keep this opt-in narrow:
-# an unknown spelling must fail before any of the numbered checks run.
+# Development compares the complete proposed branch/working tree with trusted main.
+# Published Release validation separately infers compatibility from its chosen version.
+# Explicit breaking intent affects development only; unknown spellings fail preflight.
 semver_release_type="${BOXFERRY_SEMVER_RELEASE_TYPE:-}"
 case "${semver_release_type}" in
   "" | major | minor | patch) ;;
@@ -165,11 +164,6 @@ printf 'Using isolated coverage target directory: %s\n' "${coverage_target_dir}"
 printf 'Using isolated cargo-semver-checks Cargo home: %s\n' "${semver_cargo_home}"
 printf 'Using isolated cargo-semver-checks target directory: %s\n' "${semver_target_dir}"
 
-semver_check=(cargo semver-checks check-release --workspace --all-features)
-if [[ -n "${semver_release_type}" ]]; then
-  semver_check+=(--release-type "${semver_release_type}")
-fi
-
 current_step="Prepare the canonical shared Python toolchain"
 automation_uv="$(python3 automation/src/boxferry_ci/bootstrap.py install-uv \
   --project automation --cache-root target/shared-uv --no-path-uv)"
@@ -258,7 +252,10 @@ run_step "Check repository policies with the MSRV" cargo "+${msrv}" ci-policy
 run_step "Audit dependencies, licenses, bans, and sources" cargo deny --all-features check
 run_step "Check local documentation links" lychee --config lychee.toml --root-dir . --offline \
   "${markdown_files[@]}"
-run_step "Check published API compatibility" env CARGO_HOME="${semver_cargo_home}" \
-  CARGO_TARGET_DIR="${semver_target_dir}" RUSTUP_TOOLCHAIN="${semver_rust_channel}" "${semver_check[@]}"
+run_step "Check development API compatibility" env CARGO_HOME="${semver_cargo_home}" \
+  CARGO_TARGET_DIR="${semver_target_dir}" RUSTUP_TOOLCHAIN="${semver_rust_channel}" \
+  uv run --locked --project automation python -m boxferry_ci.api_baselines run \
+  --repository-root "${repository_root}" --api-purpose development --event local \
+  --release-type "${semver_release_type}" --report-json target/api-baseline-local.json
 
 printf '\nBoxFerry local validation passed all %d steps.\n' "${total_steps}"

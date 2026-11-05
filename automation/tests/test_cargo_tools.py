@@ -389,7 +389,9 @@ class CargoTools(unittest.TestCase):
             "automation_sha: ${{ github.sha }}",
             "policy_sha: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha || github.sha }}",
-            "release_type: ${{ needs.semver-release-type.outputs.release_type }}",
+            "api_purpose: ${{ inputs.api_purpose || 'development' }}",
+            "release_type: ${{ inputs.api_purpose != 'published' && "
+            "needs.semver-release-type.outputs.release_type || '' }}",
         ):
             self.assertIn(token, ci)
 

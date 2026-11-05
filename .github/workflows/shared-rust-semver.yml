@@ -24,8 +24,12 @@ on:
         description: One exact workspace crate name.
         required: true
         type: string
+      api_purpose:
+        description: Published release compatibility by default; development requires a trusted Git baseline.
+        default: published
+        type: string
       release_type:
-        description: Empty for manifest inference, or major, minor, patch.
+        description: Development-only major, minor or patch; published requires empty manifest inference.
         default: ""
         type: string
       initial_api_contract:
@@ -36,6 +40,9 @@ on:
       candidate_sha:
         description: Exact candidate whose selected task succeeded.
         value: ${{ jobs.check.outputs.candidate_sha }}
+      published_api_candidate_sha:
+        description: Exact candidate with published-purpose API success; empty for development.
+        value: ${{ jobs.check.outputs.published_api_candidate_sha }}
 
 permissions:
   contents: read
@@ -47,9 +54,11 @@ jobs:
     timeout-minutes: 20
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}
+      published_api_candidate_sha: ${{ steps.result.outputs.published_api_candidate_sha }}
     env:
       CARGO_TERM_COLOR: always
       RUSTDOCFLAGS: -D warnings
+      GIT_NO_REPLACE_OBJECTS: "1"
     steps:
       - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,43 +77,40 @@ jobs:
           config-path: ${{ inputs.config_path }}
       - name: Install the locked shared Python project
         uses: ./_automation/.github/actions/shared-python
-      - name: Verify canonical baseline and initial-publication policy
+      - name: Select explicit API purpose and trusted baseline
         id: baseline
         shell: bash
         env:
           PACKAGE: ${{ inputs.package }}
+          API_PURPOSE: ${{ inputs.api_purpose }}
           RELEASE_TYPE: ${{ inputs.release_type }}
           ALLOW_INITIAL: ${{ inputs.initial_api_contract }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+        run: |
+          set -euo pipefail
+          initial=()
+          if [[ "${ALLOW_INITIAL}" == true ]]; then initial+=(--allow-initial); fi
+          uv run --locked --project _automation/automation python -m boxferry_ci.api_baselines prepare \
+            --repository-root source --api-purpose "${API_PURPOSE}" --package "${PACKAGE}" \
+            --candidate-sha "${CANDIDATE_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" --release-type "${RELEASE_TYPE}" \
+            --report-json source/target/api-baseline.json --github-output "${GITHUB_OUTPUT}" "${initial[@]}"
+      - name: Require positive initial-API contract
+        if: steps.baseline.outputs.kind == 'initial-contract'
+        shell: bash
+        env:
           POLICY_CONFIG: ${{ steps.source.outputs.config }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           AUTOMATION_SHA: ${{ inputs.automation_sha }}
         run: |
-          set -euo pipefail
-          [[ "${PACKAGE}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
-          case "${RELEASE_TYPE}" in ''|major|minor|patch) ;; *) exit 1 ;; esac
-          cargo metadata --manifest-path source/Cargo.toml --locked --no-deps --format-version 1 |
-            python3 -c 'import json, os, sys; metadata = json.load(sys.stdin); assert any(p["name"] == os.environ["PACKAGE"] and p["id"] in metadata["workspace_members"] for p in metadata["packages"]), "API package must belong to the tested workspace"'
-          status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
-            --user-agent 'Strukturpiloten shared Rust CI' --retry 3 --retry-all-errors \
-            --connect-timeout 10 --max-time 60 --output /dev/null --write-out '%{http_code}' \
-            "https://crates.io/api/v1/crates/${PACKAGE}")"
-          case "${status}" in
-            200) printf 'published=true\n' >> "${GITHUB_OUTPUT}" ;;
-            404)
-              if [[ "${ALLOW_INITIAL}" != true ]]; then
-                echo 'Published API baseline missing; initial publication needs an explicit positive contract (#485).' >&2
-                exit 1
-              fi
-              uv run --locked --project _automation/automation python -m boxferry_ci run \
-                --repository-root source --config "${POLICY_CONFIG}" --task initial-api-contract \
-                --tested-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
-                --report-json source/target/automation-initial-api-contract.json
-              printf 'published=false\n' >> "${GITHUB_OUTPUT}"
-              ;;
-            *) printf 'Unexpected canonical crates.io response: HTTP %s.\n' "${status}" >&2; exit 1 ;;
-          esac
+          uv run --locked --project _automation/automation python -m boxferry_ci run \
+            --repository-root source --config "${POLICY_CONFIG}" --task initial-api-contract \
+            --tested-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --report-json source/target/automation-initial-api-contract.json
       - name: Retain the structured initial-API outcome when exercised
-        if: always() && inputs.initial_api_contract && (steps.baseline.outputs.published == 'false' || steps.baseline.outcome == 'failure')
+        if: always() && inputs.initial_api_contract && steps.baseline.outputs.kind == 'initial-contract'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: initial-api-${{ inputs.package }}-${{ inputs.candidate_sha }}-${{ github.run_id }}
@@ -113,7 +119,6 @@ jobs:
           overwrite: true
           retention-days: 7
       - name: Install and verify the exact candidate Cargo subcommand
-        if: steps.baseline.outputs.published == 'true'
         id: cargo-tool
         shell: bash
         run: |
@@ -122,18 +127,32 @@ jobs:
             --destination "${RUNNER_TEMP}/boxferry-cargo-tools" \
             --github-output "${GITHUB_OUTPUT}" --github-path "${GITHUB_PATH}" \
             --github-env "${GITHUB_ENV}"
-      - name: Check published public API compatibility
-        if: steps.baseline.outputs.published == 'true'
+      - name: Check selected public API compatibility
+        if: steps.baseline.outputs.kind != 'initial-contract'
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
           rust-toolchain: ${{ steps.cargo-tool.outputs.rust_channel }}
           manifest-path: source/Cargo.toml
           package: ${{ inputs.package }}
           feature-group: all-features
-          release-type: ${{ inputs.release_type }}
-      - name: Expose successful candidate binding
+          release-type: ${{ steps.baseline.outputs.release_type }}
+          baseline-rev: ${{ steps.baseline.outputs.baseline_rev }}
+          baseline-version: ${{ steps.baseline.outputs.baseline_version }}
+      - name: Expose purpose-bound successful API evidence
         id: result
         shell: bash
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-        run: printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
+          SELECTION_SHA256: ${{ steps.baseline.outputs.selection_sha256 }}
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci.api_baselines finish \
+            --repository-root source --report-json source/target/api-baseline.json \
+            --selection-sha256 "${SELECTION_SHA256}" --github-output "${GITHUB_OUTPUT}"
+      - name: Retain API purpose, baseline and actual tool evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-baseline-${{ inputs.package }}-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: source/target/api-baseline.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7

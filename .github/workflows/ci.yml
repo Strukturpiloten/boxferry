@@ -3,7 +3,15 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      api_purpose:
+        description: Reusable CI defaults to strict published API validation.
+        type: string
+        default: published
     outputs:
+      published_api_candidate_sha:
+        description: Exact candidate with published API success across the complete SemVer matrix.
+        value: ${{ jobs.semver.outputs.published_api_candidate_sha }}
       release_binary_artifact:
         description: Verified CLI archive set for the exact candidate and run.
         value: ${{ jobs.release-binaries.outputs.release_binary_artifact }}
@@ -437,7 +445,8 @@ jobs:
       policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
       config_path: scripts/validation-policy.json
       package: ${{ matrix.package }}
-      release_type: ${{ needs.semver-release-type.outputs.release_type }}
+      api_purpose: ${{ inputs.api_purpose || 'development' }}
+      release_type: ${{ inputs.api_purpose != 'published' && needs.semver-release-type.outputs.release_type || '' }}
       initial_api_contract: false
 
   migration-readiness:

@@ -24,28 +24,27 @@ See [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md) for SemVer tooling
 
 ## Daily checks and agent repairs
 
-From the repository root, `python3 scripts/validation-plan.py plan --event local` previews
-selected checks; `python3 scripts/validation-plan.py run-local` runs them. Use `run-local --docs-only`
-for documentation feedback or `run-local --full` for the full plan. `./scripts/check-all.sh` runs the
-complete gate; `--check` avoids formatting. See [prerequisites](development-environment.md).
-Read diagnostics, retain original failure evidence, and rerun relevant checks after repair.
-
-Bound repairs by repository, owned files, and expected outcome. Independently review the original
-requirement and expected behavior, not only tests derived from the change.
-The root [agent contract](../AGENTS.md) governs all paths; scoped additions for
-[automation](../automation/AGENTS.md), [workflows](../.github/AGENTS.md), and
-[crates](../crates/AGENTS.md) supplement it.
-
-For Python feedback, use `uv run --locked --project automation ruff check automation`
-and `uv run --locked --project automation ty check --project automation`. The complete gate includes automation and native-policy tests.
-
-Guidance ideas were reviewed from [Awesome Copilot at 8178d1939a203f691067073dcab2a3f1e14072d3](https://github.com/github/awesome-copilot/tree/8178d1939a203f691067073dcab2a3f1e14072d3)
-([MIT, copyright GitHub, Inc.](https://github.com/github/awesome-copilot/blob/8178d1939a203f691067073dcab2a3f1e14072d3/LICENSE));
-[issue #553](https://github.com/Strukturpiloten/boxferry/issues/553) records the reviewed sources.
-No upstream instructions or code are copied or installed.
+Use [local verification](development-environment.md#local-verification), the locked Python
+project and the root [agent contract](../AGENTS.md). Focused checks never replace complete
+gates or independent review.
 
 ## Pinning and publication
 
 Keep workflow references and automation checkout pins aligned. Coordinate upgrades and Renovate ownership across producer and consumers; rollback restores the previous reviewed full SHA in both places. Until the first automation release tag exists, ADR 0092 permits a reviewed, complete-gate-tested full commit SHA with an honest bootstrap comment for this internal infrastructure. It does not permit floating references or authorize a release. External Action pins retain their own reviewed integrity and release-tag requirements. After its initial verified bootstrap, `automation-v1` advances automatically only for shared-source changes admitted by successful complete main CI. The distribution service performs a non-forced branch update; consumer-only pin changes cannot trigger an update loop.
 
 Release validation binds required repository-specific evidence to the exact candidate. Publication remains behind the caller's protected release environment and explicit approval; release preparation alone does not publish. The shared crate component defaults to validation-only, which validates the gate and inventory without authentication or mutating publication operations. Unpublished products remain validation-only until separately authorized. Product-specific release hooks and their safeguards remain with the caller. See [release policy](releasing.md), [shared release validation](../.github/workflows/shared-release-validation.yml), and [shared crate publishing](../.github/actions/shared-crate-publish/action.yml).
+
+## API comparison purpose
+
+[ADR 0096](decisions/0096-development-and-published-api-baselines.md) records the exact
+event table, initial-API rules and six-consumer rollout. The canonical helper serves hosted
+and local checks. Ordinary CI explicitly selects development against trusted Git history;
+legacy/reusable calls default published. Release explicitly selects published and requires
+`published_api_candidate_sha` for its exact candidate, including validation-only mode.
+Published checks infer compatibility from the chosen manifest version and reject intent
+overrides. Direct manual CI remains development even though nested Release retains the
+same original `workflow_dispatch` event. Missing history, source mutation and failed checks
+cannot produce published evidence.
+
+Explicit private workspace libraries receive API checks independently of publication;
+default workspace selection excludes private support libraries.

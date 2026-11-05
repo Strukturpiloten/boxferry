@@ -55,7 +55,7 @@ case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
   python3:automation/src/boxferry_ci/bootstrap.py\ install-uv*) printf '%s/uv\n' "${0%/*}" ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
-  uv:*boxferry_ci.cargo_tools*)
+  uv:*boxferry_ci.cargo_tools* | uv:*boxferry_ci.api_baselines*)
     [[ "${CARGO_HOME}" == "${CARGO_TARGET_DIR%/cargo-semver-checks-target}/cargo-home" ]] ;;
   cargo:semver-checks*)
     [[ "${RUSTUP_TOOLCHAIN}" == "${CHECK_ALL_TEST_MSRV}" ]]
@@ -107,7 +107,7 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/44\]' "${test_root}/default.output")" == 44 ]]
-grep --fixed-strings --quiet -- '[44/44] Check published API compatibility' "${test_root}/default.output"
+grep --fixed-strings --quiet -- '[44/44] Check development API compatibility' "${test_root}/default.output"
 [[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 44 steps.' ]]
 assert_contains default "bash scripts/test-application-probes.sh"
 assert_contains check "bash scripts/test-application-probes.sh"
@@ -126,6 +126,7 @@ assert_contains fix "bash scripts/check-files.sh --fix"
 assert_contains check "bash scripts/check-files.sh --check"
 assert_contains check "cargo +${mock_msrv} ci-check"
 assert_contains check "cargo +${mock_msrv} ci-policy"
+assert_contains check "uv run --locked --project automation python -m boxferry_ci.api_baselines run --repository-root ${test_root}/repository --api-purpose development --event local --release-type  --report-json target/api-baseline-local.json"
 CHECK_ALL_TEST_MSRV=9.8.8 run_gate metadata --check
 assert_contains metadata "cargo +9.8.8 ci-check"
 assert_contains metadata "cargo +9.8.8 ci-policy"

@@ -78,6 +78,223 @@ class BootstrapTests(unittest.TestCase):
         (objects / "config").write_text(bootstrap.BARE_CONFIG)
         return head, objects
 
+    def identity_archive(self) -> tuple[str, Path]:
+        self.fixture_cache()
+        fixture = self.root / "fixture"
+        (fixture / "automation/src/boxferry_ci").mkdir(parents=True)
+        (fixture / "automation/src/boxferry_ci/bootstrap.py").write_text("trusted = True\n")
+        executable = fixture / "automation/executable.py"
+        executable.write_text("print('tracked executable fixture')\n")
+        executable.chmod(0o755)
+        self.git(fixture, "add", ".")
+        self.git(fixture, "commit", "-m", "identity fixture source")
+        head = self.git(fixture, "rev-parse", "HEAD")
+        objects = self.root / f"target/boxferry-automation/{head}.git"
+        self.git(self.root, "clone", "--bare", str(fixture), str(objects))
+        (objects / "config").write_text(bootstrap.BARE_CONFIG)
+        self.config["revision"] = head
+        self.manifest()
+        return head, bootstrap.prepare_implementation(self.root, head)
+
+    def test_archive_identity_is_read_only_and_checks_actual_bytes_and_locks(self) -> None:
+        head, project = self.identity_archive()
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            self.assertEqual(
+                bootstrap.automation_identity(self.root),
+                {
+                    "revision": head,
+                    "kind": "interface-1-archive",
+                },
+            )
+            for relative in ("src/boxferry_ci/bootstrap.py", "uv.lock", "pyproject.toml"):
+                path = project / relative
+                original = path.read_bytes()
+                path.write_bytes(original + b"tampered\n")
+                with self.subTest(relative=relative), self.assertRaises(bootstrap.BootstrapError):
+                    bootstrap.automation_identity(self.root, head)
+                self.assertTrue(
+                    path.read_bytes().endswith(b"tampered\n"), "verification must not repair"
+                )
+                path.write_bytes(original)
+
+    def test_archive_never_shortcuts_to_matching_consumer_git_even_when_A_equals_C(self) -> None:
+        head, project = self.identity_archive()
+        self.git(self.root, "init", "--template=")
+        self.git(self.root, "fetch", str(self.root / "fixture"), head)
+        self.git(self.root, "reset", "--mixed", head)
+        self.assertEqual(self.git(self.root, "rev-parse", "HEAD"), head)
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            self.assertEqual(bootstrap.automation_identity(self.root, head)["revision"], head)
+            (project / "uv.lock").write_text("same HEAD cannot prove these bytes\n")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head)
+
+    def test_archive_identity_rejects_wrong_manifest_missing_cache_and_extra_source(self) -> None:
+        head, project = self.identity_archive()
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, "f" * 40)
+            self.config["revision"] = "e" * 40
+            self.manifest()
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head)
+            self.config["revision"] = head
+            self.manifest()
+            extra = project / "src/boxferry_ci/unexpected.py"
+            extra.write_text("unexpected importable source\n")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head)
+            extra.unlink()
+            (project / "uv.lock").unlink()
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head)
+            shutil.rmtree(project.parent.parent / f"{head}.git")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head)
+
+    def test_archive_runtime_exclusions_do_not_accept_importable_or_linked_source(self) -> None:
+        head, project = self.identity_archive()
+        bytecode = project / "src/boxferry_ci/__pycache__"
+        bytecode.mkdir()
+        (bytecode / "bootstrap.cpython-313.pyc").write_bytes(b"fixture runtime cache")
+        (project / ".venv").mkdir()
+        (project / ".venv/python").symlink_to(sys.executable)
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            self.assertEqual(bootstrap.automation_identity(self.root)["revision"], head)
+            extra = bytecode / "unexpected.py"
+            extra.write_text("not a bytecode cache\n")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root)
+
+            extra.unlink()
+            source = project / "src/boxferry_ci/bootstrap.py"
+            source.unlink()
+            source.symlink_to(self.root / "fixture/automation/src/boxferry_ci/bootstrap.py")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root)
+
+    def test_archive_identity_uses_real_extraction_modes_and_rejects_mode_changes(self) -> None:
+        head, project = self.identity_archive()
+        raw = bootstrap.run_git(
+            self.root / f"target/boxferry-automation/{head}.git",
+            "archive",
+            "--format=tar",
+            head,
+            "automation",
+            binary=True,
+        )
+        assert isinstance(raw, bytes)
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            self.assertFalse(archive.getmember("automation/uv.lock").mode & 0o111)
+            self.assertTrue(archive.getmember("automation/executable.py").mode & 0o111)
+        self.assertEqual((project / "uv.lock").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((project / "executable.py").stat().st_mode & 0o777, 0o755)
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            self.assertEqual(bootstrap.automation_identity(self.root)["revision"], head)
+            for path, invalid in (
+                (project / "uv.lock", 0o664),
+                (project / "executable.py", 0o644),
+                (project.parent / bootstrap.CARGO_METADATA_PATH, 0o755),
+            ):
+                previous = path.stat().st_mode & 0o777
+                path.chmod(invalid)
+                with self.subTest(path=path), self.assertRaises(bootstrap.BootstrapError):
+                    bootstrap.automation_identity(self.root)
+                path.chmod(previous)
+
+    def test_identity_rejects_object_archive_and_configuration_overrides(self) -> None:
+        head, project = self.identity_archive()
+        cache = project.parent.parent / f"{head}.git"
+        with patch.object(bootstrap, "__file__", str(project / "src/boxferry_ci/bootstrap.py")):
+            for relative in ("objects/info/alternates", "info/grafts", "info/attributes"):
+                override = cache / relative
+                override.parent.mkdir(parents=True, exist_ok=True)
+                override.write_text("automation/** export-ignore\n")
+                with self.subTest(relative=relative), self.assertRaises(bootstrap.BootstrapError):
+                    bootstrap.automation_identity(self.root)
+                override.unlink()
+            config = cache / "config"
+            config.write_text(bootstrap.BARE_CONFIG + "\n[alias]\nunsafe = !false\n")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root)
+            config.write_text(bootstrap.BARE_CONFIG)
+            with patch.dict(os.environ, {"GIT_DIR": "/untrusted", "GIT_OBJECT_DIRECTORY": "/bad"}):
+                self.assertEqual(bootstrap.automation_identity(self.root)["revision"], head)
+
+    def test_direct_checkout_requires_own_git_root_and_dirty_self_is_development_only(self) -> None:
+        head, _project = self.identity_archive()
+        source = self.root / "fixture"
+        module = source / "automation/src/boxferry_ci/bootstrap.py"
+        with patch.object(bootstrap, "__file__", str(module)):
+            self.assertEqual(bootstrap.automation_identity(self.root, head)["kind"], "git-checkout")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, "f" * 40)
+            module.write_text("dirty producer work\n")
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(source, head)
+            with self.assertRaises(bootstrap.BootstrapError):
+                bootstrap.automation_identity(self.root, head, allow_dirty_self=True)
+            self.assertEqual(
+                bootstrap.automation_identity(source, head, allow_dirty_self=True)["kind"],
+                "producer-working-tree",
+            )
+        nested = source / "nested/automation/src/boxferry_ci/bootstrap.py"
+        nested.parent.mkdir(parents=True)
+        nested.write_text("ancestor Git is not implementation identity\n")
+        with (
+            patch.object(bootstrap, "__file__", str(nested)),
+            self.assertRaisesRegex(bootstrap.BootstrapError, "ancestor Git"),
+        ):
+            bootstrap.automation_identity(source, head)
+
+    def test_foreign_direct_checkout_default_binds_manifest_but_explicit_sha_is_trusted(
+        self,
+    ) -> None:
+        head, _project = self.identity_archive()
+        module = self.root / "fixture/automation/src/boxferry_ci/bootstrap.py"
+        manifest = self.root / ".github/automation.json"
+        with patch.object(bootstrap, "__file__", str(module)):
+            self.assertEqual(bootstrap.automation_identity(self.root)["revision"], head)
+            self.config["revision"] = "f" * 40
+            self.manifest()
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "requested immutable SHA"):
+                bootstrap.automation_identity(self.root)
+            self.assertEqual(bootstrap.automation_identity(self.root, head)["revision"], head)
+            manifest.unlink()
+            with self.assertRaisesRegex(
+                bootstrap.BootstrapError, "cannot read automation manifest"
+            ):
+                bootstrap.automation_identity(self.root)
+            self.assertEqual(bootstrap.automation_identity(self.root, head)["revision"], head)
+            manifest.write_text("not JSON")
+            with self.assertRaisesRegex(
+                bootstrap.BootstrapError, "cannot read automation manifest"
+            ):
+                bootstrap.automation_identity(self.root)
+
+    def test_same_root_default_uses_own_head_and_dirty_development_identity(self) -> None:
+        self.identity_archive()
+        source = self.root / "fixture"
+        module = source / "automation/src/boxferry_ci/bootstrap.py"
+        (source / ".github").mkdir()
+        (source / ".github/automation.json").write_text(
+            json.dumps(self.config | {"revision": "f" * 40})
+        )
+        self.git(source, "add", ".")
+        self.git(source, "commit", "-m", "stale self consumer pin")
+        head = self.git(source, "rev-parse", "HEAD")
+        with patch.object(bootstrap, "__file__", str(module)):
+            self.assertEqual(
+                bootstrap.automation_identity(source), {"revision": head, "kind": "git-checkout"}
+            )
+            module.write_text("dirty producer development\n")
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "mutable automation"):
+                bootstrap.automation_identity(source)
+            self.assertEqual(
+                bootstrap.automation_identity(source, allow_dirty_self=True),
+                {"revision": head, "kind": "producer-working-tree"},
+            )
+
     def test_manifest_exact_interface_and_fixed_remote(self) -> None:
         self.assertEqual(bootstrap.load_config(self.root), self.config)
         for key, value in (
@@ -417,11 +634,14 @@ class BootstrapTests(unittest.TestCase):
     def test_run_project_uses_selected_project_uv_and_locked_cli(self) -> None:
         project = self.root / "implementation-b/automation"
         with (
+            patch.dict(os.environ, {"PYTHONPATH": str(self.root / "foreign/automation/src")}),
             patch.object(bootstrap, "ensure_uv", return_value=Path("/selected/uv")) as ensure,
             patch.object(bootstrap.subprocess, "call", return_value=19) as call,
         ):
             self.assertEqual(bootstrap.run_project(self.root, project, ["plan"]), 19)
         ensure.assert_called_once_with(project, self.root / "target/boxferry-automation/tools")
+        self.assertNotIn("PYTHONPATH", call.call_args.kwargs["env"])
+        self.assertEqual(call.call_args.kwargs["env"]["PATH"].split(os.pathsep)[0], "/selected")
         self.assertEqual(
             call.call_args.args[0][:5],
             ["/selected/uv", "run", "--locked", "--project", str(project)],

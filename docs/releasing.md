@@ -26,6 +26,13 @@ dispatched full and focused migration-readiness artifacts remain diagnostic only
 ## Automatic release validation
 
 Release requires fresh complete CI and catalogue evidence for one immutable candidate.
+Release and validation-only Release explicitly select published API compatibility against
+an exact canonical registry version, using the actual chosen candidate manifest version.
+Breaking commit subjects cannot waive an insufficient version. The aggregate requires
+`published_api_candidate_sha` for the exact candidate; a development result or generic
+candidate output cannot substitute. [Development API checks](automation.md#api-comparison-purpose)
+use trusted Git baselines for ordinary changes.
+
 Main pushes and manual CI also run completely; ordinary PRs may use reviewed change-aware
 selection. Required CI rejects unexpected skips and missing results.
 

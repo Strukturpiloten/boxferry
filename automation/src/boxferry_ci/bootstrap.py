@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import platform
@@ -96,12 +97,13 @@ def git_environment() -> dict[str, str]:
         GIT_CONFIG_SYSTEM=os.devnull,
         GIT_TERMINAL_PROMPT="0",
         GIT_NO_REPLACE_OBJECTS="1",
+        GIT_ATTR_NOSYSTEM="1",
     )
     return environment
 
 
 def run_git(directory: Path, *arguments: str, binary: bool = False) -> bytes | str:
-    """Run bounded Git operations only inside the dedicated, checked bare cache."""
+    """Run bounded Git without inherited overrides, hooks, or maintenance."""
     command = [
         "git",
         "--no-replace-objects",
@@ -155,7 +157,15 @@ def validate_cache(cache: Path) -> None:
                 raise BootstrapError("shared automation object cache exceeds its size budget")
     if (cache / "config").read_text(encoding="utf-8") != BARE_CONFIG:
         raise BootstrapError("shared automation object cache has untrusted Git configuration")
-    if (cache / "objects/info/alternates").exists() or (cache / "refs/replace").exists():
+    if any(
+        (cache / name).exists()
+        for name in (
+            "objects/info/alternates",
+            "refs/replace",
+            "info/grafts",
+            "info/attributes",
+        )
+    ):
         raise BootstrapError("shared automation object cache contains object overrides")
 
 
@@ -198,6 +208,183 @@ def extract_archive(archive: Path, destination: Path) -> None:
                     if member.mode & 0o111
                     else 0o644
                 )
+
+
+def _archive_identity(repository_root: Path, project: Path, expected: str | None) -> dict[str, str]:
+    """Verify the loaded interface-1 export against existing immutable objects, read-only."""
+    revision = load_config(repository_root)["revision"]
+    if expected is not None and expected != revision:
+        raise BootstrapError("automation archive revision differs from the consumer manifest")
+    cache = repository_root / "target/boxferry-automation"
+    stage = cache / revision
+    if project != stage / "automation":
+        raise BootstrapError("loaded automation project differs from the selected archive")
+    for path in (repository_root / "target", cache, stage, project):
+        if path.is_symlink() or not path.is_dir():
+            raise BootstrapError("automation archive location is missing or follows symlinks")
+    objects = cache / f"{revision}.git"
+    validate_cache(objects)
+    run_git(objects, "fsck", "--full", "--strict", "--no-reflogs", "--no-dangling")
+    if run_git(objects, "rev-parse", f"{revision}^{{commit}}") != revision:
+        raise BootstrapError("automation cache does not contain the selected exact commit")
+    data = run_git(
+        objects,
+        "archive",
+        "--format=tar",
+        revision,
+        "automation",
+        "renovate-presets",
+        CARGO_METADATA_PATH,
+        binary=True,
+    )
+    if not isinstance(data, bytes):
+        raise BootstrapError("automation archive was not binary")
+    expected_files: set[str] = set()
+    expected_directories: set[str] = set()
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        members = archive.getmembers()
+        if len(members) > 5000 or sum(member.size for member in members) > MAX_ARCHIVE_BYTES:
+            raise BootstrapError("automation identity archive exceeds extraction budgets")
+        for member in members:
+            parts = PurePosixPath(member.name)
+            if (
+                parts.is_absolute()
+                or ".." in parts.parts
+                or not parts.parts
+                or parts.parts[0] not in {"automation", "renovate-presets", ".devcontainer"}
+                or (
+                    parts.parts[0] == ".devcontainer"
+                    and member.name != CARGO_METADATA_PATH
+                    and not (str(parts) == ".devcontainer" and member.isdir())
+                )
+                or not (member.isfile() or member.isdir())
+            ):
+                raise BootstrapError("automation identity archive contains an unsafe member")
+            relative = str(parts)
+            target = stage / relative
+            for path in (target, *target.parents):
+                if path.is_symlink():
+                    raise BootstrapError("automation archive source must not follow symlinks")
+                if path == stage:
+                    break
+            if member.isdir():
+                if relative in expected_directories or not target.is_dir():
+                    raise BootstrapError("automation archive directory is missing or duplicated")
+                expected_directories.add(relative)
+                continue
+            if relative in expected_files or not target.is_file():
+                raise BootstrapError("automation archive source is missing or duplicated")
+            expected_files.add(relative)
+            stream = archive.extractfile(member)
+            mode = (
+                0o644
+                if relative == CARGO_METADATA_PATH
+                else 0o755
+                if member.mode & 0o111
+                else 0o644
+            )
+            if (
+                stream is None
+                or target.stat().st_size != member.size
+                or target.stat().st_mode & 0o777 != mode
+            ):
+                raise BootstrapError(
+                    "automation archive source size or mode differs from its commit"
+                )
+            with stream, target.open("rb") as actual:
+                if actual.read(MAX_ARCHIVE_BYTES + 1) != stream.read(MAX_ARCHIVE_BYTES + 1):
+                    raise BootstrapError(
+                        f"automation archive source differs from its commit: {relative}"
+                    )
+    required = {
+        "automation/pyproject.toml",
+        "automation/uv.lock",
+        "automation/src/boxferry_ci/bootstrap.py",
+        CARGO_METADATA_PATH,
+    }
+    if not required <= expected_files:
+        raise BootstrapError("automation archive lacks its source, lock or Cargo metadata")
+    # Only uv's own environment and normal bytecode caches may be additional files.
+    # Do not recurse into environments or admit other importable project source.
+    count = 0
+    for directory, directories, files in os.walk(stage, followlinks=False):
+        current = Path(directory)
+        for name in list(directories):
+            path = current / name
+            relative = path.relative_to(stage).as_posix()
+            if path.is_symlink():
+                raise BootstrapError("automation archive contains an additional directory symlink")
+            if relative == "automation/.venv":
+                directories.remove(name)
+            elif name == "__pycache__" and current.relative_to(stage).parts[:2] == (
+                "automation",
+                "src",
+            ):
+                for bytecode in path.iterdir():
+                    count += 1
+                    if count > 5000:
+                        raise BootstrapError(
+                            "automation bytecode inventory exceeds its file budget"
+                        )
+                    stem = bytecode.name.split(".cpython-", 1)[0]
+                    original = (current / (stem + ".py")).relative_to(stage).as_posix()
+                    if (
+                        bytecode.is_symlink()
+                        or not bytecode.is_file()
+                        or bytecode.suffix != ".pyc"
+                        or original not in expected_files
+                    ):
+                        raise BootstrapError("automation bytecode cache contains unexpected source")
+                directories.remove(name)
+            elif relative not in expected_directories:
+                raise BootstrapError("automation archive contains an unexpected source directory")
+        for name in files:
+            path = current / name
+            if path.is_symlink() or path.relative_to(stage).as_posix() not in expected_files:
+                raise BootstrapError("automation archive contains unexpected source")
+        count += len(directories) + len(files)
+        if count > 5000:
+            raise BootstrapError("automation archive identity inventory exceeds its file budget")
+    return {"revision": revision, "kind": "interface-1-archive"}
+
+
+def automation_identity(
+    repository_root: Path,
+    expected_sha: str | None = None,
+    *,
+    allow_dirty_self: bool = False,
+) -> dict[str, str]:
+    """Bind the actually loaded project; never use ancestor Git or metadata alone as proof."""
+    if expected_sha is not None and re.fullmatch(r"[0-9a-f]{40}", expected_sha) is None:
+        raise BootstrapError("automation identity requires an exact lowercase commit SHA")
+    root = repository_root.resolve(strict=True)
+    project = Path(__file__).absolute().parents[2]
+    for path in (Path(__file__).absolute(), *Path(__file__).absolute().parents):
+        if path.is_symlink():
+            raise BootstrapError("loaded automation implementation must not follow symlinks")
+        if path == project.parent:
+            break
+    cache = root / "target/boxferry-automation"
+    # Archive first, including A == consumer HEAD: matching ancestor Git proves nothing.
+    if project.is_relative_to(cache):
+        return _archive_identity(root, project, expected_sha)
+    implementation = project.parent
+    if expected_sha is None and implementation.resolve() != root:
+        expected_sha = load_config(root)["revision"]
+    actual_root = Path(str(run_git(implementation, "rev-parse", "--show-toplevel"))).resolve()
+    if actual_root != implementation.resolve():
+        raise BootstrapError("automation implementation must own its Git root, not ancestor Git")
+    actual = str(run_git(implementation, "rev-parse", "HEAD"))
+    if re.fullmatch(r"[0-9a-f]{40}", actual) is None or (
+        expected_sha is not None and actual != expected_sha
+    ):
+        raise BootstrapError("automation checkout does not match the requested immutable SHA")
+    dirty = bool(run_git(implementation, "status", "--porcelain", "--untracked-files=normal"))
+    if dirty and not (allow_dirty_self and implementation.resolve() == root):
+        raise BootstrapError(
+            "mutable automation implementation cannot claim pinned source identity"
+        )
+    return {"revision": actual, "kind": "producer-working-tree" if dirty else "git-checkout"}
 
 
 def prepare_implementation(repository_root: Path, revision: str) -> Path:
@@ -571,6 +758,7 @@ def run_project(repository_root: Path, project: Path, arguments: list[str]) -> i
             *arguments,
         ]
         environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
         environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
         return subprocess.call(command, env=environment)
     except (BootstrapError, OSError) as error:

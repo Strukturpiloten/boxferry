@@ -6483,9 +6483,9 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "CARGO_TARGET_DIR=\"${semver_target_dir}\"",
         "BOXFERRY_SEMVER_RELEASE_TYPE",
         "\"\" | major | minor | patch",
-        "semver_check=(cargo semver-checks check-release --workspace --all-features)",
-        "semver_check+=(--release-type \"${semver_release_type}\")",
-        "\"${semver_check[@]}\"",
+        "python -m boxferry_ci.api_baselines run",
+        "--api-purpose development --event local",
+        "--release-type \"${semver_release_type}\"",
     ] {
         if !script.contains(required) {
             return Err(format!("local validation runner missing `{required}`"));
@@ -7656,7 +7656,7 @@ fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), S
         "semver_release_type=\"${BOXFERRY_SEMVER_RELEASE_TYPE:-}\"",
         "case \"${semver_release_type}\" in\n  \"\" | major | minor | patch) ;;",
         "BOXFERRY_SEMVER_RELEASE_TYPE must be empty, major, minor, or patch",
-        "semver_check+=(--release-type \"${semver_release_type}\")",
+        "--release-type \"${semver_release_type}\"",
     ] {
         if !local_script.contains(required) {
             return Err(format!("local SemVer override contract is missing {required}"));
@@ -7675,7 +7675,8 @@ fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), S
         "printf 'release_type=major\\n' >> \"${GITHUB_OUTPUT}\"",
         "printf 'release_type=\\n' >> \"${GITHUB_OUTPUT}\"",
         "needs: [validation-plan, semver-release-type]",
-        "release_type: ${{ needs.semver-release-type.outputs.release_type }}",
+        "api_purpose: ${{ inputs.api_purpose || 'development' }}",
+        "release_type: ${{ inputs.api_purpose != 'published' && needs.semver-release-type.outputs.release_type || '' }}",
     ] {
         if !ci.contains(required) {
             return Err(format!("CI SemVer break classifier is missing {required}"));
