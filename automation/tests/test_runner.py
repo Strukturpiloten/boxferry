@@ -209,7 +209,7 @@ class Runner(unittest.TestCase):
         for _ in range(100):
             try:
                 state = stat.read_text().split()[2]
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 state = None
                 break
             if state == "Z":

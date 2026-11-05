@@ -108,7 +108,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          capability="$(python3 _proposed_automation/automation/src/boxferry_ci/eligibility.py reader-contract \
+          capability="$(PYTHONPATH="${GITHUB_WORKSPACE}/_proposed_automation/automation/src" \
+            python3 -P -m boxferry_ci.eligibility reader-contract \
             --module-path _automation/automation/src/boxferry_ci/eligibility.py)"
           test "${capability}" = 1 || test "${capability}" = 2
           printf 'contract=%s\n' "${capability}" >> "${GITHUB_OUTPUT}"

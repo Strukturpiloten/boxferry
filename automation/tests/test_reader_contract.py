@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,92 @@ class ReaderContractTests(unittest.TestCase):
                             api, HEAD, AUTHORITY, "main", datetime.now(UTC), expected_base_sha=BASE
                         )
                     )
+
+    def test_preinstall_workflow_probe_reads_held_reader_in_clean_foreign_process(self) -> None:
+        workflow = (ROOT / ".github/workflows/shared-dependency-wait.yml").read_text()
+        start = workflow.index(
+            "          set -euo pipefail",
+            workflow.index("- name: Detect the immutable admission reader capability"),
+        )
+        end = workflow.index("      - name:", start)
+        script = "\n".join(line[10:] for line in workflow[start:end].splitlines())
+        current = ROOT / "automation/src/boxferry_ci"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            isolated = root / "python"
+            subprocess.run(
+                ["/usr/bin/python3", "-m", "venv", "--without-pip", str(isolated)],
+                check=True,
+                capture_output=True,
+                timeout=20,
+            )
+            version = subprocess.run(
+                [str(isolated / "bin/python3"), "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            print(
+                f"reader-contract pre-install interpreter: {version.stdout.strip()}",
+                file=sys.stderr,
+            )
+            workspace = root / "workspace"
+            workspace.mkdir()
+            foreign = root / "foreign-cwd"
+            foreign.mkdir()
+            proposed = workspace / "_proposed_automation/automation/src/boxferry_ci"
+            shutil.copytree(current, proposed, ignore=shutil.ignore_patterns("__pycache__"))
+            for path in (foreign, root / "inherited"):
+                package = path / "boxferry_ci"
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text(
+                    "raise AssertionError('shadow package loaded')\n"
+                )
+            (root / "inherited/sitecustomize.py").write_text(
+                "raise SystemExit('inherited Python path reached startup')\n"
+            )
+            held = foreign / "_automation/automation/src/boxferry_ci/eligibility.py"
+            held.parent.mkdir(parents=True)
+            output = root / "github-output"
+            environment = {
+                **os.environ,
+                "PATH": str(isolated / "bin") + os.pathsep + os.environ["PATH"],
+                "PYTHONPATH": str(root / "inherited"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "GITHUB_WORKSPACE": str(workspace),
+                "GITHUB_OUTPUT": str(output),
+            }
+            for name, content, contract in (
+                ("legacy", b"raise AssertionError('held reader must not execute')\n", "1"),
+                ("current", (current / "eligibility.py").read_bytes(), "2"),
+                ("malformed", b"ADMISSION_READER_CONTRACT = (\n", None),
+                ("unknown", b"ADMISSION_READER_CONTRACT = 3\n", None),
+                (
+                    "duplicate",
+                    b"ADMISSION_READER_CONTRACT = 2\nADMISSION_READER_CONTRACT = 2\n",
+                    None,
+                ),
+            ):
+                with self.subTest(reader=name):
+                    held.write_bytes(content)
+                    output.unlink(missing_ok=True)
+                    result = subprocess.run(
+                        ["bash", "-c", script],
+                        cwd=foreign,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=20,
+                    )
+                    self.assertEqual(result.returncode, 0 if contract else 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    if contract:
+                        self.assertEqual(output.read_text(), f"contract={contract}\n")
+                        self.assertEqual(result.stderr, "")
+                    else:
+                        self.assertFalse(output.exists())
 
     def test_waiter_preserves_legacy_argv_and_passes_trusted_base_only_to_contract_two(
         self,
