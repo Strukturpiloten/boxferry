@@ -25,6 +25,7 @@ jobs:
     if: github.repository == 'Strukturpiloten/boxferry'
     permissions:
       contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
     with:
       api_purpose: published

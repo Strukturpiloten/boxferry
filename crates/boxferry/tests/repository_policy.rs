@@ -7161,7 +7161,7 @@ fn release_workflow_reuses_the_complete_ci_contract() -> Result<(), String> {
 
     for required in [
         "  deterministic:\n    name: Complete deterministic validation",
-        "permissions:\n      contents: read\n    uses: ./.github/workflows/ci.yml",
+        "permissions:\n      contents: read\n      pull-requests: read\n    uses: ./.github/workflows/ci.yml",
         "  release-metadata:\n    name: Validate release metadata",
         "bash scripts/validate-release-metadata.sh",
         "needs: [deterministic, release-metadata, migration-readiness]",
