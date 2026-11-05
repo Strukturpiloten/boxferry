@@ -1,0 +1,6 @@
+# Only this non-default policy allows the fixture's synthetic license.
+[licenses]
+allow = ["BSD-3-Clause"]
+
+[licenses.private]
+ignore = false

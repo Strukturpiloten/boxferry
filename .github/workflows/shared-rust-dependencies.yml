@@ -59,8 +59,7 @@ jobs:
         with:
           manifest-path: source/Cargo.toml
           command: check
-          arguments: --all-features
-          command-arguments: --config source/deny.toml
+          arguments: --all-features --config source/deny.toml
       - name: Expose successful candidate binding
         id: result
         shell: bash

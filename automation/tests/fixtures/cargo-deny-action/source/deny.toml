@@ -1,0 +1,6 @@
+# Decoy: implicit manifest-relative policy discovery must reject the fixture.
+[licenses]
+allow = ["MIT"]
+
+[licenses.private]
+ignore = false

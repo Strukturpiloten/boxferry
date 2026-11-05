@@ -316,6 +316,14 @@ jobs:
         with:
           command: check
           arguments: --all-features
+      - name: Prepare nested dependency-action fixture
+        run: cp -R automation/tests/fixtures/cargo-deny-action/source source
+      - name: Audit nested dependency-action fixture with explicit policy
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: source/Cargo.toml
+          command: check
+          arguments: --all-features --config source/explicit-policy.toml
 
   documentation:
     name: Repository files and documentation

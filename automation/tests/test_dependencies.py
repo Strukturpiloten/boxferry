@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,6 +61,25 @@ def cargo_metadata(
 
 
 class DependencyTests(unittest.TestCase):
+    def test_nested_dependency_action_contract_and_native_pin_ownership(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        runtime = Path(os.environ.get("BOXFERRY_RENOVATE_PACKAGE", root / "target/tools/renovate"))
+        expected = json.loads((root / "automation/renovate-runtime.json").read_text())["image"]
+        self.assertEqual((runtime / "source-image.txt").read_text().strip(), expected)
+        result = subprocess.run(
+            [
+                str(runtime / "node"),
+                str(root / "scripts/test-cargo-deny-action.cjs"),
+                str(runtime),
+                str(root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

@@ -1,0 +1,9 @@
+# Authored metadata-only fixture; the declared license is synthetic test data.
+[workspace]
+
+[package]
+name = "boxferry-cargo-deny-argument-fixture"
+version = "0.0.0"
+edition = "2024"
+license = "BSD-3-Clause"
+publish = false
