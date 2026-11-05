@@ -33,3 +33,9 @@ Release validation binds repository-specific evidence to the exact candidate. Pu
 ## Nested dependency audit arguments
 
 The shared workflow passes Cargo Deny's `--config` as a global `arguments` value before `check`, with `manifest-path` as the Action's explicit input. The required producer dependency job checks an authored nested fixture with a non-default policy and all four audit categories. Its default policy rejects the synthetic license; this is not a product license exception. The [fixture README](../automation/tests/fixtures/cargo-deny-action/README.md) records controls, upstream provenance and Renovate ownership. Hosted fixture success and complete gates precede admission; consumer adoption, native qualification and publication approval remain separate.
+
+The shared complete unittest entrypoint captures test file descriptors in a worker owned by the
+existing bounded runner. It redacts and neutralizes diagnostic text before retention; expected
+workflow-command fixtures remain data. Test failures and reporting failures are separate outcomes.
+CI, local validation and inherited Release use the same discovery once. Retention clipping is
+reported; hard capture/result/report budgets and incomplete drainage fail validation.

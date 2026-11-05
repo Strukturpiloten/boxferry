@@ -73,7 +73,7 @@ jobs:
       - name: Test shared automation failure contracts
         env:
           BOXFERRY_RENOVATE_PACKAGE: ${{ github.workspace }}/_automation/target/tools/renovate
-        run: uv run --locked --project _automation/automation python -m unittest discover -s _automation/automation/tests -v
+        run: uv run --locked --project _automation/automation python -m boxferry_ci.test_reporting --repository-root _automation --start-directory _automation/automation/tests
 
   canonical-artifact-integrity:
     name: Canonical tool artifact integrity
