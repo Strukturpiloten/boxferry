@@ -45,9 +45,10 @@ Review manifests and ADRs for exact constraints.
 ## Automation
 
 Every operational pin has one Renovate owner. Native managers cover Cargo, npm, Rust toolchains,
-Dev Container features and Actions; custom managers cover runners, downloaded tools, image
-version/digest pairs, Compose providers and selected application images. Reserved hosted runner
-labels are unquoted, unanchored scalars; dynamic matrices and self-hosted runners remain distinct.
+Dev Container features, Actions and supported literal hosted runner selectors. Custom managers
+retain annotated runner matrices and legacy runner ownership pending shared adoption, alongside
+downloaded tools, image version/digest pairs, Compose providers and selected application images.
+Reserved hosted runner labels are unquoted, unanchored scalars; dynamic matrices and self-hosted runners remain distinct.
 Workflows use `scripts/lib/compose-provider.sh`. Fixtures, historical observations, compatibility
 targets and invalid fixture registries are not update candidates; curated `images.tsv` catalogues
 retain ownership.
