@@ -678,6 +678,154 @@ def _validate_native_runtime(runtime: Path) -> None:
 class NativePresetTests(unittest.TestCase):
     _cached_native_report: dict[str, Any] | None = None
 
+    def test_recorded_source_slots_keep_unique_native_owners_and_atomic_replacement(self) -> None:
+        runtime = Path(
+            os.environ.get("BOXFERRY_RENOVATE_PACKAGE", ROOT / "target/tools/renovate")
+        ).resolve()
+        _validate_native_runtime(runtime)
+        script = r"""
+(async () => {
+  const fs = require("fs"), path = require("path"), assert = require("assert/strict");
+  const base = process.argv[1] + "/dist/", root = process.argv[2];
+  await require(base + "logger/index.js").init();
+  const { extractPackageFile: extract } = require(base + "modules/manager/custom/regex/index.js");
+  const actions = require(base + "modules/manager/github-actions/index.js");
+  const { doAutoReplace } = require(base + "workers/repository/update/branch/auto-replace.js");
+  const { applyPackageRules } = require(base + "util/package-rules/index.js");
+  const { resolveConfigPresets } = require(base + "config/presets/index.js");
+  const { mergeChildConfig } = require(base + "config/utils.js");
+  const { matchRegexOrGlobList } = require(base + "util/string-match.js");
+  const { GlobalConfig } = require(base + "config/global.js");
+  const temporary = fs.mkdtempSync(require("os").tmpdir() + "/boxferry-source-slot-");
+  GlobalConfig.set({localDir: temporary});
+  const fixtureRoot = root + "/automation/tests/fixtures/source-slot-parity/";
+  const index = JSON.parse(fs.readFileSync(fixtureRoot + "index.json"));
+  const read = file => fs.readFileSync(fixtureRoot + file, "utf8");
+  const fileMatches = (file, manager) =>
+    matchRegexOrGlobList(file, manager.managerFilePatterns || []);
+  const expected = (content, slots, before) => {
+    const lines = content.split("\n");
+    for (const slot of slots) {
+      const line = lines[slot.line - 1], start = slot.column;
+      assert.equal(line.slice(start, start + 40), before);
+      lines[slot.line - 1] = line.slice(0, start) + "b".repeat(40) + line.slice(start + 40);
+    }
+    return lines.join("\n");
+  };
+  let newInputs = 0, existingInputs = 0, knownUnsupported = 0;
+  try {
+  for (const consumer of index.consumers) {
+    const configFile = consumer.files.find(item => /(^|\/)renovate.json$/.test(item.path));
+    const local = JSON.parse(read(configFile.fixture));
+    for (const candidate of [false, true]) {
+      let config = {};
+      // Resolve the recorded immutable first-party closure offline, using native merge
+      // and built-in preset resolution; never substitute current bytes for old presets.
+      for (const reference of local.extends || []) {
+        const match = new RegExp("^github>Strukturpiloten/boxferry//" +
+          "renovate-presets/(common|rust)#([a-f0-9]{40})$").exec(reference);
+        let preset;
+        if (match) {
+          const item = index.presets.find(item => item.revision === match[2] &&
+            item.path === `renovate-presets/${match[1]}.json`);
+          assert.ok(item, reference);
+          preset = JSON.parse(candidate ?
+            fs.readFileSync(root + "/" + item.path, "utf8") : read(item.fixture));
+        } else preset = {extends: [reference]};
+        config = mergeChildConfig(config, (await resolveConfigPresets(preset)).config);
+      }
+      const {extends: ignored, ...own} = local;
+      config = mergeChildConfig(config, own);
+      const sourcePolicy = await applyPackageRules({...config, manager:"regex",
+        datasource:"github-digest", depName:"Strukturpiloten/boxferry",
+        packageName:"Strukturpiloten/boxferry",
+        packageFile:".github/workflows/ci.yml", updateType:"digest"}, config.packageRules || []);
+      assert.equal(sourcePolicy.minimumReleaseAge, "0 days");
+      assert.equal(sourcePolicy.groupName, "Shared BoxFerry automation");
+      for (const [manager, datasource, packageName, packageFile] of [
+        ["npm", "npm", "example-third-party", "package.json"],
+        ["regex", "node-version", "node", ".github/workflows/ci.yml"],
+        ["dockerfile", "docker", "node", ".devcontainer/Dockerfile"],
+      ]) {
+        const rule = await applyPackageRules({...config, manager, datasource, packageName,
+          depName:packageName, packageFile, updateType:"patch"}, config.packageRules || []);
+        assert.equal(rule.minimumReleaseAge, "3 days");
+        assert.equal(rule.minimumReleaseAgeBehaviour, "timestamp-required");
+      }
+      for (const item of consumer.workflows) {
+        const original = read(item.fixture), before = consumer.before, file = item.path;
+        const managers = (config.customManagers || []).filter(manager =>
+          fileMatches(file, manager));
+        for (const slot of item.slots.filter(slot => slot.kind.startsWith("shared-"))) {
+          const line = original.split("\n")[slot.line - 1] + "\n";
+          assert.equal(managers.filter(manager => (extract(line, file, manager)?.deps || [])
+            .some(dep => dep.currentDigest === before)).length, 1,
+            `${consumer.repository}:${slot.line}`);
+          if (!candidate) slot.kind === "shared-source" ? existingInputs++ : newInputs++;
+        }
+        let updated = original;
+        for (const manager of managers) {
+          for (let count = 0; ; count++) {
+            assert.ok(count < 200, "bounded native replacement");
+            const deps = extract(updated, file, manager)?.deps || [];
+            const depIndex = deps.findIndex(dep => dep.depName === "Strukturpiloten/boxferry" &&
+              dep.currentDigest === before);
+            if (depIndex < 0) break;
+            const dep = deps[depIndex];
+            const next = await doAutoReplace({...manager, ...dep, manager:"regex", packageFile:file,
+              depIndex, newValue:dep.currentValue, newDigest:"b".repeat(40)}, updated, false);
+            assert.notEqual(next, updated); updated = next;
+          }
+        }
+        for (let count = 0; ; count++) {
+          assert.ok(count < 200);
+          const deps = (await actions.extractPackageFile(updated, file, {}))?.deps || [];
+          const depIndex = deps.findIndex(dep => dep.depName === "Strukturpiloten/boxferry" &&
+            dep.currentDigest === before);
+          if (depIndex < 0) break;
+          const dep = deps[depIndex];
+          const next = await doAutoReplace({...dep, manager:"github-actions", packageFile:file,
+            depIndex, newValue:dep.currentValue, newDigest:"b".repeat(40)}, updated, false);
+          assert.notEqual(next, updated); updated = next;
+        }
+        const desired = expected(original, [...item.slots, ...item.unowned], before);
+        const desiredLines = desired.split("\n");
+        const differences = updated.split("\n").flatMap((line, row) =>
+          line === desiredLines[row] ? [] : [row + 1]);
+        assert.equal(updated === desired, true,
+          `${consumer.repository}:${file}: differing lines ${differences.slice(0, 20)}`);
+        if (item.unowned.length) {
+          assert.notEqual(updated, expected(original, item.slots, before),
+            "native regex ownership does not authorize a local workflow");
+          if (!candidate) knownUnsupported += item.unowned.length;
+        }
+      }
+    }
+  }
+  } finally { fs.rmSync(temporary, {recursive:true, force:true}); }
+  console.log(JSON.stringify({newInputs, existingInputs, knownUnsupported}));
+})().catch(error => {console.error(error); process.exit(1);});
+"""
+        completed = subprocess.run(
+            ["node", "--experimental-vm-modules", "-e", script, str(runtime), str(ROOT)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout[-4000:] + completed.stderr[-4000:]
+        )
+        self.assertEqual(
+            json.loads(completed.stdout.splitlines()[-1]),
+            {
+                "newInputs": 22,
+                "existingInputs": 17,
+                "knownUnsupported": 1,
+            },
+        )
+
     def _native_report(self) -> dict[str, Any]:
         if self._cached_native_report is not None:
             return self._cached_native_report

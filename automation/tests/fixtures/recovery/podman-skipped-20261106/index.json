@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "repository": "Strukturpiloten/podman-lens",
+  "source": "41d7f8b868351621c4e60fbeedd9fce5955f7897",
+  "caller_head": "ad2468a5d50d01911e855a5cc6346667abad36e0",
+  "provenance": "Complete public GitHub REST envelopes captured 2026-11-07; no projection or raw-payload normalization. Actor-cutoff history is complete10/10, no Link next page. Full contemporary45/45 history remains in ignored diagnosis evidence.",
+  "license": "First-party caller is MPL-2.0; public repository API envelopes are retained as provenance evidence, not oracle implementation.",
+  "files": {
+    "history-cutoff.json.txt": {
+      "sha256": "629970e3894abff07fe1ec21f47d1a79728c99b9f7cfd551f5b0f8f7bd0d1eca",
+      "bytes": 145256,
+      "projection": false
+    },
+    "prior-run.json.txt": {
+      "sha256": "655b9779cc8b01b7cd261ee28a24395f87a982c89e6d43e8bccad1949937f951",
+      "bytes": 14319,
+      "projection": false
+    },
+    "prior-attempt1-jobs.json.txt": {
+      "sha256": "c7028a4e38dd4b1fde33115996917aed31449f1a1793daffb8c9c33c5dea013b",
+      "bytes": 929,
+      "projection": false
+    },
+    "prior-artifacts.json.txt": {
+      "sha256": "244563f989470892c537c9a4622920af0d228ee4528f7d00c64a06d6cd95856c",
+      "bytes": 32,
+      "projection": false
+    },
+    "later-skipped-run.json.txt": {
+      "sha256": "06a708a04e7f44b68c851612af7e5f940d4d902af399fc554d4b4127e45da19c",
+      "bytes": 14319,
+      "projection": false
+    },
+    "later-skipped-attempt1-jobs.json.txt": {
+      "sha256": "c6f39593d946aa0789e4ae0a613e1b3189e766981408c2aa7e223e3535134f38",
+      "bytes": 929,
+      "projection": false
+    },
+    "later-skipped-artifacts.json.txt": {
+      "sha256": "244563f989470892c537c9a4622920af0d228ee4528f7d00c64a06d6cd95856c",
+      "bytes": 32,
+      "projection": false
+    },
+    "current-run.json.txt": {
+      "sha256": "46c5614cc84b71908c76518bad3376b39f6987d9eefe5baca60705c317ea2a54",
+      "bytes": 14091,
+      "projection": false
+    },
+    "workflow-metadata.json.txt": {
+      "sha256": "44726f0393ba639b63d8b0da498e0087ad4baffd51377742346588ee33843c23",
+      "bytes": 572,
+      "projection": false
+    },
+    "caller-contents.json.txt": {
+      "sha256": "c681b1658a66ea7ada3c160a69a47bb9143e9a3de700696463b188754638c5cf",
+      "bytes": 2499,
+      "projection": false
+    },
+    "caller.yml.txt": {
+      "sha256": "52b9d89302ae5408b6f35e9d5e37e1c29a4e318a113802c25b617aaac95b7516",
+      "bytes": 913,
+      "projection": false
+    }
+  }
+}

@@ -7,6 +7,7 @@ in tests; production has no registry/API override or candidate-provided proof pa
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import signal
@@ -23,6 +24,8 @@ from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 from unittest.mock import patch
 from urllib.error import HTTPError
+
+from test_source_slot_parity import legacy_transform
 
 from boxferry_ci.admission import AdmissionContext, AdmissionSelection
 from boxferry_ci.zero_age_delta import (
@@ -288,6 +291,12 @@ class RepairTests(unittest.TestCase):
             )
 
     def test_additional_local_action_slots_require_exact_whole_file_anchor(self) -> None:
+        # This standalone609 contract uses its original A-exact parser.610 is outside
+        # that closed producer; the integration refusal is checked independently below.
+        with patch("boxferry_ci.eligibility.expected_ci_upgrade", legacy_transform()):
+            self.additional_local_action_slots_require_exact_whole_file_anchor()
+
+    def additional_local_action_slots_require_exact_whole_file_anchor(self) -> None:
         data = (
             "---\njobs:\n  selected:\n"
             f"    uses: {PRODUCER}/.github/workflows/shared-rust-ci.yml@{AUTHORITY}\n"
@@ -1670,6 +1679,94 @@ jobs:
             set(report["producer_changed_paths"]), changed_paths(self.before, self.after)
         )
         self.assertIn(PROOF_PATH, report["producer_changed_paths"])
+
+    def test_current_source_slot_change_refuses_before_repair_or_evidence_authorization(
+        self,
+    ) -> None:
+        path = "automation/src/boxferry_ci/eligibility.py"
+        current = self.before.entries[path].content
+        node = next(
+            node
+            for node in ast.parse(current).body
+            if isinstance(node, ast.FunctionDef) and node.name == "expected_ci_upgrade"
+        )
+        lines = current.splitlines(keepends=True)
+        legacy_transform()  # Verify the independent held-A/609 function hash/provenance.
+        legacy = (
+            ROOT / "automation/tests/fixtures/source-slot-parity/legacy-expected-ci-upgrade.py.txt"
+        ).read_bytes()
+        old = b"".join(lines[: node.lineno - 1]) + legacy + b"".join(lines[node.end_lineno :])
+        self.assertNotEqual(old, current)
+        authority = replace(self.before, entries={**self.before.entries, path: entry(old)})
+        with self.assertRaises(ProofError) as caught:
+            verify_producer(authority, self.after)
+        self.assertEqual(caught.exception.reason, "producer-extra-tree-delta")
+        self.assertFalse(caught.exception.invalid)
+
+        helper = CustodyTests()
+        context, repair = helper.context("merge_group")
+        event, run, ref = helper.event_run(context, repair)
+        before, after = RepairTests().snapshots()
+        with tempfile.TemporaryDirectory() as temporary:
+            event_path = Path(temporary) / "event.json"
+            event_path.write_text(json.dumps(event))
+            options = argparse.Namespace(
+                event_name=context.event,
+                repository=context.repository,
+                candidate_sha=N,
+                tested_sha=N,
+                automation_sha=S,
+                policy_sha=repair.base,
+                pr_base_sha="",
+                queue_base_sha=repair.base,
+                implementation_root=Path("S"),
+                policy_root=Path("B"),
+                consumer_root=Path("N"),
+                authority_root=Path("A"),
+                event_path=event_path,
+                run_id=123,
+                run_attempt=2,
+                ref=ref,
+            )
+            environment = {
+                "GITHUB_REPOSITORY": context.repository,
+                "GITHUB_EVENT_NAME": context.event,
+                "GITHUB_SHA": N,
+                "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ATTEMPT": "2",
+                "GITHUB_REF": ref,
+                "GITHUB_EVENT_PATH": str(event_path),
+            }
+            with (
+                patch.dict(os.environ, environment),
+                patch("boxferry_ci.zero_age_delta.Git") as constructor,
+                patch("boxferry_ci.zero_age_delta.acquire_consumer", return_value=Path("N")),
+                patch(
+                    "boxferry_ci.zero_age_delta.resolve_admission",
+                    return_value=AdmissionSelection(
+                        "required",
+                        N,
+                        repair.base,
+                        S,
+                        AUTHORITY,
+                        POLICY,
+                    ),
+                ),
+                patch("boxferry_ci.zero_age_delta.canonical", return_value=S),
+                patch.object(Metadata, "get", return_value=run),
+                patch("boxferry_ci.zero_age_delta.match_repair_shape") as shape,
+                patch("boxferry_ci.zero_age_delta.repin") as pin,
+                patch("boxferry_ci.zero_age_delta.public_custody") as custody,
+                patch("boxferry_ci.zero_age_delta.confirm_exact_A") as confirmation,
+            ):
+                reader = constructor.return_value
+                reader.head.return_value = AUTHORITY
+                reader.tree.side_effect = [before, after, authority, self.after]
+                result = prove_zero(options)
+            self.assertEqual(result["status"], "needs-service")
+            self.assertEqual(result["reason"], "producer-extra-tree-delta")
+            for operation in (shape, pin, custody, confirmation):
+                operation.assert_not_called()
 
     def test_independent_twelve_producer_and_607_postimage_negatives(self) -> None:
         cases = [

@@ -1,0 +1,87 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/boxferry-website",
+  "jobs": ["quality", "lockfile-release-age"],
+  "profile_jobs": {
+    "prose": ["quality", "lockfile-release-age"],
+    "executable-docs": ["quality", "lockfile-release-age"],
+    "docs": ["quality", "lockfile-release-age"]
+  },
+  "public_documentation_root": "content/",
+  "full_documentation_roots": [],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": [],
+  "documentation_examples_manifest": null,
+  "path_profiles": {
+    "prose": [
+      "README.md",
+      "docs/architecture.md",
+      "docs/content-guidelines.md",
+      "docs/customization.md",
+      "docs/decisions/README.md",
+      "docs/dependency-policy.md",
+      "docs/deployment.md"
+    ],
+    "docs": ["content/*.md", "content/**/*.md"]
+  },
+  "local_commands": {
+    "prose": [["bash", "scripts/check-maintenance-docs.sh"]],
+    "executable-docs": [["bash", "scripts/check-maintenance-docs.sh"]],
+    "docs": [["bash", "scripts/check-site-docs.sh"]],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  },
+  "tasks": {
+    "python-format": {
+      "commands": [["ruff", "format", "scripts", "tests"]]
+    },
+    "python-format-check": {
+      "commands": [["ruff", "format", "--check", "scripts", "tests"]]
+    },
+    "python-quality": {
+      "commands": [
+        ["ruff", "check", "scripts", "tests"],
+        ["ty", "check"]
+      ]
+    },
+    "complete-fix": {
+      "commands": [
+        ["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/check-all.sh", "--fix"]
+      ],
+      "timeout_seconds": 1200
+    },
+    "complete-check": {
+      "commands": [
+        ["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/check-all.sh", "--check"]
+      ],
+      "timeout_seconds": 1200
+    },
+    "site-docs": {
+      "commands": [
+        ["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/check-site-docs.sh"]
+      ],
+      "timeout_seconds": 1200
+    },
+    "maintenance": {
+      "commands": [
+        ["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/check-maintenance-docs.sh"]
+      ],
+      "timeout_seconds": 1200
+    },
+    "build-site": {
+      "commands": [["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/build-site.sh"]],
+      "timeout_seconds": 1200
+    },
+    "serve": {
+      "commands": [["env", "BOXFERRY_WEBSITE_SHARED_TOOLS=1", "bash", "scripts/serve.sh"]],
+      "timeout_seconds": 7200
+    },
+    "native-node-ownership": {
+      "commands": [["python", "scripts/check_native_node_ownership.py"]],
+      "timeout_seconds": 120
+    },
+    "automation-policy": {
+      "commands": [["python", "scripts/test_shared_policy.py"]],
+      "timeout_seconds": 120
+    }
+  }
+}

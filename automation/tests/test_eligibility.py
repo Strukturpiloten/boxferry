@@ -16,6 +16,9 @@ from typing import Any
 from unittest.mock import patch
 from urllib.error import URLError
 
+from test_source_slot_parity import FIXTURES as SOURCE_SLOT_FIXTURES
+from test_source_slot_parity import legacy_transform, replace_slots
+
 from boxferry_ci import eligibility as subject
 from boxferry_ci import recovery
 
@@ -1319,8 +1322,15 @@ class EligibilityTests(unittest.TestCase):
         subject.rerun_ready(self.api, self.candidate, {}, "main")
         self.assertEqual(self.api.posted, [])
 
-    def upgrade(self, after: str = "7" * 40) -> tuple[bytes, bytes]:
+    def upgrade(
+        self, after: str = "7" * 40, *, local_action: str = "shared-source"
+    ) -> tuple[bytes, bytes]:
         before_ci, after_ci = upgrade_workflow(IMPLEMENTATION), upgrade_workflow(after)
+        old_action = b"./_automation/.github/actions/shared-source"
+        new_action = f"./_automation/.github/actions/{local_action}".encode()
+        before_ci, after_ci = (
+            data.replace(old_action, new_action) for data in (before_ci, after_ci)
+        )
         manifest = {
             "schema": 1,
             "repository": REPOSITORY,
@@ -1633,7 +1643,40 @@ jobs:
         self.assertEqual(after.count(IMPLEMENTATION.encode()), 2)
 
     def test_late_receipt_shared_pin_upgrade_retries_once_after_completed_receipt(self) -> None:
-        self.upgrade()
+        self.late_receipt_upgrade("shared-source")
+
+    def test_new_local_action_upgrade_retries_once_only_after_completed_exact_receipt(self) -> None:
+        for action in ("shared-node", "shared-crate-publish"):
+            with self.subTest(action=action):
+                self.setUp()
+                self.late_receipt_upgrade(action)
+
+    def test_four_recorded_new_action_ci_callers_require_completed_receipt_and_retry_once(
+        self,
+    ) -> None:
+        index = json.loads((SOURCE_SLOT_FIXTURES / "index.json").read_text())
+        covered = []
+        for consumer in index["consumers"]:
+            for item in consumer["workflows"]:
+                if not any(slot["kind"] == "shared-node" for slot in item["slots"]):
+                    continue
+                data = (SOURCE_SLOT_FIXTURES / item["fixture"]).read_bytes()
+                pair = tuple(
+                    replace_slots(data, item["slots"], consumer["before"], pin)
+                    for pin in (IMPLEMENTATION, "7" * 40)
+                )
+                with self.subTest(repository=consumer["repository"]):
+                    self.setUp()
+                    self.late_receipt_upgrade("shared-node", (pair[0], pair[1]))
+                covered.append(consumer["repository"])
+        self.assertEqual(len(covered), 4)
+
+    def late_receipt_upgrade(self, action: str, callers: tuple[bytes, bytes] | None = None) -> None:
+        self.upgrade(local_action=action)
+        if callers is not None:
+            for revision in (BASE, "main"):
+                self.contents(".github/workflows/ci.yml", revision, callers[0])
+            self.contents(".github/workflows/ci.yml", HEAD, callers[1])
         self.api.responses["actions/runs/11"] = run_metadata(11)
         self.api.responses["pulls?state=open&per_page=100&sort=updated&direction=desc"] = [
             {"number": 17}
@@ -1711,6 +1754,106 @@ jobs:
         self.assertEqual(self.api.posted, [])
         subject.rerun_ready(self.api, self.candidate, {}, "main", implementation="9" * 40)
         self.assertEqual(self.api.posted, [])
+
+    def test_new_local_action_upgrade_rejects_extra_unowned_edits(self) -> None:
+        for action in ("shared-node", "shared-crate-publish"):
+            before, after = self.upgrade(local_action=action)
+            self.assertTrue(
+                subject.retry_ci_upgrade(self.api, self.candidate, before, after, IMPLEMENTATION)
+            )
+            for proposed in (
+                after.replace(b"runs-on: ubuntu-24.04", b"runs-on: self-hosted"),
+                after.replace(b"name: CI", b"name: CI\npermissions: write-all"),
+                after + f"unknown:\n  automation-sha: {'7' * 40}\n".encode(),
+                after.replace(
+                    f"            AUTOMATION_SHA: {IMPLEMENTATION}".encode(),
+                    f"            AUTOMATION_SHA: {'7' * 40}".encode(),
+                ),
+            ):
+                with self.subTest(action=action):
+                    self.assertFalse(
+                        subject.retry_ci_upgrade(
+                            self.api, self.candidate, before, proposed, IMPLEMENTATION
+                        )
+                    )
+            self.assertEqual(self.api.posted, [])
+
+    def test_legacy_source_slot_retry_refusal_still_allows_normal_exact_authority_receipt(
+        self,
+    ) -> None:
+        historical_transform = legacy_transform()
+        before, after = self.upgrade(local_action="shared-node")
+        self.assertNotEqual(historical_transform(before, IMPLEMENTATION, "7" * 40), after)
+        report = {
+            "status": "pass",
+            "candidate_sha": HEAD,
+            "base_sha": BASE,
+            "source_head_sha": SOURCE,
+            "pull_request": 17,
+            "scope": "pull_request",
+            "state": {"schema_version": 1, "first_seen": {}},
+        }
+        self.api.responses["pulls?state=open&per_page=100&sort=updated&direction=desc"] = [
+            {"number": 17}
+        ]
+        self.api.responses["actions/workflows/ci.yml/runs?event=merge_group&per_page=20"] = {
+            "workflow_runs": []
+        }
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(subject, "expected_ci_upgrade", historical_transform),
+            patch.object(subject, "evaluate", side_effect=lambda *args, **kwargs: deepcopy(report)),
+        ):
+            self.assertFalse(
+                subject.retry_ci_upgrade(self.api, self.candidate, before, after, IMPLEMENTATION)
+            )
+            self.api.responses["actions/runs/11"] = run_metadata(11)
+            with patch.object(subject, "previous_state", return_value=None):
+                first = subject.service(
+                    self.api,
+                    event_name="schedule",
+                    event={},
+                    implementation=IMPLEMENTATION,
+                    run_id=11,
+                    output=Path(temporary) / subject.STATE_FILE,
+                    now=NOW,
+                )
+            self.api.responses["actions/runs/12"] = run_metadata(12)
+            with patch.object(subject, "previous_state", return_value=first):
+                second = subject.service(
+                    self.api,
+                    event_name="schedule",
+                    event={},
+                    implementation=IMPLEMENTATION,
+                    run_id=12,
+                    output=Path(temporary) / subject.STATE_FILE,
+                    now=NOW,
+                )
+        self.assertEqual(first["implementation_revision"], IMPLEMENTATION)
+        self.assertEqual(first["reports"][HEAD]["status"], "pass")
+        self.assertEqual(second["reruns"], {})
+        self.assertFalse(any(path.endswith("rerun-failed-jobs") for path, _ in self.api.posted))
+        self.api.responses["actions/runs/11/artifacts?per_page=100"] = {
+            "artifacts": [
+                {"id": 111, "name": subject.ARTIFACT_NAME, "expired": False, "size_in_bytes": 500}
+            ]
+        }
+        self.api.archives[111] = zip_state(first)
+        status = next(
+            body for path, body in reversed(self.api.posted) if path == f"statuses/{HEAD}"
+        )
+        self.api.responses[f"commits/{HEAD}/statuses?per_page=100"] = [
+            {**status, "creator": {"login": "github-actions[bot]"}}
+        ]
+        receipt = subject.candidate_receipt(
+            self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha=BASE
+        )
+        self.assertEqual(receipt, first["reports"][HEAD])
+        self.assertIsNone(
+            subject.candidate_receipt(
+                self.api, HEAD, IMPLEMENTATION, "main", NOW, expected_base_sha="9" * 40
+            )
+        )
 
     def test_upgrade_requires_exact_bot_and_fresh_authoritative_actor(self) -> None:
         before, after = self.upgrade()

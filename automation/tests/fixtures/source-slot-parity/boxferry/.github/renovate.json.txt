@@ -1,0 +1,338 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#1cf96f5a667d96e66c119753cf7814e22e0dee7e"
+  ],
+  "dependencyDashboard": true,
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**"
+  ],
+  "minimumReleaseAge": "3 days",
+  "rebaseWhen": "behind-base-branch",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "timezone": "Europe/Berlin",
+  "dockerfile": {
+    "enabled": false
+  },
+  "docker-compose": {
+    "enabled": false
+  },
+  "quadlet": {
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update versioned Dev Container tools",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update directly pinned workflow tool versions",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track fixed GitHub-hosted runner environments",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?:^|\\n)\\s*runs-on:\\s*(?<depName>ubuntu|macos|windows)-(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
+      ],
+      "datasourceTemplate": "github-runners"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the immutable DockerLens application admission commit",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/reviewed-(?:application|docker-consumer)-validation\\.yml$/"
+      ],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/docker-lens) currentValue=(?<currentValue>main)\\n[ \\t]*ADMISSION_REVISION:\\s*(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "github-digest",
+      "autoReplaceStringTemplate": "{{{indentation}}}# renovate: datasource=github-digest depName={{{depName}}} currentValue={{{newValue}}}\n{{{indentation}}}ADMISSION_REVISION: {{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the immutable DockerLens custody helper commit",
+      "managerFilePatterns": ["/^\\.github/workflows/reviewed-docker-consumer-validation\\.yml$/"],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/docker-lens) currentValue=(?<currentValue>TheRealBecks/issue172)\\n[ \\t]*CUSTODY_HELPER_REVISION:\\s*(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "github-digest",
+      "autoReplaceStringTemplate": "{{{indentation}}}# renovate: datasource=github-digest depName={{{depName}}} currentValue={{{newValue}}}\n{{{indentation}}}CUSTODY_HELPER_REVISION: {{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Dev Container base release and digest together",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n# release: {{{newValue}}}\nFROM {{{depName}}}:{{{newValue}}}@{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the GitHub CLI installed in the Dev Container",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer\\.json$/"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/github-cli:[^\"]+\"[\\s\\S]*?\"version\": \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cli/cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Docker Compose provider release and its matching binary checksum",
+      "managerFilePatterns": ["/^scripts/lib/compose-provider\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>docker/compose)\\n  local -r expected_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"\\n  local -r expected_sha256=\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "docker/compose",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      "description": "Update active Compose provider catalogue rows with the canonical release and checksum",
+      "managerFilePatterns": [
+        "/^fixtures/conformance/(?:forgejo|immich|nextcloud|observability|paperless-ngx)-application/providers\\.tsv$/"
+      ],
+      "matchStrings": [
+        "docker-compose\\t[0-9]+\\.[0-9]+\\.[0-9]+\\thttps://github\\.com/docker/compose/releases/download/(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)/docker-compose-linux-x86_64\\t(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "autoReplaceStringTemplate": "docker-compose\t{{{replace \"^v\" \"\" newValue}}}\thttps://github.com/docker/compose/releases/download/{{{newValue}}}/docker-compose-linux-x86_64\t{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "depNameTemplate": "docker/compose",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      "description": "Update the active Supabase Compose provider catalogue release and checksum",
+      "managerFilePatterns": ["/^fixtures/conformance/supabase-application/providers\\.tsv$/"],
+      "matchStrings": [
+        "docker-compose\\t[0-9]+\\.[0-9]+\\.[0-9]+\\tlinux-amd64\\t(?<currentDigest>[a-f0-9]{64})\\thttps://github\\.com/docker/compose/releases/download/(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)/docker-compose-linux-x86_64"
+      ],
+      "autoReplaceStringTemplate": "docker-compose\t{{{replace \"^v\" \"\" newValue}}}\tlinux-amd64\t{{{newDigest}}}\thttps://github.com/docker/compose/releases/download/{{{newValue}}}/docker-compose-linux-x86_64"
+    },
+    {
+      "customType": "regex",
+      "description": "Track reviewed live-application container images",
+      "managerFilePatterns": [
+        "/^fixtures/conformance/(?:forgejo|immich|nextcloud|observability|paperless-ngx|supabase)-application/images\\.tsv$/"
+      ],
+      "matchStrings": [
+        "(?:^|\\n)[^#\\s]+[ \\t]+(?<depName>[^\\s:@]+(?:/[^\\s:@]+)+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?:[ \\t]|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Track release-bound native Lens conformance revisions",
+      "managerFilePatterns": ["/^fixtures/conformance/migration-readiness/tiers\\.toml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-tags depName=(?<depName>[^\\s]+) version=(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\\nrevision = \"(?<currentDigest>[a-f0-9]{40})\""
+      ],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "Track reviewed live Podman matrix images",
+      "managerFilePatterns": ["/^fixtures/conformance/podman-live/matrix\\.tsv$/"],
+      "matchStrings": [
+        "(?:^|\\n)[^#\\s]+[ \\t]+(?<depName>[^\\s:@]+(?:/[^\\s:@]+)+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?:[ \\t]|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the digest-pinned live workload probe image",
+      "managerFilePatterns": ["/^scripts/podman-live-conformance\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nworkload_image=\"[^@\"]+@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Signal updates for checksum-pinned Kubernetes development tools",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes/kubernetes|helm/helm)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update kind's exact release tag and per-architecture asset digest together",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-release-attachments depName=(?<depName>kubernetes-sigs/kind) depType=(?<depType>kind-linux-(?<architecture>amd64))\\nreadonly kind_amd64_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\" kind_amd64_checksum=\"(?<currentDigest>[a-f0-9]{64})\"",
+        "# renovate: datasource=github-release-attachments depName=(?<depName>kubernetes-sigs/kind) depType=(?<depType>kind-linux-(?<architecture>arm64))\\nreadonly kind_arm64_release=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\" kind_arm64_checksum=\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments"
+    },
+    {
+      "customType": "regex",
+      "description": "Track Kustomize releases separately from kyaml and API releases",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes-sigs/kustomize)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+      ],
+      "extractVersionTemplate": "^kustomize/v(?<version>\\d+\\.\\d+\\.\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the reviewed direct release-emulator image and digest together",
+      "managerFilePatterns": ["/^scripts/lib/release-emulator\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>docker) depName=(?<depName>[^\\s]+)\\nreadonly release_emulator_image='[^']+:(?<currentValue>qemu-v[^@']+)@(?<currentDigest>sha256:[a-f0-9]{64})'"
+      ],
+      "versioningTemplate": "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\nreadonly release_emulator_image='{{{depName}}}:{{{newValue}}}@{{{newDigest}}}'"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep non-major Dev Container image updates together",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchPackageNames": ["!docker.io/library/node"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "Dev Container toolchain"
+    },
+    {
+      "description": "Keep ZIP on advisory-fixed releases after the reviewed Rust baseline increase",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["zip"],
+      "allowedVersions": ">=9.0.3"
+    },
+    {
+      "description": "Require explicit security review for the DockerLens application admission pin",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["Strukturpiloten/docker-lens"],
+      "matchFileNames": [
+        ".github/workflows/reviewed-application-validation.yml",
+        ".github/workflows/reviewed-docker-consumer-validation.yml"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Review the shared admission helper, both actors' permission checks, exact-head enforcement, and BoxFerry application evidence before accepting this infrastructure change.",
+        "For the temporary issue172 custody-helper ref, manually review the immutable source, lockfile and eight helper hashes together. The tracked ref must move to reviewed main or release before that infrastructure branch is deleted; digest updates alone never authorize root execution."
+      ]
+    },
+    {
+      "description": "Require native revalidation of Lens conformance revisions",
+      "matchFileNames": ["fixtures/conformance/migration-readiness/tiers.toml"],
+      "matchDatasources": ["github-tags"],
+      "pinDigests": true,
+      "groupName": "Native Lens conformance",
+      "prBodyNotes": [
+        "Review the exact release commit and native evidence; update processing or generator target metadata and rerun downstream conformance. Discovery alone does not admit support."
+      ]
+    },
+    {
+      "description": "Group Kubernetes development tool versions and integrity refreshes",
+      "matchFileNames": ["scripts/install-kubernetes-tools.sh"],
+      "groupName": "Kubernetes development tools",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false,
+      "matchPackageNames": [
+        "kubernetes-sigs/kind",
+        "kubernetes/kubernetes",
+        "helm/helm",
+        "kubernetes-sigs/kustomize"
+      ]
+    },
+    {
+      "description": "Require review of release-emulator version and digest changes",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/tonistiigi/binfmt"],
+      "groupName": "release emulator image"
+    },
+    {
+      "description": "Keep GitHub-hosted runner upgrades isolated for compatibility checks",
+      "matchDatasources": ["github-runners"],
+      "groupName": "GitHub-hosted runners",
+      "prBodyNotes": [
+        "Review the hosted image release notes and verify every workflow's operating-system environment before merging."
+      ]
+    },
+    {
+      "description": "Keep shared Dev Container qualification visible in update notes",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "prBodyNotes": [
+        "Review all shared workspace consumers, exact versions and image digests, then rebuild and validate the Dev Container before merging."
+      ]
+    },
+    {
+      "description": "Keep live workload, matrix and probe images fixed",
+      "matchDatasources": ["docker"],
+      "matchFileNames": [
+        "fixtures/conformance/*-application/images.tsv",
+        "fixtures/conformance/podman-live/matrix.tsv",
+        "scripts/podman-live-conformance.sh"
+      ],
+      "groupName": "Live acceptance images",
+      "prBodyNotes": [
+        "Keep the existing workload, matrix and probe image versions and digests fixed. Preserve discovery ownership without update proposals or a manual approval route."
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Keep the Docker Compose provider fixed",
+      "enabled": false,
+      "prBodyNotes": [
+        "Keep the exact provider release and checksum fixed; preserve discovery and integrity verification without update proposals or a manual approval route."
+      ],
+      "pinDigests": true,
+      "matchDatasources": ["github-release-attachments"],
+      "matchPackageNames": ["docker/compose"],
+      "groupName": "Docker Compose provider",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Hold direct Dev Container image and installed-tool definitions until CI qualification under BoxFerry #563; ordinary shared/package/compiler inputs remain automatic.",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchDatasources": ["docker", "crate"],
+      "matchPackageNames": [
+        "docker.io/library/node",
+        "mcr.microsoft.com/devcontainers/rust",
+        "ghcr.io/astral-sh/uv",
+        "cargo-deny",
+        "cargo-llvm-cov",
+        "cargo-semver-checks",
+        "zizmor"
+      ],
+      "enabled": false
+    }
+  ],
+  "gitIgnoredAuthors": ["317908760+strukturpiloten-release-plz[bot]@users.noreply.github.com"]
+}

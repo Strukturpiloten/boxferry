@@ -1,0 +1,102 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#1cf96f5a667d96e66c119753cf7814e22e0dee7e"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/fixtures/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \\\"(?<currentValue>[^\\\"]+)\\\"",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": ["Record the fixed native Podman version for qualification policy"],
+      "managerFilePatterns": ["/^scripts/native-runtime-pins\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>containers/podman)\\nreadonly PODMAN_NATIVE_VERSION=(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": [
+        "Record the fixed native Fedora base tag and manifest for qualification policy"
+      ],
+      "managerFilePatterns": ["/^scripts/native-runtime-pins\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>docker) depName=(?<depName>registry\\.fedoraproject\\.org/fedora)\\nreadonly PODMAN_NATIVE_BASE_IMAGE=registry\\.fedoraproject\\.org/fedora:(?<currentValue>[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": ["Update the Dev Container base release and digest together"],
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n# release: {{{newValue}}}\nFROM {{{depName}}}@{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer\\.json$/"],
+      "matchStrings": [
+        "\\\"ghcr\\.io/devcontainers/features/github-cli:[^\\\"]+\\\"[\\s\\S]*?\\\"version\\\": \\\"(?<currentValue>[^\\\"]+)\\\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cli/cli"
+    },
+    {
+      "customType": "regex",
+      "description": ["Record frozen image-only downloaded tools until image qualification #563"],
+      "managerFilePatterns": ["/^scripts/install-file-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nreadonly [a-z_]+_version=\"(?<currentValue>[^\\\"]+)\""
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": ["Keep the coupled Podman native qualification tuple fixed"],
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["scripts/native-runtime-pins.sh"],
+      "matchDatasources": ["github-releases", "docker"],
+      "matchPackageNames": ["containers/podman", "registry.fedoraproject.org/fedora"],
+      "enabled": false
+    },
+    {
+      "description": ["Hold direct Dev Container inputs until separate image qualification #563"],
+      "matchFileNames": [
+        ".devcontainer/Dockerfile",
+        ".devcontainer/devcontainer.json",
+        ".devcontainer/devcontainer-lock.json",
+        "scripts/install-file-tools.sh"
+      ],
+      "enabled": false
+    }
+  ]
+}

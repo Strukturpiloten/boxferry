@@ -1,0 +1,192 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/docker-lens",
+  "jobs": [
+    "rust",
+    "msrv",
+    "dependencies",
+    "api",
+    "documentation",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["documentation"],
+    "executable-docs": [
+      "rust",
+      "msrv",
+      "dependencies",
+      "api",
+      "documentation",
+      "lockfile-release-age"
+    ],
+    "rust-tests": ["rust", "documentation", "lockfile-release-age"]
+  },
+  "public_documentation_root": "docs/",
+  "full_documentation_roots": ["docs/decisions/", "docs/evidence/"],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": ["README.md"],
+  "documentation_examples_manifest": null,
+  "local_commands": {
+    "prose": [
+      [
+        "env",
+        "DOCKERLENS_METADATA_UNCHANGED=1",
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      ["git", "diff", "--check"]
+    ],
+    "executable-docs": [["bash", "scripts/check-all.sh", "--check"]],
+    "full": [["bash", "scripts/check-all.sh", "--check"]],
+    "rust-tests": [
+      ["cargo", "test", "--all-targets", "--locked"],
+      [
+        "env",
+        "DOCKERLENS_METADATA_UNCHANGED=1",
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      ["git", "diff", "--check"]
+    ]
+  },
+  "tasks": {
+    "rust-quality": {
+      "commands": [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "ci-check"],
+        ["cargo", "ci-clippy"],
+        ["cargo", "ci-test"],
+        ["cargo", "ci-doctest"],
+        ["cargo", "ci-doc"]
+      ],
+      "timeout_seconds": 1800
+    },
+    "msrv": {
+      "commands": [["cargo", "ci-check"]],
+      "timeout_seconds": 900
+    },
+    "documentation": {
+      "commands": [
+        ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+        ["git", "diff", "--check"]
+      ],
+      "timeout_seconds": 900
+    },
+    "setup-tools": {
+      "commands": [
+        [
+          "python3",
+          "scripts/setup-ci-tools.py",
+          "--engine",
+          "podman",
+          "--cargo-tools",
+          "--node-context",
+          "local"
+        ]
+      ],
+      "timeout_seconds": 1800
+    },
+    "python-quality": {
+      "commands": [
+        [
+          "ruff",
+          "check",
+          "scripts/validation-plan.py",
+          "scripts/setup-ci-tools.py",
+          "tests/test_shared_automation.py"
+        ],
+        [
+          "ruff",
+          "format",
+          "--check",
+          "scripts/setup-ci-tools.py",
+          "tests/test_shared_automation.py"
+        ],
+        [
+          "ty",
+          "check",
+          "scripts/validation-plan.py",
+          "scripts/setup-ci-tools.py"
+        ],
+        ["actionlint"],
+        ["shellcheck", "scripts/check-all.sh"],
+        ["shfmt", "-d", "-i", "2", "-ci", "-sr", "scripts/check-all.sh"]
+      ],
+      "timeout_seconds": 300
+    },
+    "setup-tools-hosted": {
+      "commands": [
+        [
+          "python3",
+          "scripts/setup-ci-tools.py",
+          "--engine",
+          "docker",
+          "--cargo-tools",
+          "--node-context",
+          "hosted"
+        ]
+      ],
+      "timeout_seconds": 1800
+    },
+    "api-development": {
+      "commands": [
+        [
+          "python",
+          "-m",
+          "boxferry_ci.api_baselines",
+          "run",
+          "--repository-root",
+          ".",
+          "--repository",
+          "Strukturpiloten/docker-lens",
+          "--api-purpose",
+          "development",
+          "--event",
+          "local",
+          "--package",
+          "docker-lens",
+          "--report-json",
+          "target/api-baseline-local.json"
+        ]
+      ],
+      "timeout_seconds": 1200
+    },
+    "node-toolchain": {
+      "commands": [
+        [
+          "python3",
+          "scripts/setup-ci-tools.py",
+          "--node-version",
+          "--node-context",
+          "hosted"
+        ]
+      ],
+      "timeout_seconds": 120
+    },
+    "node-preflight": {
+      "commands": [
+        [
+          "python3",
+          "scripts/setup-ci-tools.py",
+          "--verify-node",
+          "--node-context",
+          "hosted"
+        ]
+      ],
+      "timeout_seconds": 120
+    }
+  },
+  "path_profiles": {
+    "rust-tests": ["tests/*.rs"]
+  }
+}

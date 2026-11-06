@@ -1,0 +1,134 @@
+def expected_ci_upgrade(trusted: bytes, before: str, after: str) -> bytes | None:
+    """Replace only owned literal pins in recognized CI mappings, preserving bytes."""
+    try:
+        source = trusted.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\0" in source or not SHA.fullmatch(before) or not SHA.fullmatch(after) or before == after:
+        return None
+    mapping = re.compile(
+        r"(?P<indent> *)(?P<sequence>- )?(?P<key>[A-Za-z_][A-Za-z0-9_-]*):"
+        r"(?P<value>[^\r\n]*)(?P<ending>\r?\n)?\Z"
+    )
+    scalar = re.compile(
+        r"[ \t]*(?P<quote>['\"]?)(?P<token>[^'\"\s#]+)(?P=quote)"
+        r"[ \t]*(?:\#[^\r\n]*)?\Z"
+    )
+    shared = re.compile(
+        r"Strukturpiloten/boxferry/\.github/workflows/shared-[a-z0-9-]+\.yml@" + before + r"\Z"
+    )
+    local_action = re.compile(r"\./_automation/\.github/actions/shared-source\Z")
+    checkout = re.compile(r"actions/checkout@[0-9a-f]{40}\Z")
+    annotation = re.compile(
+        r"(?P<indent> *)# renovate: datasource=github-digest "
+        r"depName=Strukturpiloten/boxferry currentValue=automation-v1[ \t]*(?:\r?\n)?\Z"
+    )
+    block = re.compile(r"(?:[!&][^\s]+[ \t]+)*[|>][1-9+-]*[ \t]*(?:\#.*)?\Z")
+    frames: list[PinFrame] = []
+    root_keys: set[str] = set()
+    output: list[str] = []
+    lines = source.splitlines(keepends=True)
+    block_indent: int | None = None
+    replacements = 0
+    for index, line in enumerate(lines):
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        if not stripped.strip() or stripped.startswith("#"):
+            output.append(line)
+            continue
+        if block_indent is not None and indent > block_indent:
+            output.append(line)
+            continue
+        block_indent = None
+        if stripped.startswith("\t"):
+            return None
+        while frames and frames[-1].indent >= indent:
+            frames.pop()
+        match = mapping.fullmatch(line)
+        if match is None:
+            output.append(line)
+            continue
+        parent = frames[-1] if frames else None
+        key_indent = indent
+        if match["sequence"]:
+            if parent is None or parent.kind != "steps" or indent != parent.indent + 2:
+                output.append(line)
+                continue
+            parent = PinFrame(indent, "step")
+            frames.append(parent)
+            key_indent += 2
+        key, value = match["key"], match["value"]
+        keys = (
+            root_keys
+            if parent is None and key_indent == 0
+            else parent.keys
+            if parent is not None and key_indent == parent.indent + 2
+            else None
+        )
+        if keys is not None:
+            if key in keys:
+                return None  # Duplicate mappings make pin ownership ambiguous.
+            keys.add(key)
+        if not quoted_line(value):
+            return None
+        if block.fullmatch(value.strip()):
+            block_indent = indent
+            output.append(line)
+            continue
+        literal = scalar.fullmatch(value)
+        token = None if literal is None else literal["token"]
+        direct_owner = (
+            parent is not None
+            and parent.kind in {"job", "step"}
+            and key_indent == parent.indent + 2
+        )
+        replace = False
+        if key == "uses" and direct_owner and token is not None:
+            assert parent is not None
+            parent.uses = token
+            replace = shared.fullmatch(token) is not None
+        elif token == before and parent is not None and key_indent == parent.indent + 2:
+            if parent.kind == "env" and key == "AUTOMATION_SHA":
+                replace = True
+            elif parent.kind == "with" and parent.owner is not None:
+                owner = parent.owner
+                if key in {"automation_sha", "automation-sha"}:
+                    replace = bool(
+                        shared.fullmatch(owner.uses) or local_action.fullmatch(owner.uses)
+                    )
+                elif key == "ref" and parent.repository and checkout.fullmatch(owner.uses):
+                    marker = annotation.fullmatch(lines[index - 1]) if index else None
+                    replace = marker is not None and len(marker["indent"]) == indent
+        if (
+            parent is not None
+            and parent.kind == "with"
+            and parent.owner is not None
+            and parent.owner.kind == "step"
+            and checkout.fullmatch(parent.owner.uses)
+            and key_indent == parent.indent + 2
+            and key == "repository"
+        ):
+            parent.repository = token == "Strukturpiloten/boxferry"
+        if replace:
+            assert literal is not None and token is not None
+            updated = token.removesuffix(before) + after
+            start = match.start("value") + literal.start("token")
+            end = match.start("value") + literal.end("token")
+            line = line[:start] + updated + line[end:]
+            replacements += 1
+        if not value.strip() or value.lstrip().startswith("#"):
+            kind = "other"
+            owner = None
+            if key == "jobs" and parent is None and key_indent == 0:
+                kind = "jobs"
+            elif parent is not None and parent.kind == "jobs" and key_indent == parent.indent + 2:
+                kind = "job"
+            elif key == "steps" and direct_owner and parent is not None and parent.kind == "job":
+                kind = "steps"
+            elif key == "env" and (direct_owner or (parent is None and key_indent == 0)):
+                kind = "env"
+            elif key == "with" and direct_owner:
+                kind, owner = "with", parent
+            frames.append(PinFrame(key_indent, kind, owner=owner))
+        output.append(line)
+    return "".join(output).encode("utf-8") if replacements else None

@@ -1,0 +1,116 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/kubernetes-lens",
+  "jobs": ["rust", "msrv", "dependencies", "documentation", "lockfile-release-age"],
+  "profile_jobs": {
+    "prose": ["documentation", "lockfile-release-age"],
+    "executable-docs": ["rust", "msrv", "dependencies", "documentation", "lockfile-release-age"]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": ["docs/compatibility/"],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": [],
+  "documentation_examples_manifest": null,
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [["bash", "scripts/check-all.sh", "--check"]],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  },
+  "tasks": {
+    "rust-quality": {
+      "timeout_seconds": 1800,
+      "commands": [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "ci-check"],
+        ["cargo", "ci-policy", "--no-run"],
+        ["cargo", "ci-clippy"],
+        ["cargo", "ci-test"],
+        ["cargo", "ci-doctest"],
+        ["env", "RUSTDOCFLAGS=-D warnings", "cargo", "ci-doc"],
+        ["cargo", "package", "--locked", "--allow-dirty"]
+      ]
+    },
+    "msrv": {
+      "timeout_seconds": 1800,
+      "commands": [
+        ["cargo", "ci-check"],
+        ["cargo", "ci-policy", "--no-run"]
+      ]
+    },
+    "dependency-policy": {
+      "timeout_seconds": 900,
+      "commands": [["cargo", "deny", "--all-features", "check"]]
+    },
+    "documentation": {
+      "timeout_seconds": 5400,
+      "commands": [
+        ["bash", "scripts/check-files.sh", "--check"],
+        ["git", "--no-pager", "diff", "--check"],
+        ["actionlint"],
+        ["zizmor", ".github/workflows"],
+        ["python3", "scripts/test-validation-plan.py"],
+        ["python3", "scripts/test-check-all.py"],
+        ["python3", "scripts/test-ci-tools.py"],
+        ["python3", "scripts/test-file-config.py"],
+        ["python3", "scripts/test-renovate-tool.py"],
+        ["python3", "scripts/compatibility-ledger.py"],
+        ["python3", "scripts/test-compatibility-ledger.py"],
+        ["node", "scripts/test-renovate.mjs"],
+        ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+      ]
+    },
+    "python-check": {
+      "timeout_seconds": 300,
+      "commands": [
+        ["ruff", "check", "."],
+        ["ruff", "format", "--check", "."],
+        ["ty", "check"]
+      ]
+    },
+    "python-fix": {
+      "timeout_seconds": 300,
+      "commands": [
+        ["ruff", "check", "--fix", "."],
+        ["ruff", "format", "."],
+        ["ty", "check"]
+      ]
+    },
+    "documentation-prose": {
+      "timeout_seconds": 900,
+      "commands": [
+        ["bash", "scripts/check-files.sh", "--check"],
+        ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+      ]
+    },
+    "api-development": {
+      "timeout_seconds": 1200,
+      "commands": [
+        [
+          "python",
+          "-m",
+          "boxferry_ci.api_baselines",
+          "run",
+          "--repository-root",
+          ".",
+          "--repository",
+          "Strukturpiloten/kubernetes-lens",
+          "--api-purpose",
+          "development",
+          "--event",
+          "local",
+          "--package",
+          "kubernetes-lens",
+          "--report-json",
+          "target/api-baseline-local.json"
+        ]
+      ]
+    },
+    "initial-api-contract": {
+      "timeout_seconds": 1200,
+      "commands": [["cargo", "test", "--locked", "--test", "foundation"]]
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "BoxFerry automation interface v1 Rust additions; extend common and rust together at the same immutable revision.",
+  "packageRules": [
+    {
+      "description": "Group compatible ordinary Rust registry upgrades.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "Rust dependencies"
+    },
+    {
+      "description": "Keep compiler upgrades isolated; normal compatibility checks and automatic merging still apply.",
+      "matchManagers": ["rust-toolchain"],
+      "groupName": "Rust toolchain"
+    },
+    {
+      "description": "Isolate exact maintained crates.io releases and waive age for the whole update after the trusted closure check.",
+      "matchManagers": ["cargo"],
+      "matchDatasources": ["crate"],
+      "matchPackageNames": [
+        "boxferry",
+        "boxferry-model",
+        "boxferry-engine",
+        "boxferry-compose",
+        "boxferry-podman",
+        "boxferry-quadlet",
+        "compose-lens",
+        "podman-lens",
+        "quadlet-lens",
+        "docker-lens",
+        "kubernetes-lens"
+      ],
+      "groupName": "First-party Rust releases",
+      "minimumReleaseAge": "0 days"
+    }
+  ]
+}

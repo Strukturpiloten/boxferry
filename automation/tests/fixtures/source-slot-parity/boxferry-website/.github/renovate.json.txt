@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#b191fb5ffe32fe84d9cb0c851562044b0f0cc59b"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Poll documentation source main branches",
+      "managerFilePatterns": ["/^documentation-sources\\.toml$/"],
+      "matchStrings": [
+        "name = \"[a-z0-9-]+\"\\nrepository = \"https://github\\.com/(?<depName>Strukturpiloten/[a-z0-9-]+)\\.git\"\\nrevision = \"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "currentValueTemplate": "main",
+      "datasourceTemplate": "git-refs",
+      "packageNameTemplate": "{{depName}}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Publish validated documentation source revisions",
+      "matchDatasources": ["git-refs"],
+      "matchFileNames": ["documentation-sources.toml"],
+      "minimumReleaseAge": "0 days",
+      "groupName": "documentation sources",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "matchPackageNames": [
+        "Strukturpiloten/boxferry",
+        "Strukturpiloten/compose-lens",
+        "Strukturpiloten/podman-lens",
+        "Strukturpiloten/quadlet-lens"
+      ]
+    }
+  ]
+}
