@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "authority": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+  "purpose": "Inert exact independently reviewed A-pinned permission repair templates; never execute or import.",
+  "license": "MPL-2.0 (repository-owned original source; see root LICENSE)",
+  "redistribution": "Repository-owned snapshots; permitted under root MPL-2.0 license.",
+  "oracle": "No external implementation source or oracle used.",
+  "files": {
+    "automation/tests/fixtures/zero-age-delta/podman/caller-before.txt": {
+      "mode": 420,
+      "size": 857,
+      "sha256": "df4b34e56830fa964b90e7e03f35a3527e1fd838966a7453d771d6dfaaaaec7b",
+      "origin": "podman158-author/before/.github/workflows/dependency-eligibility.yml",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/podman/contract-before.txt": {
+      "mode": 420,
+      "size": 101411,
+      "sha256": "e11b7ea956dfdaa8e6713b28f22d3b1dd0cfa049a944471be8f7563d936316a6",
+      "origin": "podman158-author/before/scripts/test-automation-contract.py",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/podman/caller-after.txt": {
+      "mode": 420,
+      "size": 913,
+      "sha256": "942ae4243dd96222761f4299b959d48d2d4638f8187121e1e0bde90b7eaf2864",
+      "origin": "podman158-author/postimages/.github/workflows/dependency-eligibility.yml",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/podman/contract-after.txt": {
+      "mode": 420,
+      "size": 103329,
+      "sha256": "7d01ffc1319a79407ebf1589a5e12b1088627975aefc965491184f0c5b4791db",
+      "origin": "podman158-author/postimages/scripts/test-automation-contract.py",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/caller-before.txt": {
+      "mode": 420,
+      "size": 848,
+      "sha256": "ca457299c16eaa2dfbd505637529e7606ba4decefde68406a41c92ba098ea2b2",
+      "origin": "quadlet174-author/before/.github/workflows/dependency-eligibility.yml",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/contract-before.txt": {
+      "mode": 420,
+      "size": 73456,
+      "sha256": "ea144a0bd486d502691070cf5f1a8244f298ef008bb5f19609250111f12f9c0f",
+      "origin": "quadlet174-author/before/scripts/test-automation-contract.py",
+      "original_mode": 493
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/caller-after.txt": {
+      "mode": 420,
+      "size": 904,
+      "sha256": "4308d0bc18170b603a1eef509aa6b6f68b59868692394331bf238a926b5e139b",
+      "origin": "quadlet174-author/postimages/.github/workflows/dependency-eligibility.yml",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/contract-after.txt": {
+      "mode": 420,
+      "size": 76337,
+      "sha256": "e54314286484d5a896bf4a1352cac1bf298f7f433adc41fd8a50dcdade748598",
+      "origin": "quadlet174-author/postimages/scripts/test-automation-contract.py",
+      "original_mode": 493
+    },
+    "automation/tests/fixtures/zero-age-delta/podman/manifest.txt": {
+      "mode": 420,
+      "size": 184,
+      "sha256": "3ea3aae7a5d63a0c305efb60fad4b2390992a993b8eece956ab3aa8ada465389",
+      "origin": "2d3d36d62bf7aa3ad2a10d3b421306552ffe3570:.github/automation.json",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/podman/policy.txt": {
+      "mode": 420,
+      "size": 4444,
+      "sha256": "0e80da07f01f66e5963c423769d0b9d6ecf92fb131437a76b2828c84c979462e",
+      "origin": "2d3d36d62bf7aa3ad2a10d3b421306552ffe3570:scripts/validation-policy.json",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/manifest.txt": {
+      "mode": 420,
+      "size": 184,
+      "sha256": "3ea3aae7a5d63a0c305efb60fad4b2390992a993b8eece956ab3aa8ada465389",
+      "origin": "3c361134709a6d1654e0f10c83983999db24cfef:.github/automation.json",
+      "original_mode": 420
+    },
+    "automation/tests/fixtures/zero-age-delta/quadlet/policy.txt": {
+      "mode": 420,
+      "size": 3170,
+      "sha256": "d4a88fb53131ebbea02578d532d14ed8e1c5581efc162a30a9f61c7cc522ee90",
+      "origin": "3c361134709a6d1654e0f10c83983999db24cfef:scripts/validation-policy.json",
+      "original_mode": 420
+    }
+  },
+  "reviewed_design": {
+    "contract_sha256": "3b0119aa73f83fe10fb88b364d9d771b30473e486d4a6383bc958d927d6f71c4",
+    "review_sha256": "6cff981b68ad783cfdd7e1add47e6130867ac6f91b6755f115dd91bd2f592ee7",
+    "anchors_sha256": "2aed9dae3a9f37845713774b5c07c129294cbb42489cfc87baa60c8a4259ecfb",
+    "mq_custody_addendum_sha256": "06acabdfc6f640db66407555f6579cd6de034e330e83261f6e4f2b42d22bf7d0",
+    "scope": "Podman159 and actual Quadlet175, not issue174 as a PR number; no future S authorization."
+  }
+}

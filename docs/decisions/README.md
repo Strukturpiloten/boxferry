@@ -20,6 +20,9 @@ and successful native/App qualification precede activation.
 
 ## Active decisions
 
+[ADR 0097](0097-read-only-zero-age-delta-bootstrap.md) defines the exact two-repair read-only
+zero-age-delta proof, preserving exact-A policy, live canonical source custody and normal receipts.
+
 [ADR 0096](0096-development-and-published-api-baselines.md) separates trusted development
 API comparisons from published release compatibility and exact-candidate evidence.
 

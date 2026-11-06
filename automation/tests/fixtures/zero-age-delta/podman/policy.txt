@@ -1,0 +1,158 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/podman-lens",
+  "jobs": [
+    "rust",
+    "coverage",
+    "msrv",
+    "dependencies",
+    "api-release-type",
+    "api",
+    "documentation",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["documentation", "lockfile-release-age"],
+    "executable-docs": ["documentation", "lockfile-release-age"]
+  },
+  "path_profiles": {
+    "prose": ["README.md", "docs/README.md"]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": ["docs/public/development/"],
+  "executable_documentation_roots": ["docs/public/"],
+  "executable_documentation_paths": [],
+  "documentation_examples_manifest": null,
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"],
+      ["cargo", "test", "--locked", "--test", "public_guides"]
+    ],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  },
+  "tasks": {
+    "rust-quality": {
+      "commands": [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "ci-check"],
+        ["cargo", "ci-policy"],
+        ["cargo", "ci-clippy"],
+        ["cargo", "ci-test"],
+        ["bash", "scripts/check-native-release-contract.sh"],
+        ["cargo", "ci-doctest"],
+        ["cargo", "ci-doc"],
+        ["cargo", "ci-package"]
+      ],
+      "timeout_seconds": 1800
+    },
+    "msrv": {
+      "commands": [
+        ["cargo", "ci-check"],
+        ["cargo", "ci-policy"]
+      ],
+      "timeout_seconds": 1800
+    },
+    "coverage": {
+      "commands": [
+        ["cargo", "llvm-cov", "clean", "--locked"],
+        [
+          "cargo",
+          "llvm-cov",
+          "--locked",
+          "--no-clean",
+          "--workspace",
+          "--all-features",
+          "--all-targets",
+          "--summary-only"
+        ]
+      ],
+      "timeout_seconds": 1800
+    },
+    "release-metadata": {
+      "commands": [["bash", "scripts/check-release-metadata.sh", "--development"]]
+    },
+    "release-metadata-strict": {
+      "commands": [["bash", "scripts/check-release-metadata.sh", "--release"]]
+    },
+    "initial-api-contract": {
+      "commands": [["cargo", "test", "--locked", "--test", "public_api"]]
+    },
+    "python-quality": {
+      "commands": [
+        ["ruff", "check", "--config", "pyproject.toml", "scripts"],
+        ["ruff", "format", "--check", "--config", "pyproject.toml", "scripts"],
+        ["ty", "check", "--project", ".", "scripts"],
+        ["python3", "scripts/test-automation-contract.py"]
+      ],
+      "timeout_seconds": 300
+    },
+    "python-format": {
+      "commands": [["ruff", "format", "--config", "pyproject.toml", "scripts"]]
+    },
+    "python-lint": {
+      "commands": [
+        ["ruff", "check", "--config", "pyproject.toml", "scripts"],
+        ["ruff", "format", "--check", "--config", "pyproject.toml", "scripts"],
+        ["ty", "check", "--project", ".", "scripts"]
+      ],
+      "timeout_seconds": 300
+    },
+    "api-development": {
+      "commands": [
+        [
+          "python",
+          "-m",
+          "boxferry_ci.api_baselines",
+          "run",
+          "--repository-root",
+          ".",
+          "--repository",
+          "Strukturpiloten/podman-lens",
+          "--api-purpose",
+          "development",
+          "--event",
+          "local",
+          "--package",
+          "podman-lens",
+          "--allow-initial",
+          "--config",
+          "scripts/validation-policy.json",
+          "--report-json",
+          "target/api-baseline-development.json"
+        ]
+      ],
+      "timeout_seconds": 1200
+    },
+    "api-published": {
+      "commands": [
+        [
+          "python",
+          "-m",
+          "boxferry_ci.api_baselines",
+          "run",
+          "--repository-root",
+          ".",
+          "--repository",
+          "Strukturpiloten/podman-lens",
+          "--api-purpose",
+          "published",
+          "--event",
+          "local",
+          "--package",
+          "podman-lens",
+          "--allow-initial",
+          "--config",
+          "scripts/validation-policy.json",
+          "--report-json",
+          "target/api-baseline-published.json"
+        ]
+      ],
+      "timeout_seconds": 1200
+    }
+  }
+}
