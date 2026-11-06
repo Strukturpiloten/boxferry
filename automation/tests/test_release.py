@@ -560,5 +560,463 @@ class ReleaseTests(unittest.TestCase):
             mutate.assert_not_called()
 
 
+class PreparationBranchTests(unittest.TestCase):
+    """Actual Git in owned scratch repositories; no release-plz, network or publication."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory(prefix="release-preparation-branch-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name) / "source"
+        self.root.mkdir()
+        self.git("init", "--quiet", "--initial-branch=main", "--template=")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.git("config", "user.name", "Release branch fixture")
+        (self.root / "README.md").write_text("validated source\n")
+        self.git("add", "README.md")
+        self.git("commit", "--quiet", "-m", "chore: owned fixture")
+        self.candidate = self.git("rev-parse", "HEAD")
+        self.context = {
+            "GITHUB_REPOSITORY": "Strukturpiloten/podman-lens",
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": self.candidate,
+        }
+        self.environment = patch.dict(os.environ, self.context)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def git(self, *arguments: str) -> str:
+        from boxferry_ci.bootstrap import git_environment
+
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgSign=false",
+                "-C",
+                str(self.root),
+                *arguments,
+            ],
+            env=git_environment(),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+
+    def snapshot(self) -> tuple[str, str, str, str, bytes]:
+        return (
+            self.git("rev-parse", "HEAD"),
+            self.git("rev-parse", "--symbolic-full-name", "HEAD"),
+            self.git("for-each-ref", "--format=%(refname) %(objectname)"),
+            self.git("status", "--porcelain=v1", "--untracked-files=all"),
+            (self.root / "README.md").read_bytes(),
+        )
+
+    def detach(self, *, remove_default: bool = False) -> None:
+        self.git("checkout", "--quiet", "--detach", self.candidate)
+        if remove_default:
+            self.git("branch", "-D", "main")
+
+    def other_commit(self) -> str:
+        self.git("checkout", "--quiet", "-b", "other")
+        (self.root / "README.md").write_text("other source\n")
+        self.git("add", "README.md")
+        self.git("commit", "--quiet", "-m", "chore: different candidate")
+        return self.git("rev-parse", "HEAD")
+
+    def assert_attached_candidate(self) -> None:
+        self.assertEqual(self.git("symbolic-ref", "HEAD"), "refs/heads/main")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.candidate)
+        self.assertEqual(self.git("rev-parse", "refs/heads/main"), self.candidate)
+        self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
+        self.assertEqual((self.root / "README.md").read_text(), "validated source\n")
+
+    def test_detached_candidate_creates_absent_branch_without_remote_tracking(self) -> None:
+        self.detach(remove_default=True)
+        self.assertEqual(self.git("for-each-ref", "refs/remotes/"), "")
+        release.prepare_branch(self.root, self.candidate, "main")
+        self.assert_attached_candidate()
+
+    def test_detached_candidate_reuses_matching_existing_branch(self) -> None:
+        self.detach()
+        self.git("update-ref", "refs/remotes/origin/main", self.candidate)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assert_attached_candidate()
+
+    def test_nested_default_branch_attaches_the_exact_candidate(self) -> None:
+        self.detach(remove_default=True)
+        with patch.dict(os.environ, {"GITHUB_REF": "refs/heads/releases/stable"}):
+            release.prepare_branch(self.root, self.candidate, "releases/stable")
+        self.assertEqual(self.git("symbolic-ref", "HEAD"), "refs/heads/releases/stable")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.candidate)
+        self.assertEqual(self.git("status", "--porcelain=v1"), "")
+
+    def test_invalid_git_branch_with_matching_event_ref_rejects_without_mutation(self) -> None:
+        for branch in ("HEAD", "bad..name", "main\n", "@{-1}"):
+            with (
+                self.subTest(branch=branch),
+                patch.dict(os.environ, {"GITHUB_REF": f"refs/heads/{branch}"}),
+            ):
+                before = self.snapshot()
+                with self.assertRaisesRegex(release.ReleaseError, "Git operation failed"):
+                    release.prepare_branch(self.root, self.candidate, branch)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_already_correct_attached_branch_is_idempotent_without_metadata_writes(self) -> None:
+        before = self.snapshot()
+        with patch.object(release, "run_git", wraps=release.run_git) as commands:
+            release.prepare_branch(self.root, self.candidate, "main")
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.snapshot(), before)
+        self.assertTrue(commands.call_args_list)
+        for call in commands.call_args_list:
+            self.assertNotIn(
+                call.args[1], {"update-ref", "symbolic-ref", "checkout", "reset", "fetch", "push"}
+            )
+
+    def test_conflicting_local_default_branch_is_never_rewritten(self) -> None:
+        other = self.other_commit()
+        self.git("update-ref", "refs/heads/main", other)
+        self.detach()
+        before = self.snapshot()
+        with self.assertRaisesRegex(release.ReleaseError, "moved or conflicts"):
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_existing_moved_tracking_ref_rejects_without_fetching(self) -> None:
+        other = self.other_commit()
+        self.git("update-ref", "refs/remotes/origin/main", other)
+        self.detach()
+        before = self.snapshot()
+        with self.assertRaisesRegex(release.ReleaseError, "moved or conflicts"):
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_wrong_attached_branch_and_wrong_head_reject_without_mutation(self) -> None:
+        self.git("checkout", "--quiet", "-b", "issue")
+        before = self.snapshot()
+        with self.assertRaisesRegex(release.ReleaseError, "another branch"):
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.snapshot(), before)
+        self.git("checkout", "--quiet", "main")
+        (self.root / "README.md").write_text("moved HEAD\n")
+        self.git("add", "README.md")
+        self.git("commit", "--quiet", "-m", "chore: moved HEAD")
+        before = self.snapshot()
+        with self.assertRaisesRegex(release.ReleaseError, "moved from the validated candidate"):
+            release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_dirty_tracked_index_and_untracked_source_reject_without_mutation(self) -> None:
+        for kind in ("tracked", "staged", "untracked"):
+            with self.subTest(kind=kind):
+                path = self.root / ("new.txt" if kind == "untracked" else "README.md")
+                path.write_text("dirty source\n")
+                if kind == "staged":
+                    self.git("add", "README.md")
+                before = self.snapshot()
+                with self.assertRaisesRegex(release.ReleaseError, "clean source and index"):
+                    release.prepare_branch(self.root, self.candidate, "main")
+                self.assertEqual(self.snapshot(), before)
+                if kind == "untracked":
+                    path.unlink()
+                else:
+                    path.write_text("validated source\n")
+                    self.git("add", "README.md")
+
+    def test_invalid_candidate_branch_and_caller_context_reject_before_mutation(self) -> None:
+        for candidate, branch in (
+            (self.candidate[:12], "main"),
+            ("g" * 40, "main"),
+            (self.candidate, ""),
+            (self.candidate, "-option"),
+            (self.candidate, "../main"),
+        ):
+            with self.subTest(candidate=candidate, branch=branch):
+                before = self.snapshot()
+                with self.assertRaises(release.ReleaseError):
+                    release.prepare_branch(self.root, candidate, branch)
+                self.assertEqual(self.snapshot(), before)
+        for key, value in (
+            ("GITHUB_REPOSITORY", "unreviewed/repository"),
+            ("GITHUB_EVENT_NAME", "pull_request"),
+            ("GITHUB_REF", "refs/heads/issue"),
+            ("GITHUB_SHA", "f" * 40),
+        ):
+            with self.subTest(key=key), patch.dict(os.environ, {key: value}):
+                before = self.snapshot()
+                with self.assertRaisesRegex(release.ReleaseError, "exact default-branch event"):
+                    release.prepare_branch(self.root, self.candidate, "main")
+                self.assertEqual(self.snapshot(), before)
+
+    def test_atomic_branch_creation_rejects_a_concurrent_conflict(self) -> None:
+        other = self.other_commit()
+        self.detach(remove_default=True)
+        original = release._attach_preparation_head
+
+        def concurrent_create(
+            root: Path, candidate: str, branch: str, tracking: str, refs: dict[str, str]
+        ) -> None:
+            self.git("update-ref", "refs/heads/main", other)
+            original(root, candidate, branch, tracking, refs)
+
+        with patch.object(release, "_attach_preparation_head", side_effect=concurrent_create):
+            with self.assertRaisesRegex(release.ReleaseError, "Git symref transaction failed"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.candidate)
+        self.assertEqual(self.git("rev-parse", "--symbolic-full-name", "HEAD"), "HEAD")
+        self.assertEqual(self.git("rev-parse", "refs/heads/main"), other)
+
+    def test_post_attachment_rechecks_candidate_and_does_not_undo_concurrent_ref(self) -> None:
+        other = self.other_commit()
+        self.detach()
+        original = release._attach_preparation_head
+
+        def move_after_attachment(
+            root: Path, candidate: str, branch: str, tracking: str, refs: dict[str, str]
+        ) -> None:
+            original(root, candidate, branch, tracking, refs)
+            self.git("update-ref", "refs/heads/main", other)
+
+        with patch.object(release, "_attach_preparation_head", side_effect=move_after_attachment):
+            with self.assertRaisesRegex(release.ReleaseError, "moved from the validated candidate"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.git("rev-parse", "refs/heads/main"), other)
+
+    def test_post_attachment_rechecks_source_without_discarding_concurrent_edits(self) -> None:
+        self.detach()
+        original = release._attach_preparation_head
+
+        def dirty_after_attachment(
+            root: Path, candidate: str, branch: str, tracking: str, refs: dict[str, str]
+        ) -> None:
+            original(root, candidate, branch, tracking, refs)
+            (self.root / "README.md").write_text("concurrent source edit\n")
+
+        with patch.object(release, "_attach_preparation_head", side_effect=dirty_after_attachment):
+            with self.assertRaisesRegex(release.ReleaseError, "clean source and index"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual((self.root / "README.md").read_text(), "concurrent source edit\n")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.candidate)
+
+    def test_git_command_failure_propagates_without_attachment(self) -> None:
+        self.detach(remove_default=True)
+        before = self.snapshot()
+        original = release._preparation_exchange
+        processes = []
+
+        def unsupported_command(
+            process: subprocess.Popen[bytes], payload: bytes, reply: bytes, deadline: float
+        ) -> None:
+            processes.append(process)
+            original(
+                process, payload.replace(b"symref-update", b"unsupported-command"), reply, deadline
+            )
+
+        with patch.object(release, "_preparation_exchange", side_effect=unsupported_command):
+            with self.assertRaisesRegex(release.ReleaseError, "failed or is unsupported"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertTrue(processes)
+        self.assertTrue(all(process.poll() is not None for process in processes))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_detached_head_move_before_attachment_is_never_rewound(self) -> None:
+        other = self.other_commit()
+        self.detach()
+        original = release._attach_preparation_head
+
+        def move_head(
+            root: Path, candidate: str, branch: str, tracking: str, refs: dict[str, str]
+        ) -> None:
+            # Metadata-only HEAD move leaves the A worktree; unconditional attach would hide it.
+            self.git("update-ref", "--no-deref", "HEAD", other)
+            original(root, candidate, branch, tracking, refs)
+
+        with patch.object(release, "_attach_preparation_head", side_effect=move_head):
+            with self.assertRaisesRegex(release.ReleaseError, "Git symref transaction failed"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertEqual(self.git("rev-parse", "HEAD"), other)
+        self.assertEqual(self.git("rev-parse", "--symbolic-full-name", "HEAD"), "HEAD")
+        self.assertEqual((self.root / "README.md").read_text(), "validated source\n")
+
+    def test_foreign_symbolic_head_at_same_oid_is_never_overwritten_and_cli_fails(self) -> None:
+        self.detach()
+        self.git("branch", "foreign", self.candidate)
+        original = release._attach_preparation_head
+
+        def move_head(
+            root: Path, candidate: str, branch: str, tracking: str, refs: dict[str, str]
+        ) -> None:
+            self.git("symbolic-ref", "HEAD", "refs/heads/foreign")
+            original(root, candidate, branch, tracking, refs)
+
+        argv = [
+            "prepare-branch",
+            "--repository-root",
+            str(self.root),
+            "--candidate-sha",
+            self.candidate,
+            "--automation-sha",
+            AUTOMATION,
+            "--default-branch",
+            "main",
+        ]
+        with (
+            patch.object(release, "_attach_preparation_head", side_effect=move_head),
+            patch.object(release, "verify_bindings") as bindings,
+            self.assertRaises(SystemExit) as failed,
+        ):
+            release.main(argv)
+        self.assertEqual(failed.exception.code, 1)
+        self.assertEqual(bindings.call_count, 1)
+        self.assertEqual(self.git("symbolic-ref", "--no-recurse", "HEAD"), "refs/heads/foreign")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.candidate)
+        self.assertEqual(self.git("status", "--porcelain=v1"), "")
+
+    def test_prepared_transaction_aborts_and_reaps_on_keyboard_or_term_cancellation(self) -> None:
+        import signal
+
+        self.detach(remove_default=True)
+        before = self.snapshot()
+        handler = signal.getsignal(signal.SIGTERM)
+        original = release._preparation_exchange
+        for kind in ("keyboard", "term"):
+            processes = []
+
+            def cancel_prepared(
+                process: subprocess.Popen[bytes],
+                payload: bytes,
+                reply: bytes,
+                deadline: float,
+                cancellation: str = kind,
+                observed: list[subprocess.Popen[bytes]] = processes,
+            ) -> None:
+                observed.append(process)
+                original(process, payload, reply, deadline)
+                if reply == b"prepare: ok\n":
+                    if cancellation == "keyboard":
+                        raise KeyboardInterrupt
+                    signal.raise_signal(signal.SIGTERM)
+
+            expected = KeyboardInterrupt if kind == "keyboard" else release.ReleaseError
+            with (
+                self.subTest(kind=kind),
+                patch.object(release, "_preparation_exchange", side_effect=cancel_prepared),
+                self.assertRaises(expected),
+            ):
+                release.prepare_branch(self.root, self.candidate, "main")
+            self.assertTrue(processes)
+            self.assertTrue(all(process.poll() is not None for process in processes))
+            self.assertEqual(self.snapshot(), before)
+            self.assertEqual(signal.getsignal(signal.SIGTERM), handler)
+            # A fresh native transaction must succeed: cancellation released Git's locks.
+            release.prepare_branch(self.root, self.candidate, "main")
+            self.assert_attached_candidate()
+            self.detach(remove_default=True)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_transaction_deadline_aborts_reaps_and_releases_locks(self) -> None:
+        self.detach(remove_default=True)
+        before = self.snapshot()
+        original = release._preparation_exchange
+        processes = []
+
+        def expired_preparation(
+            process: subprocess.Popen[bytes], payload: bytes, reply: bytes, deadline: float
+        ) -> None:
+            processes.append(process)
+            if reply == b"prepare: ok\n":
+                deadline = release.time.monotonic() - 1
+            original(process, payload, reply, deadline)
+
+        with patch.object(release, "_preparation_exchange", side_effect=expired_preparation):
+            with self.assertRaisesRegex(release.ReleaseError, "timed out"):
+                release.prepare_branch(self.root, self.candidate, "main")
+        self.assertTrue(processes)
+        self.assertTrue(all(process.poll() is not None for process in processes))
+        self.assertEqual(self.snapshot(), before)
+        release.prepare_branch(self.root, self.candidate, "main")
+        self.assert_attached_candidate()
+
+    def test_cli_preserves_candidate_automation_pre_and_post_bindings(self) -> None:
+        argv = [
+            "prepare-branch",
+            "--repository-root",
+            str(self.root),
+            "--candidate-sha",
+            self.candidate,
+            "--automation-sha",
+            AUTOMATION,
+            "--default-branch",
+            "main",
+        ]
+        with patch.object(release, "verify_bindings") as bindings:
+            self.assertEqual(release.main(argv), 0)
+        self.assertEqual(bindings.call_count, 2)
+        bindings.assert_called_with(self.root, self.candidate, AUTOMATION)
+        self.assert_attached_candidate()
+        with (
+            patch.object(
+                release,
+                "verify_bindings",
+                side_effect=[None, release.ReleaseError("moved automation")],
+            ),
+            self.assertRaises(SystemExit) as failed,
+        ):
+            release.main(argv)
+        self.assertEqual(failed.exception.code, 1)
+
+    def test_shared_preparation_workflow_attaches_before_app_credentials_and_action(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/shared-release-prepare.yml").read_text()
+        ordered = [
+            "uses: ./_automation/.github/actions/shared-source",
+            "name: Require the exact default-branch candidate",
+            "uses: ./_automation/.github/actions/shared-python",
+            "name: Attach the exact candidate to the local default branch",
+            "name: Create repository-scoped release preparation token",
+            "uses: release-plz/action@",
+        ]
+        self.assertEqual(
+            sorted(workflow.index(token) for token in ordered),
+            [workflow.index(token) for token in ordered],
+        )
+        step = workflow.split("name: Attach the exact candidate to the local default branch\n", 1)[
+            1
+        ].split("- name:", 1)[0]
+        for required in (
+            "uv run --locked --project _automation/automation "
+            "python -m boxferry_ci.release prepare-branch",
+            '--repository-root source --candidate-sha "${CANDIDATE_SHA}"',
+            '--automation-sha "${AUTOMATION_SHA}" --default-branch "${DEFAULT_BRANCH}"',
+            "CANDIDATE_SHA: ${{ inputs.candidate_sha }}",
+            "AUTOMATION_SHA: ${{ inputs.automation_sha }}",
+            "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
+        ):
+            self.assertIn(required, step)
+        for required in (
+            'test "${POLICY_SHA}" = "${CANDIDATE_SHA}"',
+            'test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"',
+            'case "${GITHUB_EVENT_NAME}" in push|workflow_dispatch)',
+            "client-id: ${{ inputs.app_client_id }}",
+            "private-key: ${{ secrets.app_private_key }}",
+            "permission-contents: write",
+            "permission-pull-requests: write",
+            "manifest_path: source/Cargo.toml",
+            "config: source/release-plz.toml",
+        ):
+            self.assertIn(required, workflow)
+        self.assertNotIn("continue-on-error", workflow)
+        self.assertNotIn("git checkout", step)
+        self.assertNotIn("git reset", step)
+        self.assertNotIn("git fetch", step)
+        self.assertNotIn("git push", step)
+
+
 if __name__ == "__main__":
     unittest.main()

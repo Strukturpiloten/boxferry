@@ -1,8 +1,9 @@
 """Shared, fail-closed release gates and one-crate publication mechanics.
 
 The caller owns its protected release environment, native evidence, tag, GitHub
-release, and binary/attestation hooks. This module never creates release state
-other than the explicitly requested crates.io publication.
+release, and binary/attestation hooks. The preparation helper changes only validated
+local Git metadata. This module never creates remote release state other than explicitly
+requested crates.io publication.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import argparse
 import json
 import os
 import re
+import select
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -19,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from boxferry_ci.bootstrap import BootstrapError, git_environment, run_git
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PACKAGE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -337,6 +342,243 @@ def verify_bindings(repository_root: Path, candidate_sha: str, automation_sha: s
         raise ReleaseError("candidate does not match this caller run")
 
 
+def _preparation_git(root: Path, *arguments: str) -> str:
+    """Use the existing bounded runner without ambient Git overrides or hooks."""
+    try:
+        result = run_git(root, *arguments)
+    except BootstrapError as error:
+        raise ReleaseError("release preparation Git operation failed") from error
+    if not isinstance(result, str):
+        raise ReleaseError("release preparation Git operation did not return text")
+    return result
+
+
+def _preparation_checkout(
+    root: Path, candidate_sha: str, branch_ref: str, tracking_ref: str
+) -> tuple[str, dict[str, str]]:
+    """Validate the held checkout before and after local metadata attachment."""
+    if Path(_preparation_git(root, "rev-parse", "--show-toplevel")).resolve() != root:
+        raise ReleaseError("release preparation needs the exact checkout root")
+    if _preparation_git(root, "rev-parse", "--verify", "HEAD^{commit}") != candidate_sha:
+        raise ReleaseError("release preparation checkout moved from the validated candidate")
+    if _preparation_git(root, "status", "--porcelain=v1", "--untracked-files=all"):
+        raise ReleaseError("release preparation requires clean source and index")
+    current_ref = _preparation_git(root, "rev-parse", "--symbolic-full-name", "HEAD")
+    if current_ref not in {"HEAD", branch_ref}:
+        raise ReleaseError("release preparation is attached to another branch")
+    refs = {}
+    for line in _preparation_git(
+        root, "for-each-ref", "--format=%(refname) %(objectname)", branch_ref, tracking_ref
+    ).splitlines():
+        name, value = line.split(" ", 1)
+        if name in {branch_ref, tracking_ref}:
+            if value != candidate_sha:
+                raise ReleaseError("release preparation default branch moved or conflicts")
+            refs[name] = value
+    return current_ref, refs
+
+
+def _preparation_command(root: Path, *arguments: str) -> tuple[str, ...]:
+    """Apply the existing Git runner's isolation to the one stdin transaction."""
+    return (
+        "git",
+        "--no-replace-objects",
+        *(
+            part
+            for setting in (
+                "core.hooksPath=/dev/null",
+                "maintenance.auto=false",
+                "gc.auto=0",
+                "protocol.file.allow=never",
+                "protocol.ext.allow=never",
+            )
+            for part in ("-c", setting)
+        ),
+        "-C",
+        str(root),
+        *arguments,
+    )
+
+
+def _preparation_exchange(
+    process: subprocess.Popen[bytes], payload: bytes, reply: bytes, deadline: float
+) -> None:
+    """Exchange one fixed Git acknowledgement within a shared short deadline and cap."""
+    if process.stdin is None or process.stdout is None or len(payload) > 4096:
+        raise ReleaseError("release preparation Git transaction protocol failed")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ReleaseError("release preparation Git transaction timed out")
+    if payload:
+        if not select.select([], [process.stdin], [], remaining)[1]:
+            raise ReleaseError("release preparation Git transaction timed out")
+        if os.write(process.stdin.fileno(), payload) != len(payload):
+            raise ReleaseError("release preparation Git transaction input was incomplete")
+    response = bytearray()
+    while not response.endswith(b"\n"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+            raise ReleaseError("release preparation Git transaction timed out")
+        chunk = os.read(process.stdout.fileno(), 1)
+        if not chunk or len(response) >= 4096:
+            raise ReleaseError(
+                "release preparation Git symref transaction failed or is unsupported"
+            )
+        response.extend(chunk)
+    if response != reply:
+        raise ReleaseError("release preparation Git symref transaction failed or is unsupported")
+
+
+def _prepared_read(
+    root: Path, deadline: float, *arguments: str
+) -> subprocess.CompletedProcess[bytes]:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ReleaseError("release preparation Git transaction timed out")
+    result = subprocess.run(
+        _preparation_command(root, *arguments),
+        env=git_environment(),
+        capture_output=True,
+        timeout=remaining,
+        check=False,
+    )
+    if result.returncode not in {0, 1} or len(result.stdout) + len(result.stderr) > 4096:
+        raise ReleaseError("release preparation locked reference verification failed")
+    return result
+
+
+def _attach_preparation_head(
+    root: Path, candidate_sha: str, branch_ref: str, tracking_ref: str, refs: dict[str, str]
+) -> None:
+    """Let Git lock/verify refs, inspect raw detached HEAD under those locks, then commit."""
+    commands = ["start"]
+    commands.append(
+        f"verify {branch_ref} {candidate_sha}"
+        if branch_ref in refs
+        else f"create {branch_ref} {candidate_sha}"
+    )
+    if tracking_ref in refs:
+        commands.append(f"verify {tracking_ref} {candidate_sha}")
+    commands.extend([f"symref-update HEAD {branch_ref} oid {candidate_sha}", "prepare"])
+    payload = ("\n".join(commands) + "\n").encode()
+    deadline = time.monotonic() + 10
+    process = None
+    committed = False
+
+    def cancelled(_number: int, _frame: object) -> None:
+        raise ReleaseError("release preparation Git transaction cancelled")
+
+    previous = signal.signal(signal.SIGTERM, cancelled)
+    try:
+        process = subprocess.Popen(
+            _preparation_command(root, "update-ref", "--stdin", "--no-deref"),
+            env=git_environment(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+        if process.stdin is None:
+            raise ReleaseError("release preparation Git transaction has no input")
+        os.set_blocking(process.stdin.fileno(), False)
+        _preparation_exchange(process, payload, b"start: ok\n", deadline)
+        _preparation_exchange(process, b"", b"prepare: ok\n", deadline)
+        # Expected-OID symref-update also accepts a symbolic HEAD at that OID.
+        # The prepared transaction owns HEAD's lock: check its raw type before commit.
+        raw = _prepared_read(root, deadline, "symbolic-ref", "--quiet", "--no-recurse", "HEAD")
+        oid = _prepared_read(root, deadline, "rev-parse", "--verify", "HEAD^{commit}")
+        branch = _prepared_read(
+            root,
+            deadline,
+            "for-each-ref",
+            "--format=%(refname) %(objectname) %(symref)",
+            branch_ref,
+        )
+        expected = f"{branch_ref} {candidate_sha} " if branch_ref in refs else ""
+        if (
+            raw.returncode != 1
+            or raw.stdout
+            or oid.returncode != 0
+            or oid.stdout.strip() != candidate_sha.encode()
+            or branch.returncode != 0
+            or branch.stdout.decode().rstrip("\n") != expected
+        ):
+            raise ReleaseError(
+                "release preparation HEAD or default reference changed before attachment"
+            )
+        _preparation_exchange(process, b"commit\n", b"commit: ok\n", deadline)
+        process.stdin.close()
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+            raise ReleaseError("release preparation Git transaction failed")
+        committed = True
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ReleaseError("release preparation Git transaction failed") from error
+    finally:
+        # EOF after start without commit also aborts Git's native transaction.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            if process is not None:
+                if process.stdin is not None and not process.stdin.closed:
+                    if not committed and process.poll() is None:
+                        try:
+                            os.write(process.stdin.fileno(), b"abort\n")
+                        except OSError:
+                            pass
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        process.wait(timeout=1)
+                if process.stdout is not None:
+                    process.stdout.close()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+
+def prepare_branch(repository_root: Path, candidate_sha: str, default_branch: str) -> None:
+    """Attach a clean exact candidate locally, without checkout, reset, fetch or remote writes.
+
+    Existing branch/tracking tips must agree with the admitted candidate. A missing
+    local branch and HEAD attachment commit in one expected-value Git transaction.
+    While Git holds its prepared locks, recheck raw HEAD identity before committing.
+    Recheck all source/ref conditions before allowing release-plz to run.
+    """
+    if not SHA.fullmatch(candidate_sha) or not default_branch or default_branch.startswith("-"):
+        raise ReleaseError("release preparation needs an exact candidate and default branch")
+    branch_ref = f"refs/heads/{default_branch}"
+    if (
+        os.environ.get("GITHUB_REPOSITORY") not in REPOSITORIES
+        or os.environ.get("GITHUB_EVENT_NAME") not in {"push", "workflow_dispatch"}
+        or os.environ.get("GITHUB_REF") != branch_ref
+        or os.environ.get("GITHUB_SHA") != candidate_sha
+    ):
+        raise ReleaseError("release preparation requires the exact default-branch event")
+    root = repository_root.resolve(strict=True)
+    _preparation_git(root, "check-ref-format", branch_ref)
+    _preparation_git(root, "check-ref-format", "--branch", default_branch)
+    tracking_ref = f"refs/remotes/origin/{default_branch}"
+    current_ref, refs = _preparation_checkout(root, candidate_sha, branch_ref, tracking_ref)
+    if current_ref == "HEAD":
+        _attach_preparation_head(root, candidate_sha, branch_ref, tracking_ref, refs)
+    current_ref, refs = _preparation_checkout(root, candidate_sha, branch_ref, tracking_ref)
+    if current_ref != branch_ref or refs.get(branch_ref) != candidate_sha:
+        raise ReleaseError("release preparation did not retain the exact attached default branch")
+
+
 def verify_publication_context(policy: dict[str, Any], candidate_sha: str) -> None:
     branch = os.environ.get("GITHUB_REF")
     default_branch = os.environ.get("BOXFERRY_DEFAULT_BRANCH")
@@ -361,7 +603,8 @@ def write_outputs(values: dict[str, str]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("gate", "prepare-crate", "publish-crate", "classify-queue")
+        "command",
+        choices=("gate", "prepare-crate", "publish-crate", "classify-queue", "prepare-branch"),
     )
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument("--config", type=Path)
@@ -378,6 +621,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         verify_bindings(args.repository_root, args.candidate_sha, args.automation_sha)
+        if args.command == "prepare-branch":
+            if not args.default_branch:
+                raise ReleaseError("release preparation requires the default branch")
+            prepare_branch(args.repository_root, args.candidate_sha, args.default_branch)
+            verify_bindings(args.repository_root, args.candidate_sha, args.automation_sha)
+            return 0
         if args.command == "classify-queue":
             if (
                 os.environ.get("GITHUB_EVENT_NAME") != "merge_group"
