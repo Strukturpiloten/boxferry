@@ -27,6 +27,12 @@ on:
         description: Eligible under the trusted base policy, or explicitly not-applicable.
         value: ${{ jobs.check.outputs.admission_status }}
 
+      admission_evidence_kind:
+        description: Exact-A receipt or computed read-only zero-age-delta evidence.
+        value: ${{ jobs.check.outputs.admission_evidence_kind }}
+      admission_proof_implementation_sha:
+        description: Actual live proof implementation S; empty for receipt evidence.
+        value: ${{ jobs.check.outputs.admission_proof_implementation_sha }}
 permissions:
   contents: read
   actions: read
@@ -41,6 +47,8 @@ jobs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}
       admission_implementation_sha: ${{ steps.result.outputs.admission_implementation_sha }}
       admission_status: ${{ steps.result.outputs.admission_status }}
+      admission_evidence_kind: ${{ steps.result.outputs.admission_evidence_kind }}
+      admission_proof_implementation_sha: ${{ steps.result.outputs.admission_proof_implementation_sha }}
     steps:
       - name: Reject floating references before checking out setup code
         shell: bash
@@ -116,6 +124,31 @@ jobs:
       - name: Install A's canonical locked Python tooling
         if: steps.policy.outputs.required == 'true'
         uses: ./_automation/.github/actions/shared-python
+      - name: Compute the bounded read-only zero-age-delta proof
+        if: steps.policy.outputs.required == 'true'
+        id: zero
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}/_proposed_automation/automation/src" \
+            uv run --locked --project _automation/automation python -P -B \
+            -m boxferry_ci.zero_age_delta \
+            --repository "${GITHUB_REPOSITORY}" --event-name "${GITHUB_EVENT_NAME}" \
+            --candidate-sha "${CANDIDATE_SHA}" --tested-sha "${GITHUB_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" --policy-sha "${POLICY_SHA}" \
+            --pr-base-sha "${PR_BASE_SHA}" --queue-base-sha "${QUEUE_BASE_SHA}" \
+            --implementation-root _proposed_automation --authority-root _automation \
+            --policy-root _policy \
+            --event-path "${GITHUB_EVENT_PATH}" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" --ref "${GITHUB_REF}" \
+            --github-output "${GITHUB_OUTPUT}" --summary "${GITHUB_STEP_SUMMARY}"
       # This artifact is an untrusted run/attempt-scoped hint, never execution provenance.
       - name: Record a bounded candidate hint for the trusted service
         if: github.event_name == 'pull_request' && steps.policy.outputs.required == 'true'
@@ -154,7 +187,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Read the exact candidate receipt under A's policy
-        if: steps.policy.outputs.required == 'true'
+        if: steps.policy.outputs.required == 'true' && steps.zero.outputs.status != 'proved-zero'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -180,6 +213,8 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           ADMISSION_SHA: ${{ steps.policy.outputs.policy_automation_sha }}
           ADMISSION_REQUIRED: ${{ steps.policy.outputs.required }}
+          ZERO_STATUS: ${{ steps.zero.outputs.status }}
+          PROOF_SHA: ${{ steps.zero.outputs.proof_implementation_sha }}
         shell: bash
         run: |
           printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
@@ -188,4 +223,12 @@ jobs:
             printf 'admission_status=eligible\n' >> "${GITHUB_OUTPUT}"
           else
             printf 'admission_status=not-applicable\n' >> "${GITHUB_OUTPUT}"
+          fi
+          if [[ "${ZERO_STATUS}" == proved-zero ]]; then
+            printf 'admission_evidence_kind=read-only-zero-age-delta\n' >> "${GITHUB_OUTPUT}"
+            printf 'admission_proof_implementation_sha=%s\n' "${PROOF_SHA}" >> "${GITHUB_OUTPUT}"
+          elif [[ "${ADMISSION_REQUIRED}" == true ]]; then
+            printf 'admission_evidence_kind=exact-A-service-receipt\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'admission_evidence_kind=not-applicable\n' >> "${GITHUB_OUTPUT}"
           fi
