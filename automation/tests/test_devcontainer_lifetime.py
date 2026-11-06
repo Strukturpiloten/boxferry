@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, Mock, call, patch
 
@@ -1098,7 +1100,7 @@ class LifetimeTests(unittest.TestCase):
 
     def test_serialized_lifecycle_payloads_remain_exact_approved_v3_bytes(self) -> None:
         expected = {
-            "bootstrap": "d367708b6c614e470bbb3a1eaa10b1364499ed7718d3903b4c5c16b2f02d37d0",
+            "bootstrap": "b0fd37a802ae2fba35f4100065920cfee51b865fda78ba07dc261f470ea95e0c",
             "init": "24a1480b6dde3bae978e86a996b07d54828348fe8a1782ede6b536863bc782a7",
             "worker": "5eb289298564bd59623ef64e9c606a2abcbfefecc04e4c4e3999a3980c92ae42",
         }
@@ -1138,6 +1140,9 @@ class LifetimeTests(unittest.TestCase):
         scope.mkdir()
         (scope / "store").mkdir()
         (scope / "store/payload").write_text("owned")
+        os.mkfifo(scope / "store/fifo", 0o600)
+        with socket.socket(socket.AF_UNIX) as channel:
+            channel.bind(str(scope / "store/socket"))
         sentinel = self.root / "sentinel"
         sentinel.write_text("unrelated")
         (scope / "store/link").symlink_to(sentinel)
@@ -1157,6 +1162,228 @@ class LifetimeTests(unittest.TestCase):
             self.assertTrue((scope / "store").exists())
         finally:
             os.close(fd)
+
+    def _exercise_whiteout(
+        self,
+        relative: tuple[str, ...],
+        *,
+        changes: dict[str, int] | None = None,
+        race: str = "",
+        failure: str | None = None,
+        budget: int = 100,
+    ) -> None:
+        # Real fd-relative recursion over inert regular files; special metadata
+        # is simulated. No mknod, root, engine, device I/O or retained store.
+        scope = Path(tempfile.mkdtemp(dir=self.root))
+        leaf = scope.joinpath(*relative)
+        leaf.parent.mkdir(parents=True)
+        leaf.write_text("inert observed-whiteout stand-in")
+        original_stat, original_fstat = os.stat, os.fstat
+        inode = leaf.stat().st_ino
+        parent_inode = leaf.parent.stat().st_ino
+        fields = {
+            "st_dev": leaf.stat().st_dev,
+            "st_ino": inode,
+            "st_mode": stat.S_IFCHR,
+            "st_rdev": os.makedev(0, 0),
+            "st_uid": 0,
+            "st_gid": 0,
+            "st_nlink": 1,
+            **(changes or {}),
+        }
+        calls = 0
+
+        def observed_stat(
+            path: str | Path | int,
+            *,
+            dir_fd: int | None = None,
+            follow_symlinks: bool = True,
+        ) -> os.stat_result | SimpleNamespace:
+            nonlocal calls
+            result = original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+            if result.st_ino == inode:
+                self.assertIs(follow_symlinks, False)
+                assert dir_fd is not None
+                self.assertEqual(original_fstat(dir_fd).st_ino, parent_inode)
+                calls += 1
+                changed = {}
+                if race.startswith("entry:") and calls > 1:
+                    field = race.split(":", 1)[1]
+                    changed = {field: fields[field] + 1}
+                return SimpleNamespace(**{**fields, **changed})
+            return result
+
+        def observed_fstat(fd: int) -> os.stat_result | SimpleNamespace:
+            result = original_fstat(fd)
+            if result.st_ino == inode:
+                changed = {}
+                if race.startswith("opened:"):
+                    field = race.split(":", 1)[1]
+                    changed = {field: fields[field] + 1}
+                if race == "opened-symlink":
+                    changed = {"st_mode": stat.S_IFLNK | 0o777}
+                return SimpleNamespace(**{**fields, **changed})
+            return result
+
+        original_mount = subject._r_mount
+
+        def observed_mount(fd: int) -> str:
+            if race == "mount" and original_fstat(fd).st_ino == inode:
+                return "different-whiteout-mount"
+            return original_mount(fd)
+
+        fd = subject._r_directory(str(scope))
+        try:
+            device, mount = os.fstat(fd).st_dev, subject._r_mount(fd)
+            with (
+                patch.object(subject.os, "stat", side_effect=observed_stat),
+                patch.object(subject.os, "fstat", side_effect=observed_fstat),
+                patch.object(subject, "_r_mount", side_effect=observed_mount),
+                patch.object(subject.os, "fchown"),
+                patch.object(subject.os, "open", wraps=os.open) as opened,
+                patch.object(subject.os, "unlink", wraps=os.unlink) as unlink,
+            ):
+                if failure is None:
+                    subject._r_remove(fd, relative[0], device, mount, [budget])
+                else:
+                    with self.assertRaisesRegex(ValueError, failure):
+                        subject._r_remove(fd, relative[0], device, mount, [budget])
+                leaf_opens = [item for item in opened.call_args_list if item.args[0] == leaf.name]
+                for item in leaf_opens:
+                    self.assertEqual(item.args[1], os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+                if failure is None:
+                    self.assertEqual(len(leaf_opens), 1)
+                    self.assertEqual(calls, 2)
+                    unlink.assert_called_once_with(leaf.name, dir_fd=ANY)
+                else:
+                    unlink.assert_not_called()
+            if failure is None:
+                self.assertEqual(list(scope.iterdir()), [])
+            else:
+                self.assertEqual(leaf.read_text(), "inert observed-whiteout stand-in")
+        finally:
+            os.close(fd)
+
+    def test_observed_overlay_whiteouts_are_unlinked_through_metadata_only_fds(self) -> None:
+        for descendant in (("whiteout",), ("etc", "X11", "Xreset")):
+            with self.subTest(descendant=descendant):
+                self._exercise_whiteout(("store", "overlay", "ab" * 32, "diff", *descendant))
+
+    def test_other_special_metadata_never_authorizes_whiteout_unlink(self) -> None:
+        for changes in (
+            {"st_mode": stat.S_IFBLK},
+            {"st_mode": 0},
+            {"st_mode": stat.S_IFCHR | 0o600},
+            {"st_rdev": os.makedev(1, 0)},
+            {"st_rdev": os.makedev(0, 1)},
+            {"st_uid": 1000},
+            {"st_gid": 1000},
+            {"st_nlink": 2},
+            {"st_dev": 999999},
+        ):
+            with self.subTest(changes=changes):
+                self._exercise_whiteout(
+                    ("store", "overlay", "ab" * 32, "diff", "whiteout"),
+                    changes=changes,
+                    failure="unexpected special inode",
+                )
+
+    def test_whiteout_shape_outside_exact_overlay_diff_context_is_rejected(self) -> None:
+        for relative in (
+            ("cache", "overlay", "ab" * 32, "diff", "whiteout"),
+            ("store", "not-overlay", "ab" * 32, "diff", "whiteout"),
+            ("store", "overlay", "ab" * 32, "work", "whiteout"),
+            ("store", "overlay", "AB" * 32, "diff", "whiteout"),
+            ("store", "overlay", "ab" * 31, "diff", "whiteout"),
+            ("store", "overlay", "ab" * 33, "diff", "whiteout"),
+            ("store", "overlay", "g" * 64, "diff", "whiteout"),
+            ("store", "overlay", "ab" * 32, "diff"),
+        ):
+            with self.subTest(relative=relative):
+                self._exercise_whiteout(relative, failure="unexpected special inode")
+
+    def test_whiteout_open_entry_metadata_mount_races_and_budget_refuse_unlink(self) -> None:
+        metadata = ("st_dev", "st_ino", "st_mode", "st_rdev", "st_uid", "st_gid", "st_nlink")
+        for race, failure in (
+            *((f"opened:{field}", "substituted whiteout") for field in metadata),
+            *((f"entry:{field}", "whiteout entry was replaced") for field in metadata),
+            ("opened-symlink", "substituted whiteout"),
+            ("mount", "substituted whiteout or mount"),
+        ):
+            with self.subTest(race=race):
+                self._exercise_whiteout(
+                    ("store", "overlay", "ab" * 32, "diff", "whiteout"),
+                    race=race,
+                    failure=failure,
+                )
+        self._exercise_whiteout(
+            ("store", "overlay", "ab" * 32, "diff", "whiteout"),
+            budget=4,
+            failure="finite cleanup entry bound exhausted",
+        )
+
+    def test_overlay_diff_symlink_is_unlinked_without_following_external_tree(self) -> None:
+        scope = self.root / "scope"
+        layer = scope / "store/overlay" / ("ab" * 32)
+        layer.mkdir(parents=True)
+        outside = self.root / "outside"
+        outside.mkdir()
+        sentinel = outside / "whiteout"
+        sentinel.write_text("unrelated")
+        (layer / "diff").symlink_to(outside, target_is_directory=True)
+        fd = subject._r_directory(str(scope))
+        try:
+            with (
+                patch.object(subject.os, "fchown"),
+                patch.object(subject.os, "open", wraps=os.open) as opened,
+                patch.object(subject.os, "unlink", wraps=os.unlink) as unlink,
+            ):
+                subject._r_remove(fd, "store", os.fstat(fd).st_dev, subject._r_mount(fd), [20])
+                self.assertFalse(any(item.args[0] == "diff" for item in opened.call_args_list))
+                unlink.assert_called_once_with("diff", dir_fd=ANY)
+            self.assertEqual(sentinel.read_text(), "unrelated")
+        finally:
+            os.close(fd)
+
+    def test_overlay_ancestor_substitution_is_refused_before_descendant_access(self) -> None:
+        def case(field: str) -> None:
+            scope = Path(tempfile.mkdtemp(dir=self.root))
+            layer = scope / "store/overlay" / ("ab" * 32)
+            layer.mkdir(parents=True)
+            sentinel = layer / "diff/whiteout"
+            sentinel.parent.mkdir()
+            sentinel.write_text("unrelated")
+            original_fstat = os.fstat
+            layer_inode = layer.stat().st_ino
+
+            def replaced(fd: int) -> os.stat_result | SimpleNamespace:
+                facts = original_fstat(fd)
+                if facts.st_ino == layer_inode:
+                    return SimpleNamespace(
+                        st_dev=facts.st_dev + (field == "st_dev"),
+                        st_ino=facts.st_ino + (field == "st_ino"),
+                    )
+                return facts
+
+            fd = subject._r_directory(str(scope))
+            try:
+                with (
+                    patch.object(subject.os, "fstat", side_effect=replaced),
+                    patch.object(subject.os, "fchown"),
+                    patch.object(subject.os, "unlink") as unlink,
+                    self.assertRaisesRegex(ValueError, "substituted directory or mount"),
+                ):
+                    subject._r_remove(
+                        fd, "store", original_fstat(fd).st_dev, subject._r_mount(fd), [20]
+                    )
+                unlink.assert_not_called()
+                self.assertEqual(sentinel.read_text(), "unrelated")
+            finally:
+                os.close(fd)
+
+        for field in ("st_dev", "st_ino"):
+            with self.subTest(field=field):
+                case(field)
 
     def test_actual_unprivileged_inner_timeout_output_and_monitor_preserve_primary(self) -> None:
         def case(kind: str) -> None:

@@ -83,7 +83,16 @@ fixed isolated stdlib bootstrap/root PID1 owns one foreground PID/mount namespac
 A sole close-on-exec FIFO writer is established with a temporary reader that closes
 before root launch. The claimed FIFO EOF lease and pre-cleanup abort handoff handle startup and cancellation;
 only bound PID1 pidfd/supervisor closure authorizes outside anchored, no-follow finite
-cleanup. No stale-store recovery, global process scan or service controller is added.
+cleanup. Within that exact private store, only root-owned, mode-000, single-link
+character-device 0:0 whiteouts below `store/overlay/<64-lowercase-hex>/diff/` may
+join ordinary cleanup. Metadata-only, no-follow descriptors must corroborate
+identity, device and mount before a final entry check and anchored unlink. Existing
+regular-file, symlink, FIFO and socket cleanup stays unchanged; other device nodes
+and unknown inode kinds still fail closed. Cache tmpfs mounts use the explicitly selected
+backend's ownership syntax while preserving nonroot mode-0700 access, 256-MiB
+limits, nosuid/nodev and the existing read-only/capability boundaries. These
+compatibility repairs establish no native qualification or schema activation.
+No stale-store recovery, global process scan or service controller is added.
 The local-only cgroupfs/file-events profile selects installed `/usr/bin/runc` with observed
 root-owned resolved executable, version and digest, not a downloadable/cross-architecture
 pin or invented Renovate owner. Existing pins and hosted/rootless selection stay intact.
