@@ -2,6 +2,7 @@
 
 - Status: proposed; producer implementation and consumer admission are separate
 - Date: 2026-11-04
+- Amended: 2026-11-06; conventional VS Code local development and standard hosted storage
 - Builds on: ADR 0092 shared development automation and ADR 0079 runtime selection
 
 ## Context
@@ -62,8 +63,10 @@ Required image qualification binds the actual candidate, independently trusted
 policy, admitted automation, complete input fingerprint and image identity. It
 builds and executes reviewed non-root probes on native Linux x64 and ARM64 using
 reviewed backends; local execution remains Podman-only. BoxFerry workspace probes
-require all seven real credential-free recorded checkouts and fresh owned
-storage. Only reviewed verifier/probes execute, not lifecycle commands or cargo
+require all seven real credential-free recorded checkouts. Fresh hosted runners
+use standard runtime storage; actual DockerRootDir or Podman graphRoot must share
+the existing disk budget filesystem without resetting its initial baseline. Only
+reviewed verifier/probes execute, not lifecycle commands or cargo
 fetch hooks. Image tool versions must match selected canonical automation. Fixed
 FCOS, Podman/Docker runtime, workload and provider qualification pins remain
 unchanged. Cold resource/budget qualification and issue 446 ARM workspace evidence
@@ -74,36 +77,33 @@ actual `dpkg` package/version, UID-0 and rootful observations separately from fi
 Before consumer activation, cold storage budget proof must cover the actual Docker daemon
 filesystem; producer definitions alone establish no measured resource or native evidence.
 
-Explicit operator-selected local rootful qualification keeps preparation/reports under
-the original user. Before its first root bridge, the literal installed Podman executable
-and every parent/symlink hop require root ownership, no operator write access, and
-bounded user-observed version/hash evidence with drift checks. Trusted selection/npm bootstrap stay outside; existing candidate
-snapshot/context copies may run inside after the verified groups/GID/UID drop. The
-fixed isolated stdlib bootstrap/root PID1 owns one foreground PID/mount namespace.
-A sole close-on-exec FIFO writer is established with a temporary reader that closes
-before root launch. The claimed FIFO EOF lease and pre-cleanup abort handoff handle startup and cancellation;
-only bound PID1 pidfd/supervisor closure authorizes outside anchored, no-follow finite
-cleanup. Within that exact private store, only root-owned, mode-000, single-link
-character-device 0:0 whiteouts below `store/overlay/<64-lowercase-hex>/diff/` may
-join ordinary cleanup. Metadata-only, no-follow descriptors must corroborate
-identity, device and mount before a final entry check and anchored unlink. Existing
-regular-file, symlink, FIFO and socket cleanup stays unchanged; other device nodes
-and unknown inode kinds still fail closed. Cache tmpfs mounts use the explicitly selected
-backend's ownership syntax while preserving nonroot mode-0700 access, 256-MiB
-limits, nosuid/nodev and the existing read-only/capability boundaries. These
-compatibility repairs establish no native qualification or schema activation.
-No stale-store recovery, global process scan or service controller is added.
-The local-only cgroupfs/file-events profile selects installed `/usr/bin/runc` with observed
-root-owned resolved executable, version and digest, not a downloadable/cross-architecture
-pin or invented Renovate owner. Existing pins and hosted/rootless selection stay intact.
-Live inspection uses an opt-in opaque output/private-parser boundary; default runner
-logs remain unchanged. Exact-owned numeric schema capture and independent selector
-review precede a bounded container/conmon snapshot. This establishes no global absence
-of namespace export, delegation or other holders, and no engine readiness.
+The maintainer's 2026-11-06 decision supersedes the earlier explicit local-rootful
+private-store qualification design. Local development uses VS Code Dev Containers
+with the developer's existing Podman connection and storage, preferably rootless.
+Normal caches are retained. There is no custom local qualifier, mandatory host
+sudo, graphroot override, PID/mount lifetime, live PID selector, installed-runc
+custody profile or special-inode finalization requirement. The ordinary complete
+local gate retains its Rust/Python/repository checks without a new image-build leaf.
 
-The previous detached cancellation failed. Independent source review, exact-payload
-harmless preflight and fresh-store compatibility remain mandatory before admission;
-these definitions establish no native, ARM, App or updater readiness.
+Image qualification remains a hosted-CI producer: native Linux x64/ARM64 lanes use
+reviewed explicit backends on fresh GitHub-hosted runners with standard runner
+storage. Hosted rootful Podman's existing signed-APT prerequisite and privileged
+child deadlines remain; clean engine environment cannot redirect its store.
+Narrow metadata observation proves actual store disk coverage. The producer
+removes only its nonce-labelled exact containers and unique image tag after
+identity checks. Preexisting objects and caches are allowed; no global prune,
+store removal or namespace controller exists. Failed builds without a final tag,
+probe errors and cancellation retain their primary bounded redacted diagnostics
+and attempt bounded owned-resource cleanup. Runner disposal owns residual cache.
+
+Earlier private-store failures and source admission, including PR #599 at
+`30ff1a56b745cf68761f7ebe30caa3e1d25c5764`, remain historical evidence of the
+superseded implementation, not qualification of this replacement. Already-retained
+failed stores remain untouched; separate custody review is required for cleanup.
+Issues #578/#575 track retirement and diagnostics; #563 still requires actual
+VS Code reopen/rebuild, every owner's native image/tool/failure evidence, and App
+acceptance before image/updater activation. Fixed FCOS/runtime/application targets
+and separate #446/#453 acceptance remain unchanged.
 
 Existing release-plz App credential names are reused with a one-repository
 contents/PR-write token and the checks/status reads required for eligibility.

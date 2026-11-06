@@ -14,7 +14,9 @@ handoff; consumer adoption and independent validation precede activation.
 
 [ADR 0094](0094-official-devcontainer-feature-updates.md) records the limited official-generator
 updater, complete Feature graph and native candidate qualification contract. Producer admission
-can retain inactive code; consumer seed/adoption and successful qualification precede activation.
+can retain inactive code; its 2026-11-06 amendment retires local private-store controls
+in favor of conventional VS Code and standard hosted runner storage. Consumer seed/adoption
+and successful native/App qualification precede activation.
 
 ## Active decisions
 

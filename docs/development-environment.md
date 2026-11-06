@@ -1,8 +1,20 @@
 # Development environment
 
-Use the Dev Container's pinned workspace tools. Keep sibling checkouts beside
-`boxferry` and open `boxferry-lenses.code-workspace`. After mount changes, use
-**Dev Containers: Rebuild and Reopen in Container**; window reload cannot add mounts.
+The single-clone default below is pending [BoxFerry #554](https://github.com/Strukturpiloten/boxferry/issues/554).
+Until then, this checkout's legacy configuration requires all six sibling checkouts beside `boxferry`.
+Use your existing Podman storage; the retired private-store controls are not required.
+
+Clone BoxFerry and use VS Code's **Dev Containers: Reopen in Container** with
+its Dev Containers extension configured for your existing Podman connection,
+preferably rootless. Use **Dev Containers: Rebuild Container** after changing
+container tools. Rebuilds use normal Podman storage and caches; no separate
+qualification command, private graphroot or mandatory host sudo is required.
+
+BoxFerry's Cargo dependencies use published Lens crates. For optional multi-repository
+work, keep sibling checkouts beside `boxferry`, configure their mounts explicitly,
+and open `boxferry-lenses.code-workspace`.
+After mount changes, use **Dev Containers: Rebuild and Reopen in Container**;
+window reload cannot add mounts.
 
 ## Build the CLI
 
@@ -74,20 +86,22 @@ The default gate formats; `--check` runs without source formatting. Any edit inv
 its result. Preserve [API baseline evidence](decisions/0096-development-and-published-api-baselines.md)
 and `target/api-baseline-local.json`.
 
-## Explicit local rootful qualification
+## CI image qualification
 
-`devcontainer-local` defaults to rootless Podman. Explicit `--outer-mode rootful`
-uses a fresh private store inside one PID/mount lifetime. Source/npm/uv preparation
-and reports remain under the original nonroot user; invoking the whole helper with
-sudo is rejected. The local profile selects cgroupfs, file events and installed
-`/usr/bin/runc`, with observed versions/checksums and no installation or fallback.
+The shared producer builds held candidates and runs safe tools as the configured
+non-root user on fresh GitHub-hosted Linux x64 and ARM64 runners. It uses the
+reviewed explicit Docker or rootful Podman backend with standard runner storage,
+checks the actual store's filesystem against its disk budget, and cleans only
+its exact owned containers and image tag. Runner disposal handles residual caches.
+BoxFerry's CI workspace probes retain all seven real checkout revisions; ordinary
+local setup does not require those checkouts or add an image build to the local gate.
 
-Only proved namespace closure and unchanged ownership permit finite directory
-cleanup. Uncertain runs retain the affected resources and report their custody.
-Hosted/rootless behavior and qualified inner targets remain separate. See
-[#578](https://github.com/Strukturpiloten/boxferry/issues/578) for local rootful
-qualification status and [#563](https://github.com/Strukturpiloten/boxferry/issues/563)
-for ARM qualification status.
+Image/updater activation still requires actual per-owner native image evidence,
+VS Code reopen/rebuild acceptance and restricted-App/ordinary-CI qualification under
+[#563](https://github.com/Strukturpiloten/boxferry/issues/563). Source admission is
+not that evidence. [#578](https://github.com/Strukturpiloten/boxferry/issues/578)
+supersedes the earlier local private-store/PID controls. Historical failed stores
+remain untouched; any housekeeping needs separate exact ownership review.
 
 ## Issue-to-PR contribution workflow
 

@@ -256,10 +256,6 @@ def _cancel(_signum: int, _frame: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments and arguments[0] == "devcontainer-local":
-        from boxferry_ci.devcontainer_local import main as devcontainer_local_main
-
-        return devcontainer_local_main(arguments[1:])
     if arguments and arguments[0] == "cargo-tools":
         from boxferry_ci.cargo_tools import main as cargo_tools_main
 

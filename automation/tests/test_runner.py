@@ -430,8 +430,6 @@ class Runner(unittest.TestCase):
     def test_closed_opaque_modes_parse_only_private_success_and_publish_no_raw_channel(
         self,
     ) -> None:
-        from boxferry_ci import devcontainer_validation as validation
-
         original = subprocess.Popen
         fixture = (
             "import sys;sys.stdout.write('{\"safe\":1}');sys.stderr.write('private error bytes')"
@@ -445,18 +443,7 @@ class Runner(unittest.TestCase):
                     original((sys.executable, "-c", fixture), **cast(dict[str, Any], options)),
                 )
 
-            argv = (
-                (
-                    "/usr/bin/python3",
-                    "-I",
-                    "-S",
-                    "-c",
-                    validation.LIVE_PROCESS_OBSERVER_PROGRAM,
-                    "{}",
-                )
-                if mode is subject.OpaqueObservation.PROCESSES
-                else ("fixture-inspect", "held")
-            )
+            argv = ("fixture-inspect", "held")
             with (
                 self.subTest(mode=mode),
                 patch.object(subject.subprocess, "Popen", side_effect=spawn),
@@ -479,7 +466,6 @@ class Runner(unittest.TestCase):
             assert isinstance(public, dict)
             self.assertEqual(public["reason"], "completed")
             self.assertNotIn("private error bytes", repr(result))
-            self.assertNotIn(validation.LIVE_PROCESS_OBSERVER_PROGRAM, repr(result))
             self.assertEqual(
                 result.metrics.stdout_prefix_sha256, hashlib.sha256(private[0]).hexdigest()
             )
@@ -548,66 +534,6 @@ class Runner(unittest.TestCase):
         self.assertEqual(events, ["provisional"])
         assert caught.exception.metrics is not None
         self.assertTrue(caught.exception.metrics.cleanup_failed)
-
-    def test_fixed_observer_exit_codes_do_not_parse_failed_streams(self) -> None:
-        from boxferry_ci import devcontainer_validation as validation
-
-        original = subprocess.Popen
-        mode = subject.OpaqueObservation.PROCESSES
-        expected = {
-            2: subject.OpaqueReason.INVALID_REQUEST,
-            3: subject.OpaqueReason.PROCESS_UNAVAILABLE,
-            4: subject.OpaqueReason.PROCESS_CHANGED,
-            5: subject.OpaqueReason.NAMESPACE_MISMATCH,
-            6: subject.OpaqueReason.UID_MISMATCH,
-            7: subject.OpaqueReason.OBSERVER_LIMIT,
-            124: subject.OpaqueReason.ROOT_DEADLINE,
-            9: subject.OpaqueReason.OBSERVER_FAILED,
-        }
-        for code, reason in expected.items():
-
-            def spawn(
-                _argv: tuple[str, ...], code: int = code, **options: object
-            ) -> subprocess.Popen[bytes]:
-                return cast(
-                    subprocess.Popen[bytes],
-                    original(
-                        (
-                            sys.executable,
-                            "-c",
-                            "import sys;print('{}');sys.exit(" + str(code) + ")",
-                        ),
-                        **cast(dict[str, Any], options),
-                    ),
-                )
-
-            consumed: list[bytes] = []
-            with (
-                self.subTest(code=code),
-                patch.object(subject.subprocess, "Popen", side_effect=spawn),
-            ):
-                result = run(
-                    (
-                        "/usr/bin/python3",
-                        "-I",
-                        "-S",
-                        "-c",
-                        validation.LIVE_PROCESS_OBSERVER_PROGRAM,
-                        "{}",
-                    ),
-                    cwd=self.root,
-                    stage=mode.stage,
-                    timeout_seconds=mode.timeout,
-                    max_output_bytes=mode.output_cap,
-                    opaque_observation=mode,
-                    on_private_stdout=consumed.append,
-                    on_abort=lambda _failure: None,
-                )
-            assert isinstance(result, subject.OpaqueRunResult)
-            self.assertEqual(result.returncode, code)
-            self.assertEqual(result.metrics.reason, reason)
-            self.assertFalse(consumed)
-            self.assertEqual(result.stdout_bytes, b"")
 
     def test_opaque_prefix_hash_includes_detection_byte_and_never_parses_overflow(self) -> None:
         mode = subject.OpaqueObservation.INSPECT_AFTER

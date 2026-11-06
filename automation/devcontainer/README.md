@@ -5,9 +5,12 @@ with `npm ci --ignore-scripts --prefix automation/devcontainer`. The package is
 MIT-licensed and comes from the public npm registry; the lock records its
 published integrity. No upstream implementation is copied into BoxFerry.
 
-The local qualifier gives npm distinct empty user and global config files inside
-its private preparation directory, alongside its private home and cache. Keep
-these config paths distinct: npm rejects loading the same path for both scopes.
+Local contributors reopen or rebuild through VS Code with their existing Podman
+connection and ordinary caches. The shared image producer is hosted-CI-only:
+reviewed Docker/Podman backends use standard fresh runner storage, with actual
+store disk coverage and exact owned-container/tag cleanup. It never prunes the
+store or deletes unrelated cache entries. Native x64/ARM qualification and
+restricted-App acceptance remain separate from source admission under #563.
 
 The trusted `boxferry_ci.devcontainer_updates` helper runs `devcontainer upgrade`
 in private scratch without candidate hooks, App tokens, Docker credentials or
