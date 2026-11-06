@@ -611,10 +611,18 @@ def _r_mount(fd: int) -> str:
         return dict(line.split(":", 1) for line in stream if ":" in line)["mnt_id"].strip()
 
 
-def _r_remove(parent: int, name: str, device: int, mount: str, budget: list[int]) -> None:
+def _r_remove(
+    parent: int,
+    name: str,
+    device: int,
+    mount: str,
+    budget: list[int],
+    relative: tuple[str, ...] = (),
+) -> None:
     budget[0] -= 1
     if budget[0] < 0:
         raise ValueError("finite cleanup entry bound exhausted")
+    path = (*relative, name)
     facts = os.stat(name, dir_fd=parent, follow_symlinks=False)
     if stat.S_ISDIR(facts.st_mode):
         child = os.open(
@@ -632,13 +640,44 @@ def _r_remove(parent: int, name: str, device: int, mount: str, budget: list[int]
             os.fchmod(child, 0o700)
             with os.scandir(child) as entries:
                 for entry in entries:
-                    _r_remove(child, entry.name, device, mount, budget)
+                    _r_remove(child, entry.name, device, mount, budget, path)
             now = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
                 raise ValueError("cleanup directory entry was replaced")
             os.rmdir(name, dir_fd=parent)
         finally:
             os.close(child)
+    elif stat.S_ISCHR(facts.st_mode):
+        # Only the observed private overlay layer whiteout shape is allowed.
+        # The scope-relative context originates at _r_finalize's held root fd.
+        if not (
+            len(path) >= 5
+            and path[:2] == ("store", "overlay")
+            and len(path[2]) == 64
+            and all(character in "0123456789abcdef" for character in path[2])
+            and path[3] == "diff"
+            and facts.st_dev == device
+            and facts.st_rdev == os.makedev(0, 0)
+            and stat.S_IMODE(facts.st_mode) == 0
+            and facts.st_uid == facts.st_gid == 0
+            and facts.st_nlink == 1
+        ):
+            raise ValueError("cleanup refuses unexpected special inode")
+        # O_PATH holds metadata only: never open a device for I/O, even after
+        # a replacement race. O_NOFOLLOW also holds a substituted link itself.
+        leaf = os.open(name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        try:
+            fields = ("st_dev", "st_ino", "st_mode", "st_rdev", "st_uid", "st_gid", "st_nlink")
+            held = tuple(getattr(facts, field) for field in fields)
+            opened = os.fstat(leaf)
+            if tuple(getattr(opened, field) for field in fields) != held or _r_mount(leaf) != mount:
+                raise ValueError("cleanup refuses substituted whiteout or mount")
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if tuple(getattr(current, field) for field in fields) != held:
+                raise ValueError("cleanup whiteout entry was replaced")
+            os.unlink(name, dir_fd=parent)
+        finally:
+            os.close(leaf)
     else:
         if not (
             stat.S_ISREG(facts.st_mode)

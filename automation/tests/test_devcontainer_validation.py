@@ -1696,6 +1696,91 @@ class ProducerTests(unittest.TestCase):
         )
         self.assertFalse(any("run" in argv for argv, _stage, _timeout in fake.calls))
 
+    def test_backend_cache_mounts_preserve_nonroot_ownership_and_isolation(self) -> None:
+        # Independent expected argv from Podman v4.9.3/v6.1.4 mount references;
+        # no native parser or runtime execution is claimed by this simulation.
+        targets = {
+            "CARGO_HOME": "/workspaces/.boxferry-cargo",
+            "GH_CONFIG_DIR": "/workspaces/.boxferry-gh",
+            "CARGO_TARGET_DIR": "/workspaces/.boxferry-target",
+        }
+        self.config["containerEnv"].update(targets)
+        for engine, mode, outer_mode in (
+            ("docker", "hosted", None),
+            ("podman", "hosted", None),
+            ("podman", "local", "rootless"),
+            ("podman", "local", "rootful"),
+        ):
+            with (
+                self.subTest(engine=engine, mode=mode, outer_mode=outer_mode),
+                patch.object(validation, "passwd_identity", return_value=("1201", "1302")),
+                patch.object(
+                    validation, "prepare_hosted_podman", return_value={"fixture": True}
+                ) as prerequisite,
+            ):
+                result, fake = self.simulate(engine=engine, mode=mode, outer_mode=outer_mode)
+                self.assertEqual(result["status"], "success", result)
+                if engine == "podman" and mode == "hosted":
+                    prerequisite.assert_called_once()
+                else:
+                    prerequisite.assert_not_called()
+                create = next(argv for argv, stage, _ in fake.calls if stage == "create-probe")
+                options = {
+                    flag: create[create.index(flag) + 1]
+                    for flag in (
+                        "--user",
+                        "--network",
+                        "--cap-drop",
+                        "--security-opt",
+                        "--pids-limit",
+                        "--memory",
+                        "--cpus",
+                    )
+                }
+                self.assertEqual(options["--user"], "1201:1302")
+                self.assertEqual(options["--network"], "none")
+                self.assertEqual(options["--cap-drop"], "ALL")
+                self.assertEqual(options["--security-opt"], "no-new-privileges")
+                self.assertEqual(options["--pids-limit"], "512")
+                self.assertEqual(options["--memory"], "4g")
+                self.assertEqual(options["--cpus"], "2")
+                self.assertIn("--read-only", create)
+                self.assertIn("/tmp:rw,nosuid,nodev,size=256m", create)
+                for target in targets.values():
+                    expected = (
+                        f"type=tmpfs,target={target},rw,nosuid,nodev,"
+                        "tmpfs-size=268435456,tmpfs-mode=0700,chown=true"
+                        if engine == "podman"
+                        else f"{target}:rw,nosuid,nodev,uid=1201,gid=1302,mode=0700,size=256m"
+                    )
+                    index = create.index(expected)
+                    self.assertEqual(
+                        create[index - 1], "--mount" if engine == "podman" else "--tmpfs"
+                    )
+                if engine == "podman":
+                    self.assertFalse(any("uid=" in value or "gid=" in value for value in create))
+                binds = [value for value in create if value.startswith("type=bind,")]
+                self.assertEqual(len(binds), 7 if engine == "docker" else 1)
+                self.assertTrue(all(value.endswith(",readonly") for value in binds))
+                self.assertNotIn("--privileged", create)
+
+    def test_absent_cache_targets_are_not_mounted_and_create_failure_stays_failed(self) -> None:
+        self.config["containerEnv"] = {"CARGO_HOME": "/workspaces/.only-cargo"}
+        result, fake = self.simulate(engine="podman", mode="local")
+        self.assertEqual(result["status"], "success", result)
+        create = next(argv for argv, stage, _ in fake.calls if stage == "create-probe")
+        self.assertEqual(sum(value.startswith("type=tmpfs,") for value in create), 1)
+        self.assertIn(
+            "type=tmpfs,target=/workspaces/.only-cargo,rw,nosuid,nodev,"
+            "tmpfs-size=268435456,tmpfs-mode=0700,chown=true",
+            create,
+        )
+        result, fake = self.simulate("create-probe", engine="podman", mode="local")
+        self.assertEqual(result["status"], "failure")
+        self.assertIn("create-probe failed", str(result["cause"]))
+        self.assertEqual(sum(stage == "create-probe" for _, stage, _ in fake.calls), 1)
+        self.assertFalse(any(stage == "tooling-workspace-probe" for _, stage, _ in fake.calls))
+
     def test_build_probe_receipt_and_cleanup_failures_never_report_success(self) -> None:
         for stage in (
             "build",

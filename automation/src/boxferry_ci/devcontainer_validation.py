@@ -2922,12 +2922,24 @@ def qualify(
         for key in ("CARGO_HOME", "GH_CONFIG_DIR", "CARGO_TARGET_DIR"):
             if key not in config["containerEnv"]:
                 continue
-            mounts.extend(
-                (
-                    "--tmpfs",
-                    f"{config['containerEnv'][key]}:rw,nosuid,nodev,uid={identity},gid={group},mode=0700,size=256m",
+            target = config["containerEnv"][key]
+            if selected == "podman":
+                # Podman 4.9.3/6.1.4: tmpfs chown derives ownership from --user;
+                # its --tmpfs parser rejects the Docker uid/gid option spelling.
+                mounts.extend(
+                    (
+                        "--mount",
+                        f"type=tmpfs,target={target},rw,nosuid,nodev,"
+                        "tmpfs-size=268435456,tmpfs-mode=0700,chown=true",
+                    )
                 )
-            )
+            else:
+                mounts.extend(
+                    (
+                        "--tmpfs",
+                        f"{target}:rw,nosuid,nodev,uid={identity},gid={group},mode=0700,size=256m",
+                    )
+                )
         argv = (
             *engine_argv,
             "create",
