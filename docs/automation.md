@@ -39,3 +39,10 @@ existing bounded runner. It redacts and neutralizes diagnostic text before reten
 workflow-command fixtures remain data. Test failures and reporting failures are separate outcomes.
 CI, local validation and inherited Release use the same discovery once. Retention clipping is
 reported; hard capture/result/report budgets and incomplete drainage fail validation.
+
+## Eligibility resolution diagnostics
+
+Non-authorizing diagnostics report validated event/run/attempt/SHA, stage/guard, count and binding
+values; unknowns are `null`. No raw API, error, environment, credential or URL values. Four 4 KiB
+records maximum; rendering preserves original failures. Receipt, retry, merge and callback semantics
+remain unchanged.

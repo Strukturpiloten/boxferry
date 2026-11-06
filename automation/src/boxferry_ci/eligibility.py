@@ -22,9 +22,13 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import zipfile
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.message import Message
@@ -75,6 +79,227 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 class EligibilityError(ValueError):
     """Unavailable or inconsistent authoritative eligibility evidence."""
+
+
+# These are log-only fields, never candidate reports, persisted state or authority.
+_RESOLUTION_ENUMS = {
+    "event_action": frozenset({"requested", "completed"}),
+    "source_event": frozenset({"pull_request", "merge_group"}),
+    "stage": frozenset(
+        {
+            "callback-event",
+            "source-run",
+            "pull-request",
+            "queue-protection",
+            "queue-snapshot",
+            "queue-current",
+            "queue-fallback",
+        }
+    ),
+    "guard": frozenset(
+        {
+            "initial-resolution-error",
+            "source-run-id-invalid",
+            "source-run-rejected",
+            "source-pr-cardinality",
+            "source-head-stale",
+            "queue-exact-cardinality",
+            "queue-current-selection-bound",
+            "queue-current-binding",
+            "queue-current-cardinality",
+            "queue-fallback-binding",
+            "queue-fallback-cardinality",
+        }
+    ),
+}
+_RESOLUTION_IDS = frozenset(
+    {
+        "source_run_id",
+        "observed_run_id",
+        "source_run_attempt",
+        "source_pr_number",
+    }
+)
+_RESOLUTION_SHAS = frozenset(
+    {
+        "tested_sha",
+        "resolution_base_sha",
+        "queue_source_sha",
+        "pr_source_sha",
+        "queue_head_sha",
+        "pr_merge_sha",
+    }
+)
+_RESOLUTION_COUNTS = frozenset(
+    {
+        "queue_count",
+        "built_count",
+        "exact_count",
+        "selected_count",
+        "matching_count",
+        "source_pr_count",
+    }
+)
+_RESOLUTION_FLAGS = frozenset(
+    {
+        "source_run_id_matches",
+        "source_head_matches",
+        "queue_head_matches_tested",
+        "queue_head_matches_source",
+        "queue_head_matches_merge",
+    }
+)
+_RESOLUTION_FIELDS = (
+    frozenset(_RESOLUTION_ENUMS)
+    | _RESOLUTION_IDS
+    | _RESOLUTION_SHAS
+    | _RESOLUTION_COUNTS
+    | _RESOLUTION_FLAGS
+)
+_MAX_RESOLUTION_RECORDS = 4
+_MAX_RESOLUTION_BYTES = 4096
+
+
+def _resolution_value(name: str, value: object) -> str | int | bool | None:
+    if name in _RESOLUTION_ENUMS:
+        return value if type(value) is str and value in _RESOLUTION_ENUMS[name] else None
+    if name in _RESOLUTION_IDS:
+        return value if type(value) is int and 1 <= value < 2**63 else None
+    if name in _RESOLUTION_SHAS:
+        return value if type(value) is str and SHA.fullmatch(value) else None
+    if name in _RESOLUTION_COUNTS:
+        return value if type(value) is int and 0 <= value <= 100 else None
+    if name in _RESOLUTION_FLAGS:
+        return value if type(value) is bool else None
+    return None
+
+
+def _resolution_sha_equal(left: object, right: object) -> bool | None:
+    first, second = _resolution_value("tested_sha", left), _resolution_value("tested_sha", right)
+    return first == second if first is not None and second is not None else None
+
+
+@dataclass
+class _ResolutionDiagnostics:
+    values: dict[str, object] = field(default_factory=dict)
+    emitted: int = 0
+    failure_emitted: bool = False
+
+    def observe(self, **values: object) -> None:
+        for name, value in values.items():
+            if name in _RESOLUTION_FIELDS:
+                self.values[name] = _resolution_value(name, value)
+
+    def render(self) -> str:
+        payload = {
+            name: _resolution_value(name, self.values.get(name)) for name in _RESOLUTION_FIELDS
+        }
+        return "Dependency eligibility resolution: " + json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+    def emit(self) -> None:
+        if self.emitted >= _MAX_RESOLUTION_RECORDS:
+            return
+        self.emitted += 1
+        try:
+            rendered = self.render()
+            if len(rendered.encode("utf-8")) <= _MAX_RESOLUTION_BYTES:
+                print(rendered, file=sys.stderr)
+        except Exception:
+            # Diagnostics cannot replace a causal failure or change eligibility.
+            pass
+
+
+_ACTIVE_RESOLUTION: ContextVar[_ResolutionDiagnostics | None] = ContextVar(
+    "eligibility_resolution_diagnostics", default=None
+)
+
+
+def _resolution_observe(stage: str, *, emit: bool = False, **facts: object) -> None:
+    trace = _ACTIVE_RESOLUTION.get()
+    if trace is not None:
+        try:
+            trace.observe(stage=stage, **facts)
+            if emit:
+                trace.emit()
+        except Exception:
+            pass
+
+
+def _resolution_guard(guard: str, **facts: object) -> None:
+    trace = _ACTIVE_RESOLUTION.get()
+    if trace is not None:
+        try:
+            trace.observe(guard=guard, **facts)
+            trace.failure_emitted = True
+            trace.emit()
+        except Exception:
+            pass
+
+
+def _resolution_source(source: object) -> None:
+    metadata = source if type(source) is dict else {}
+    trace = _ACTIVE_RESOLUTION.get()
+    expected = None if trace is None else trace.values.get("source_run_id")
+    observed = _resolution_value("observed_run_id", metadata.get("id"))
+    _resolution_observe(
+        "source-run",
+        emit=True,
+        observed_run_id=observed,
+        source_run_attempt=metadata.get("run_attempt"),
+        source_event=metadata.get("event"),
+        tested_sha=metadata.get("head_sha"),
+        source_run_id_matches=expected == observed
+        if expected is not None and observed is not None
+        else None,
+    )
+
+
+def _resolution_binding_guard(
+    guard: str, number: int, node: dict[str, Any], source: str, merge: str | None, tested: str
+) -> None:
+    try:
+        pull = node.get("pullRequest")
+        commit = node.get("headCommit")
+        queued_source = pull.get("headRefOid") if type(pull) is dict else None
+        queued_head = commit.get("oid") if type(commit) is dict else None
+        _resolution_guard(
+            guard,
+            source_pr_number=number,
+            queue_source_sha=queued_source,
+            pr_source_sha=source,
+            queue_head_sha=queued_head,
+            pr_merge_sha=merge,
+            source_head_matches=_resolution_sha_equal(queued_source, source),
+            queue_head_matches_tested=_resolution_sha_equal(queued_head, tested),
+            queue_head_matches_source=_resolution_sha_equal(queued_head, source),
+            queue_head_matches_merge=_resolution_sha_equal(queued_head, merge),
+        )
+    except Exception:
+        pass
+
+
+@contextmanager
+def _resolution_context(event: object) -> Generator[None]:
+    trace = _ResolutionDiagnostics()
+    token = _ACTIVE_RESOLUTION.set(trace)
+    try:
+        metadata = event if type(event) is dict else {}
+        source = metadata.get("workflow_run")
+        trace.observe(
+            stage="callback-event",
+            event_action=metadata.get("action"),
+            source_run_id=source.get("id") if type(source) is dict else None,
+        )
+        trace.emit()
+        yield
+    except Exception:
+        if not trace.failure_emitted:
+            _resolution_guard("initial-resolution-error")
+        raise
+    finally:
+        _ACTIVE_RESOLUTION.reset(token)
 
 
 class CandidateComputationPending(EligibilityError):
@@ -856,7 +1081,9 @@ def _current_queue_candidate(
 ) -> Candidate:
     from .queue_tree import MAX_SOURCES, QueueTreeError, matching_queue_sources, verify_queue_tree
 
+    _resolution_observe("queue-current", selected_count=len(selected))
     if not 1 <= len(selected) <= MAX_SOURCES:
+        _resolution_guard("queue-current-selection-bound")
         raise EligibilityError("current queue source selection exceeds its object/request budget")
     identities: list[tuple[int, tuple[str, str, str, str]]] = []
     for node in selected:
@@ -873,6 +1100,14 @@ def _current_queue_candidate(
                 or node["headCommit"].get("oid") not in {head, pending.source_head}
                 or target_revision(api, default_branch) != base
             ):
+                _resolution_binding_guard(
+                    "queue-current-binding",
+                    number,
+                    node,
+                    pending.source_head,
+                    pending.merge_head,
+                    head,
+                )
                 raise EligibilityError(
                     "unready queue PR does not match its exact source binding"
                 ) from pending
@@ -906,6 +1141,7 @@ def _current_queue_candidate(
         raise EligibilityError(str(error)) from error
     matched = [(number, identity) for number, identity in identities if identity[0] in matches]
     if len(matched) != 1:
+        _resolution_guard("queue-current-cardinality", matching_count=len(matched))
         raise EligibilityError(
             "queue candidate has no unique source; multi-entry groups unsupported"
         )
@@ -936,9 +1172,13 @@ def _current_queue_candidate(
 def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
     """Bind current tested queues separately from historical synthetic PR hints."""
     revision(head)
+    _resolution_observe("queue-protection", tested_sha=head)
     rules = require_single_entry_queue(api, default_branch)
+    _resolution_observe("queue-snapshot")
     nodes = _queue_entries(api, default_branch)
+    _resolution_observe("queue-snapshot", queue_count=len(nodes))
     base = target_revision(api, default_branch)
+    _resolution_observe("queue-snapshot", resolution_base_sha=base)
     require_ancestor(api, base, head)
     built = [
         node
@@ -950,7 +1190,9 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
         and SHA.fullmatch(node["headCommit"]["oid"])
     ]
     exact = [node for node in built if node["headCommit"]["oid"] == head]
+    _resolution_observe("queue-snapshot", built_count=len(built), exact_count=len(exact))
     if len(exact) > 1:
+        _resolution_guard("queue-exact-cardinality")
         raise EligibilityError(
             "queue candidate has multiple entries; multi-entry groups unsupported"
         )
@@ -964,6 +1206,7 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
         if any(not isinstance(node.get("pullRequest"), dict) for node in current):
             raise EligibilityError("queue entry has no authoritative source PR")
         return _current_queue_candidate(api, head, default_branch, base, nodes, rules, current)
+    _resolution_observe("queue-fallback", selected_count=0)
     matching: list[Candidate] = []
     candidate_tree: str | None = None
     for node in nodes:
@@ -985,6 +1228,14 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
                 pending.source_head,
                 pending.merge_head,
             }:
+                _resolution_binding_guard(
+                    "queue-fallback-binding",
+                    number,
+                    node,
+                    pending.source_head,
+                    pending.merge_head,
+                    head,
+                )
                 raise EligibilityError(
                     "unready queue PR does not match the exact source binding"
                 ) from pending
@@ -1016,6 +1267,7 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
             )
         )
     if len(matching) != 1:
+        _resolution_guard("queue-fallback-cardinality", matching_count=len(matching))
         raise EligibilityError(
             "queue candidate has no unique exact source PR; multi-entry groups are unsupported"
         )
@@ -1697,69 +1949,81 @@ def service(
     deferred: list[dict[str, Any]] = []
     no_action: list[dict[str, Any]] = []
     if event_name == "workflow_run":
-        source_id = event.get("workflow_run", {}).get("id")
-        if type(source_id) is not int or source_id < 1:
-            raise EligibilityError("workflow_run event has no valid source identifier")
-        source = api.get(f"actions/runs/{source_id}")
-        head = revision(source.get("head_sha"))
-        if not candidate_run(api, source, head):
-            raise EligibilityError(
-                "workflow_run source is outside the read-only candidate CI allowlist"
-            )
-        try:
-            if source.get("event") == "merge_group":
-                candidates.append(queue_candidate(api, head, default_branch))
-            else:
-                prs = source.get("pull_requests", [])
-                if len(prs) != 1 or type(prs[0].get("number")) is not int:
-                    raise EligibilityError("candidate CI run has no unique authoritative PR")
-                candidate = pr_candidate(api, prs[0]["number"])
-                # REST workflow runs may identify the PR source head rather than the
-                # synthetic merge SHA. Only the live PR supplies the latter.
-                if head not in {candidate.source_head, candidate.head}:
-                    raise EligibilityError("candidate CI run is stale relative to the live PR")
-                candidates.append(candidate)
-        except CandidateComputationPending as pending:
-            if source.get("event") != "merge_group" and head not in {
-                pending.source_head,
-                pending.merge_head,
-            }:
+        with _resolution_context(event):
+            source_id = event.get("workflow_run", {}).get("id")
+            if type(source_id) is not int or source_id < 1:
+                _resolution_guard("source-run-id-invalid")
+                raise EligibilityError("workflow_run event has no valid source identifier")
+            _resolution_observe("source-run")
+            source = api.get(f"actions/runs/{source_id}")
+            _resolution_source(source)
+            head = revision(source.get("head_sha"))
+            if not candidate_run(api, source, head):
+                _resolution_guard("source-run-rejected")
                 raise EligibilityError(
-                    "candidate CI run is stale relative to the pending PR"
-                ) from pending
-            deferred.append(
-                {
-                    "pull_request": pending.number,
-                    "source_run_id": source_id,
-                    "source_head_sha": head,
-                    "reason": str(pending),
-                    "next_action": (
-                        "The completed CI callback or existing hourly schedule "
-                        "will recheck live metadata."
-                    ),
-                }
-            )
-        except ClosedPullRequest as closed:
-            if (
-                event.get("action") != "completed"
-                or source.get("status") != "completed"
-                or closed.identity[0] != default_branch
-                or head not in {closed.source_head, closed.merge_head}
-            ):
-                raise EligibilityError(
-                    "closed PR is not bound to this exact completed callback"
-                ) from closed
-            no_action.append(
-                {
-                    "pull_request": closed.number,
-                    "source_run_id": source_id,
-                    "source_head_sha": head,
-                    "reason": str(closed),
-                    "next_action": (
-                        "No evaluation, eligibility status or rerun is needed for this closed PR."
-                    ),
-                }
-            )
+                    "workflow_run source is outside the read-only candidate CI allowlist"
+                )
+            try:
+                if source.get("event") == "merge_group":
+                    _resolution_observe("queue-protection", tested_sha=head)
+                    candidates.append(queue_candidate(api, head, default_branch))
+                else:
+                    prs = source.get("pull_requests", [])
+                    _resolution_observe(
+                        "pull-request", source_pr_count=len(prs) if type(prs) is list else None
+                    )
+                    if len(prs) != 1 or type(prs[0].get("number")) is not int:
+                        _resolution_guard("source-pr-cardinality")
+                        raise EligibilityError("candidate CI run has no unique authoritative PR")
+                    candidate = pr_candidate(api, prs[0]["number"])
+                    # REST workflow runs may identify the PR source head rather than the
+                    # synthetic merge SHA. Only the live PR supplies the latter.
+                    if head not in {candidate.source_head, candidate.head}:
+                        _resolution_guard("source-head-stale", pr_source_sha=candidate.source_head)
+                        raise EligibilityError("candidate CI run is stale relative to the live PR")
+                    candidates.append(candidate)
+            except CandidateComputationPending as pending:
+                if source.get("event") != "merge_group" and head not in {
+                    pending.source_head,
+                    pending.merge_head,
+                }:
+                    raise EligibilityError(
+                        "candidate CI run is stale relative to the pending PR"
+                    ) from pending
+                deferred.append(
+                    {
+                        "pull_request": pending.number,
+                        "source_run_id": source_id,
+                        "source_head_sha": head,
+                        "reason": str(pending),
+                        "next_action": (
+                            "The completed CI callback or existing hourly schedule "
+                            "will recheck live metadata."
+                        ),
+                    }
+                )
+            except ClosedPullRequest as closed:
+                if (
+                    event.get("action") != "completed"
+                    or source.get("status") != "completed"
+                    or closed.identity[0] != default_branch
+                    or head not in {closed.source_head, closed.merge_head}
+                ):
+                    raise EligibilityError(
+                        "closed PR is not bound to this exact completed callback"
+                    ) from closed
+                no_action.append(
+                    {
+                        "pull_request": closed.number,
+                        "source_run_id": source_id,
+                        "source_head_sha": head,
+                        "reason": str(closed),
+                        "next_action": (
+                            "No evaluation, eligibility status or rerun is needed "
+                            "for this closed PR."
+                        ),
+                    }
+                )
     else:
         prs = api.items("pulls?state=open&per_page=100&sort=updated&direction=desc")
         if not isinstance(prs, list) or len(prs) >= 100:
