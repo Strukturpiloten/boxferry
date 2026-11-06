@@ -21,13 +21,16 @@ on:
         required: true
         type: string
       needs_json:
-        description: JSON of every caller prerequisite, including exact candidate_sha outputs.
+        description: JSON of every prerequisite with candidate bindings and one published API proof.
         required: true
         type: string
     outputs:
       candidate_sha:
         description: Exact candidate with every required release prerequisite successful.
         value: ${{ jobs.validate.outputs.candidate_sha }}
+      published_api_candidate_sha:
+        description: Exact candidate with one validated published-purpose API prerequisite.
+        value: ${{ jobs.validate.outputs.published_api_candidate_sha }}
 
 permissions:
   contents: read
@@ -39,6 +42,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}
+      published_api_candidate_sha: ${{ steps.gate.outputs.published_api_candidate_sha }}
     steps:
       - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,6 +62,7 @@ jobs:
       - name: Install the locked shared Python project
         uses: ./_automation/.github/actions/shared-python
       - name: Require all repository-owned release prerequisites
+        id: gate
         shell: bash
         env:
           POLICY_CONFIG: ${{ steps.source.outputs.config }}

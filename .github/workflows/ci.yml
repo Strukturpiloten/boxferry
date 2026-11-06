@@ -55,10 +55,15 @@ jobs:
         name: Install pinned Node.js toolchain
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # renovate: datasource=node-version depName=node
           node-version: 24.22.1
           cache: npm
           cache-dependency-path: "**/package-lock.json"
+      # Candidate validation only; this is not an admitted-source receipt.
+      - name: Validate candidate shared Node composite
+        uses: ./_automation/.github/actions/shared-node
+        with:
+          automation-sha: ${{ github.sha }}
+          cache: ""
       - name: Check Python formatting
         run: uv run --locked --project _automation/automation ruff format --check _automation/automation
       - name: Lint Python

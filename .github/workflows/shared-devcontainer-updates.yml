@@ -42,10 +42,10 @@ jobs:
       - name: Install canonical locked Python
         uses: ./_automation/.github/actions/shared-python
       - name: Install reviewed Node toolchain
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: ./_automation/.github/actions/shared-node
         with:
-          # renovate: datasource=node-version depName=node
-          node-version: 24.22.1
+          automation-sha: ${{ inputs.automation-sha }}
+          cache: ""
       - name: Install integrity-locked official generator without hooks
         shell: bash
         run: npm ci --ignore-scripts --prefix _automation/automation/devcontainer

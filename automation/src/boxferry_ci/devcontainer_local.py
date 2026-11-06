@@ -166,21 +166,52 @@ def _install_cli(automation: Path, private: Path, commands: validation.Commands)
     )
 
 
-def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
+def _owned_output(source: Path, output: Path) -> None:
+    target = source / "target"
+    if not output.absolute().is_relative_to(target) or ".." in output.parts:
+        raise validation.ValidationError("local report must be in the repository-owned target tree")
+    bootstrap.safe_cache_directory(output.parent)
+    for path in (output.parent, *output.parent.parents):
+        if not path.is_relative_to(target):
+            break
+        if path.stat().st_uid != os.getuid():
+            raise validation.ValidationError(
+                "local preparation/report directory must remain user-owned"
+            )
+    if output.is_symlink() or (
+        output.exists() and (not output.is_file() or output.stat().st_uid != os.getuid())
+    ):
+        raise validation.ValidationError("local report must be a regular user-owned file")
+
+
+def execute(
+    source: Path, config: Path, output: Path, *, outer_mode: str = "rootless"
+) -> dict[str, object]:
     """One bounded preparation and one existing native qualifier invocation."""
     report: dict[str, object] = {
         "schema": 1,
         "status": "failure",
         "mode": "local",
         "engine": "podman",
+        "requested_outer_mode": outer_mode,
+        "caller_uid": os.getuid(),
         "cleanup": "not-started",
-        "preparation_cleanup": "pending",
+        "preparation_cleanup": "not-started",
         "next_action": "Correct local source, tool or cleanup failures; rerun this candidate.",
     }
-    private = Path(tempfile.mkdtemp(prefix="devcontainer-local-", dir=output.parent))
-    private.chmod(0o700)
+    private: Path | None = None
+    private_identity: tuple[int, int, int, int] | None = None
     commands: validation.Commands | None = None
     try:
+        validation.effective_outer_mode("local", "podman", outer_mode)
+        _owned_output(source, output)
+        private = Path(tempfile.mkdtemp(prefix="devcontainer-local-", dir=output.parent))
+        private.chmod(0o700)
+        report["preparation_cleanup"] = "pending"
+        facts = private.lstat()
+        private_identity = (facts.st_dev, facts.st_ino, facts.st_uid, facts.st_mode)
+        report["preparation_nonce"] = private.name
+        report["preparation_directory_identity"] = ":".join(str(item) for item in private_identity)
         commands = validation.Commands(private)
         commands.budget = validation.Budget.start(output.parent, PREPARATION_SECONDS)
         architecture = validation.ARCHITECTURES.get(platform.machine())
@@ -193,6 +224,11 @@ def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
         held = validation.fingerprint(source, commands)
         selected = bootstrap.load_config(source)
         automation_sha = exact_sha(selected["revision"], "selected automation revision")
+        cache = source / "target/boxferry-automation" / f"{automation_sha}.git"
+        if cache.exists() and cache.stat().st_uid != os.getuid():
+            raise validation.ValidationError(
+                "selected preparation object cache must remain user-owned"
+            )
         relative = config.relative_to(source) if config.is_absolute() else config
         config_path = relative_path(relative.as_posix(), "local policy path")
         if config_path != selected["policy"]:
@@ -252,11 +288,13 @@ def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
             manifest=manifest,
             engine="podman",
             mode="local",
+            outer_mode=outer_mode,
             work=output.parent,
             expected_architecture=architecture,
             local_sources=siblings if repository == "boxferry" else None,
         )
         report.update(outcome)
+        _owned_output(source, output)
         validation._held_revision(source, candidate, commands, clean=False)
         if validation.fingerprint(source, commands) != held:
             raise validation.ValidationError("candidate input closure changed during qualification")
@@ -267,6 +305,30 @@ def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
             raise validation.ValidationError(
                 "local workspace identities changed during qualification"
             )
+        if report.get("status") == "success" and outer_mode == "rootful":
+            from . import devcontainer_lifetime
+
+            if (
+                report.get("namespace_closed") is not True
+                or report.get("directory_cleanup") != "success"
+                or any(
+                    report.get(key) != expected
+                    for key, expected in {
+                        "lifetime_bootstrap_sha256": devcontainer_lifetime.BOOTSTRAP_SHA256,
+                        "lifetime_init_sha256": devcontainer_lifetime.INIT_SHA256,
+                        "lifetime_module_sha256": devcontainer_lifetime.MODULE_SHA256,
+                    }.items()
+                )
+            ):
+                raise validation.ValidationError(
+                    "rootful receipt lacks exact lifetime/closure evidence"
+                )
+        if report.get("status") == "success" and any(
+            type(report.get(key)) is not int for key in ("caller_uid", "engine_uid")
+        ):
+            raise validation.ValidationError(
+                "qualification UID observations must be exact integers"
+            )
         if report.get("status") == "success" and any(
             report.get(key) != value
             for key, value in {
@@ -276,6 +338,10 @@ def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
                 "input_sha256": held,
                 "source_manifest_sha256": validation.manifest_digest(manifest),
                 "engine": "podman",
+                "requested_outer_mode": outer_mode,
+                "outer_mode": outer_mode,
+                "caller_uid": os.getuid(),
+                "engine_uid": 0 if outer_mode == "rootful" else os.getuid(),
                 "architecture": architecture,
                 "cleanup": "success",
             }.items()
@@ -289,16 +355,28 @@ def execute(source: Path, config: Path, output: Path) -> dict[str, object]:
         )
     finally:
         report["preparation_outcomes"] = commands.outcomes if commands is not None else []
-        try:
-            shutil.rmtree(private)
-            report["preparation_cleanup"] = "success"
-        except OSError as error:
-            report.update(
-                status="failure",
-                preparation_cleanup="failure",
-                preparation_cleanup_cause=redact(str(error), protected_values(os.environ))[:4096],
-                retained_preparation_directory=str(private),
-            )
+        if private is not None:
+            try:
+                facts = private.lstat()
+                if (
+                    private.is_symlink()
+                    or (facts.st_dev, facts.st_ino, facts.st_uid, facts.st_mode) != private_identity
+                    or facts.st_uid != os.getuid()
+                ):
+                    raise validation.ValidationError(
+                        "preparation cleanup refuses changed user-owned custody"
+                    )
+                shutil.rmtree(private)
+                report["preparation_cleanup"] = "success"
+            except (OSError, ValueError) as error:
+                report.update(
+                    status="failure",
+                    preparation_cleanup="failure",
+                    preparation_cleanup_cause=redact(str(error), protected_values(os.environ))[
+                        :4096
+                    ],
+                    retained_preparation_directory=str(private),
+                )
     return report
 
 
@@ -323,29 +401,25 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Fresh bounded receipt inside the checkout's ignored target tree.",
     )
+    parser.add_argument(
+        "--outer-mode",
+        choices=("rootless", "rootful"),
+        default="rootless",
+        help="Explicit operator-only local Podman privilege; the qualifier stays nonroot.",
+    )
     options = parser.parse_args(argv)
     source = options.repository_root.resolve()
     output = options.output if options.output.is_absolute() else source / options.output
     previous = signal.signal(signal.SIGTERM, _cancel)
     writable = False
     try:
-        if not output.absolute().is_relative_to(source / "target") or ".." in output.parts:
-            raise validation.ValidationError(
-                "local report must be in the repository-owned target tree"
-            )
-        bootstrap.safe_cache_directory(output.parent)
-        if output.is_symlink() or (output.exists() and not output.is_file()):
-            raise validation.ValidationError("local report must be a regular owned file")
+        validation.effective_outer_mode("local", "podman", options.outer_mode)
+        _owned_output(source, output)
         writable = True
-        report = execute(source, options.config, output)
-        encoded = json.dumps(report, sort_keys=True)
-        if len(encoded.encode()) > validation.MAX_REPORT:
-            report = {
-                "schema": 1,
-                "status": "failure",
-                "cause": "local report exceeds its byte bound",
-            }
-            encoded = json.dumps(report)
+        report = execute(source, options.config, output, outer_mode=options.outer_mode)
+        _owned_output(source, output)
+        encoded = validation.serialize_report(report)
+        report = json.loads(encoded)
         output.write_text(encoded + "\n")
         print(encoded)
         return 0 if report.get("status") == "success" else 1
@@ -355,14 +429,17 @@ def main(argv: list[str] | None = None) -> int:
             "status": "failure",
             "mode": "local",
             "engine": "podman",
+            "requested_outer_mode": options.outer_mode,
+            "caller_uid": os.getuid(),
             "cause": redact(str(error), protected_values(os.environ))[:4096],
             "next_action": "Correct the named local input or infrastructure cause and rerun.",
         }
         encoded = json.dumps(failure, sort_keys=True)
         if writable:
             try:
+                _owned_output(source, output)
                 output.write_text(encoded + "\n")
-            except OSError:
+            except (OSError, ValueError):
                 pass  # Exit remains failure; never report a stale receipt as new success.
         print(encoded, file=sys.stderr)
         return 1

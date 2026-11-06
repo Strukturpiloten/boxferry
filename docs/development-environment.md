@@ -1,128 +1,104 @@
 # Development environment
 
-Use the Dev Container's pinned Rust, Node, documentation, audit and GitHub tools shared with CI
-across the seven-repository workspace.
-
-Keep sibling checkouts beside `boxferry`; open `boxferry-lenses.code-workspace` in the Dev Container.
-After mount changes, use **Dev Containers: Rebuild and Reopen in Container**; reloading VS Code
-alone cannot add mounts.
+Use the Dev Container's pinned workspace tools. Keep sibling checkouts beside
+`boxferry` and open `boxferry-lenses.code-workspace`. After mount changes, use
+**Dev Containers: Rebuild and Reopen in Container**; window reload cannot add mounts.
 
 ## Build the CLI
 
-Cargo uses its default workspace target directory.
-Build and run the repository-local release binary:
+Cargo uses its default workspace target directory:
 
 ```console
 cargo build --release --locked --package boxferry
 ./target/release/boxferry --version
 ```
 
-After pulling from an older workspace, run **Dev Containers: Rebuild Container** in VS Code. Existing terminals may use
-`unset CARGO_TARGET_DIR` until rebuilt.
+After toolchain updates use **Dev Containers: Rebuild Container**. Existing terminals
+may need `unset CARGO_TARGET_DIR`; local validation targets must stay in this worktree.
 
 ## Shared development tools
 
-The [shared Python project](../automation/pyproject.toml) owns uv, Ruff and ty. Coordinate the Dev
-Container uv image with each consumer's selected automation revision; historical website deployment
-sources retain their verified toolchain contract. Renovate tracks Dockerfile image and Cargo pins,
-including image release/tag/digest pairs and stage aliases. The [shared inventory](../automation/tool-artifacts.json)
-owns downloaded file-tool versions and checksums used by the [installer](../scripts/install-file-tools.sh).
-Rebuild after toolchain updates.
+The [locked Python project](../automation/pyproject.toml) owns uv, Ruff and ty.
+Coordinate its selected automation revision with consumers. Renovate owns Dev Container
+image version/digest pairs, features, Cargo tools and downloaded-tool inventory;
+[development policy](dependency-policy.md) defines integrity and exceptions.
+The [shared inventory](../automation/tool-artifacts.json) and
+[installer](../scripts/install-file-tools.sh) supply file tools. Rebuild after upgrades.
+Git comes from the pinned base; `gh` uses the locked feature.
 
-## Kubernetes tooling
+The [Kubernetes installer](../scripts/install-kubernetes-tools.sh) supplies pinned kind,
+kubectl, Helm and Kustomize. Its trusted checksum refresher verifies official metadata
+and both architectures, then updates only eligible Renovate candidates. Required
+integrity checks read exact tested Git blobs; the complete local gate checks the working
+tree. [Provisioning](https://github.com/Strukturpiloten/boxferry/issues/445) and
+[ARM64 evidence](https://github.com/Strukturpiloten/boxferry/issues/446) remain separate.
 
-Git comes from the pinned base; `gh` uses the locked feature. Rebuild after updates.
-[The installer](../scripts/install-kubernetes-tools.sh) supplies checksum-pinned kind, kubectl,
-Helm, and Kustomize. Renovate tracks their versions and per-architecture integrity records. A
-trusted scheduled and post-CI workflow refreshes kubectl, Helm, and Kustomize checksums from their
-official metadata sources, verifies both architecture artifact digests, and updates only an eligible
-Renovate PR; kind's release-attachment manager updates its asset digests. No Dashboard approval or
-manual refresh is required for these four development tools. The workflow treats candidate content
-as inert text, hashes streamed artifacts without storing them, and never executes candidate code or
-artifacts. The complete local gate verifies the installer working tree, and the required integrity
-job verifies the installer from the exact tested Git commit. [Provisioning and consumer audit](https://github.com/Strukturpiloten/boxferry/issues/445)
-covers host/CI reuse and separate Podman access;
-[arm64 execution](https://github.com/Strukturpiloten/boxferry/issues/446) remains pending.
+## Rust components
 
-## Rust toolchain components
-
-`rust-toolchain.toml` selects Rust, Clippy, rustfmt and LLVM coverage tools; the Dev Container
-preinstalls them. Rustup installs later pinned components.
-
-For missing `llvm-tools-preview`, run inside the container from the BoxFerry root:
+`rust-toolchain.toml` selects Rust, Clippy, rustfmt and LLVM coverage tools. If needed:
 
 ```console
 rustup component add llvm-tools-preview
 bash .devcontainer/verify-tools.sh
 ```
 
-Rebuild the Dev Container after pulling the fix.
-
 ## Dev Container feature updates
 
-The [locked official generator](../automation/devcontainer/) owns feature-lock generation;
-its npm declaration and lock are canonical. Installation uses `npm ci --ignore-scripts`.
-The trusted helper validates the whole graph before replacing the lock.
-
-Hosted feature proposals remain held. Inactive producer code can be admitted after complete
-gates and main CI; each consumer needs explicit seed/adoption and successful native image/tool
-qualification before automatic activation. See [ADR 0094](decisions/0094-official-devcontainer-feature-updates.md).
+The [canonical locked generator](../automation/devcontainer/) uses
+`npm ci --ignore-scripts`. Hosted proposals remain held: each consumer needs explicit
+seed/adoption and successful native image/tool qualification before automatic activation.
+See [ADR 0094](decisions/0094-official-devcontainer-feature-updates.md).
 
 ## Local verification
 
-Follow [Podman-only policy](decisions/0079-native-test-runtime-selection.md); pre-push cleanup:
+Follow [Podman-only runtime policy](decisions/0079-native-test-runtime-selection.md).
+For cleanup without tests:
 
 ```console
 ./scripts/format-lint.sh --fix
 ```
 
-VS Code task **BoxFerry: Format and lint only (no tests)** checks files, Actions, Clippy and
-whitespace. Clippy defaults to two jobs; use `BOXFERRY_LINT_JOBS=1 ./scripts/format-lint.sh --fix`
-for constrained machines. `--check` skips formatting. Use the Dev Container for pinned linters.
+The matching VS Code task performs no validation. Clippy defaults to two jobs;
+`BOXFERRY_LINT_JOBS=1` reduces contention. `--check` avoids source formatting.
 
-`python3 scripts/validation-plan.py run-local` provides change-aware feedback; `plan --event local`
-previews it. Use `--docs-only` or `--full`; VS Code tasks match. Unset shared `CARGO_TARGET_DIR`
-for this task and the complete gate: explicit targets must stay inside this worktree to avoid
-stale fixture paths. Download caches remain reusable.
-
-The [shared-workflow rollout](https://github.com/Strukturpiloten/boxferry/issues/549) will select PR and
-merge queue checks from trusted base policy and tested changes. Pure prose can skip Rust; executable
-documentation retains tests, known mixed changes use the union, and unknown changes run the full
-plan. `Required CI` verifies selected jobs and planned skips. Adoption is tracked per repository.
-
-Cleanup is not test evidence. Run the complete gate after the final edit when resources permit:
+`python3 scripts/validation-plan.py run-local` selects development feedback;
+`plan --event local` previews it. Known impacts select their union; policy, classifier,
+unknown and unsafe changes remain complete. [Rollout #549](https://github.com/Strukturpiloten/boxferry/issues/549)
+still requires per-repository acceptance. Focused feedback never replaces:
 
 ```console
 ./scripts/check-all.sh
 ```
 
-API checks use [trusted development baselines](decisions/0096-development-and-published-api-baselines.md);
-retain `target/api-baseline-local.json` and follow explicit fetch guidance.
+The default gate formats; `--check` runs without source formatting. Any edit invalidates
+its result. Preserve [API baseline evidence](decisions/0096-development-and-published-api-baselines.md)
+and `target/api-baseline-local.json`.
 
-It formats first; edits invalidate results. Focused checks cannot replace it. Contributors unable
-to complete it may push after lightweight cleanup succeeds and rely on required GitHub checks;
-merging requires those checks to pass.
+## Explicit local rootful qualification
+
+`devcontainer-local` defaults to rootless Podman. Explicit `--outer-mode rootful`
+uses a fresh private store inside one PID/mount lifetime. Source/npm/uv preparation
+and reports remain under the original nonroot user; invoking the whole helper with
+sudo is rejected. The local profile selects cgroupfs, file events and installed
+`/usr/bin/runc`, with observed versions/checksums and no installation or fallback.
+
+Only proved namespace closure and unchanged ownership permit finite directory
+cleanup. Uncertain runs retain the affected resources and report their custody.
+Hosted/rootless behavior and qualified inner targets remain separate. See
+[#578](https://github.com/Strukturpiloten/boxferry/issues/578) for local rootful
+qualification status and [#563](https://github.com/Strukturpiloten/boxferry/issues/563)
+for ARM qualification status.
 
 ## Issue-to-PR contribution workflow
 
-Use a focused issue and branch and review the diff. The fail-closed `Required CI` check must pass
-before merge; main pushes and releases run complete validation. See [`AGENTS.md`](../AGENTS.md)
-for the complete agent Git and GitHub workflow; agents must complete the local gate before committing,
-pushing, or opening a PR.
+The fail-closed `Required CI` check must pass before merge. See [AGENTS.md](../AGENTS.md)
+for the complete agent Git and GitHub workflow: agents must complete the local gate before
+committing, pushing, or opening a PR. Independent verifiers do not edit source; the primary
+owns the final gate and standing-authorized merges.
 
-## GitHub authentication
+## GitHub authentication and agents
 
-The Dev Container stores `gh` authentication in a dedicated persistent volume. Run the workspace
-authentication task after token changes; tokens never enter repository or host CLI configuration.
-
-## Agent-assisted verification
-
-Models/roles: [`.codex/`](../.codex/); permissions/workflow: [`AGENTS.md`](../AGENTS.md).
-After configuration changes, reload or start a trusted session; align primary overrides with Sol/xhigh.
-
-`./scripts/check-all.sh --check` runs the full gate without formatting; default/`--fix` formats
-first. Both modes may change ignored caches/build artifacts. Verifiers report failures without
-edits; the primary owns the final gate and standing-authorized merges.
-
-Shell-runner regression tests require the Linux Dev Container; agent-configuration checks are
-platform-independent. Hosted validation runs on Linux.
+Use the persistent Dev Container `gh` volume and workspace authentication task; never put
+tokens into issues, command arguments or Git configuration. Role definitions live in
+[`.codex/`](../.codex/); reload a trusted session after configuration changes. Ordinary
+shell-runner tests require Linux; model configuration checks remain platform-independent.

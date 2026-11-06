@@ -12,10 +12,12 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from boxferry_ci import devcontainer_lifetime as lifetime
 from boxferry_ci import devcontainer_local as subject
 from boxferry_ci.__main__ import main as dispatch
 
@@ -114,6 +116,8 @@ class LocalEntry(unittest.TestCase):
                 timeout: int = 30,
                 *,
                 cwd: Path | None = None,
+                while_running: Callable[[], None] | None = None,
+                max_output_bytes: int = 2_000_000,
             ) -> str:
                 test.events.append((stage, {"argv": argv, "cwd": cwd, "env": dict(self.env)}))
                 self.outcomes.append({"stage": stage, "status": "success"})
@@ -187,6 +191,15 @@ class LocalEntry(unittest.TestCase):
                 "policy_sha": CANDIDATE,
                 "automation_sha": AUTOMATION,
                 "engine": "podman",
+                "requested_outer_mode": kwargs["outer_mode"],
+                "outer_mode": kwargs["outer_mode"],
+                "caller_uid": os.getuid(),
+                "engine_uid": 0 if kwargs["outer_mode"] == "rootful" else os.getuid(),
+                "namespace_closed": True,
+                "directory_cleanup": "success",
+                "lifetime_bootstrap_sha256": lifetime.BOOTSTRAP_SHA256,
+                "lifetime_init_sha256": lifetime.INIT_SHA256,
+                "lifetime_module_sha256": lifetime.MODULE_SHA256,
                 "architecture": kwargs["expected_architecture"],
                 "input_sha256": subject.validation.fingerprint(source, FakeCommands(self.root)),
                 "source_manifest_sha256": subject.validation.manifest_digest(manifest),
@@ -230,8 +243,140 @@ class LocalEntry(unittest.TestCase):
             self.heads[sibling] = SIBLING
             self.origins[sibling] = f"https://github.com/Strukturpiloten/{name}.git"
 
-    def execute(self) -> dict[str, object]:
-        return subject.execute(self.source, Path("scripts/validation-policy.json"), self.output)
+    def execute(self, outer_mode: str = "rootless") -> dict[str, object]:
+        return subject.execute(
+            self.source, Path("scripts/validation-policy.json"), self.output, outer_mode=outer_mode
+        )
+
+    def test_explicit_rootful_selection_keeps_preparation_user_owned_and_forwards_once(
+        self,
+    ) -> None:
+        with patch.dict(os.environ, {"BOXFERRY_OUTER_MODE": "rootful"}):
+            default = self.execute()
+        self.assertEqual(default["outer_mode"], "rootless")
+        self.events.clear()
+        result = self.execute("rootful")
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["caller_uid"], os.getuid())
+        self.assertEqual(result["engine_uid"], 0)
+        self.assertEqual(self.mocks[3].call_args.kwargs["outer_mode"], "rootful")
+        self.assertEqual(sum(event[0] == "qualify" for event in self.events), 1)
+        self.assertTrue(
+            all("sudo" not in str(event) for event in self.events if event[0] != "qualify")
+        )
+
+    def test_invalid_mode_or_root_caller_stops_before_preparation(self) -> None:
+        self.assertEqual(self.execute("invalid")["status"], "failure")
+        with (
+            patch.object(os, "getuid", return_value=0),
+            patch.object(os, "geteuid", return_value=0),
+        ):
+            self.assertEqual(self.execute("rootful")["status"], "failure")
+        self.assertEqual(self.events, [])
+        self.assertEqual(list(self.output.parent.iterdir()), [])
+
+    def test_success_receipt_rejects_independent_outer_mode_and_uid_drift(self) -> None:
+        for key, value in (
+            ("outer_mode", "rootless"),
+            ("engine_uid", 1),
+            ("caller_uid", 0),
+            ("requested_outer_mode", "rootless"),
+        ):
+            with self.subTest(key=key):
+
+                def qualify(
+                    *, key: str = key, value: object = value, **kwargs: object
+                ) -> dict[str, object]:
+                    return {**self.qualify(**kwargs), key: value}
+
+                self.mocks[3].side_effect = qualify
+                result = self.execute("rootful")
+                self.assertEqual(result["status"], "failure", result)
+                self.assertIn("receipt differs", str(result["cause"]))
+
+    def test_rootful_receipt_requires_closure_and_exact_payload_hashes(self) -> None:
+        for key, value in (
+            ("namespace_closed", False),
+            ("namespace_closed", 1),
+            ("directory_cleanup", "pending"),
+            ("lifetime_bootstrap_sha256", "0" * 64),
+            ("lifetime_module_sha256", "0" * 64),
+            ("engine_uid", False),
+        ):
+            with self.subTest(key=key, value=value):
+
+                def qualify(
+                    *, key: str = key, value: object = value, **kwargs: object
+                ) -> dict[str, object]:
+                    return {**self.qualify(**kwargs), key: value}
+
+                self.mocks[3].side_effect = qualify
+                result = self.execute("rootful")
+                self.assertEqual(result["status"], "failure", result)
+
+    def test_output_and_cache_ownership_refuse_root_owned_paths(self) -> None:
+        original = Path.stat
+
+        def facts(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            observed = original(path, follow_symlinks=follow_symlinks)
+            if path == self.output.parent:
+                values = list(observed)
+                values[4] = 0
+                return os.stat_result(values)
+            return observed
+
+        with patch.object(Path, "stat", facts):
+            result = self.execute("rootful")
+        self.assertEqual(result["status"], "failure", result)
+        self.assertFalse(self.events)
+
+    def test_report_link_substitution_after_qualification_is_never_written(self) -> None:
+        sentinel = self.source / "sentinel"
+        sentinel.write_text("unrelated sentinel")
+
+        def qualify(**kwargs: object) -> dict[str, object]:
+            result = self.qualify(**kwargs)
+            self.output.symlink_to(sentinel)
+            return result
+
+        self.mocks[3].side_effect = qualify
+        with contextlib.redirect_stderr(io.StringIO()):
+            status = subject.main(
+                [
+                    "--repository-root",
+                    str(self.source),
+                    "--config",
+                    "scripts/validation-policy.json",
+                    "--output",
+                    str(self.output),
+                    "--outer-mode",
+                    "rootful",
+                ]
+            )
+        self.assertEqual(status, 1)
+        self.assertEqual(sentinel.read_text(), "unrelated sentinel")
+
+    def test_root_owned_selected_object_cache_stops_before_snapshot_or_install(self) -> None:
+        cache = self.source / "target/boxferry-automation" / f"{AUTOMATION}.git"
+        cache.mkdir(parents=True)
+        original = Path.stat
+
+        def facts(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            observed = original(path, follow_symlinks=follow_symlinks)
+            if path == cache:
+                fields = list(observed)
+                fields[4] = 0
+                return os.stat_result(fields)
+            return observed
+
+        with patch.object(Path, "stat", facts):
+            report = self.execute("rootful")
+        self.assertEqual(report["status"], "failure", report)
+        self.assertFalse(
+            any(
+                event[0] in {"checkout", "install-official-cli", "qualify"} for event in self.events
+            )
+        )
 
     def test_nonbox_binds_dirty_candidate_and_clean_HEAD_policy_and_full_automation(self) -> None:
         result = self.execute()

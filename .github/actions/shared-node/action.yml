@@ -1,0 +1,43 @@
+---
+name: Canonical shared Node tooling
+description: Resolve Node from the selected immutable shared checkout after its shared Python setup.
+inputs:
+  automation-sha:
+    description: Exact selected shared source, matching this action and shared Python checkout.
+    required: true
+  cache:
+    description: Preserve the caller's existing setup-node cache selection; empty disables caching.
+    default: ""
+  cache-dependency-path:
+    description: Preserve the caller's existing cache lock path; empty does not select a root lock.
+    default: ""
+outputs:
+  node-version:
+    description: Exact canonical Node version from the selected shared checkout.
+    value: ${{ steps.version.outputs.node_version }}
+runs:
+  using: composite
+  steps:
+    - name: Read the selected immutable Node authority
+      id: version
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        AUTOMATION_SHA: ${{ inputs.automation-sha }}
+      run: |
+        set -euo pipefail
+        automation_root="$(cd "${ACTION_PATH}/../../.." && pwd -P)"
+        interpreter="${automation_root}/automation/.venv/bin/python"
+        if [[ ! -x "${interpreter}" ]]; then
+          echo "Shared Node setup requires the selected shared Python project" >&2
+          exit 1
+        fi
+        "${interpreter}" -I -m boxferry_ci.node_setup \
+          --automation-root "${automation_root}" --automation-sha "${AUTOMATION_SHA}" \
+          --github-output "${GITHUB_OUTPUT}"
+    - name: Install the canonical Node toolchain
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ steps.version.outputs.node_version }}
+        cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
