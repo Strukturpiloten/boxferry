@@ -1,14 +1,14 @@
 # Releases
 
-Release-plz prepares release PRs. After merge, the protected Release workflow publishes
-the lockstep crates, tag, checksums and GitHub release.
+After a release-plz PR merges, the protected Release workflow publishes lockstep crates,
+tag, checksums and GitHub release.
 
 ## Commit classification contract
 
 - Release-worthy code uses `feat`, `fix`, `perf`, `refactor`, or `revert`.
 - Non-release work uses `docs`, `test`, `ci`, `build`, `style`, or `chore`.
 
-Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
+Breaking pre-1.0 changes use `!`, a minor version and migration notes.
 
 ## Maintainer flow
 
@@ -19,9 +19,9 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
    pre-release validation contract before the protected publication job can begin.
 5. Verify crates.io packages, checksums, tag, GitHub release, and installation.
 
-Use `validation_only: true` to exercise the identical validation path without tags, GitHub
-releases, crate publication, release credentials, or another mutating publication step. Manually
-dispatched full and focused migration-readiness artifacts remain diagnostic only.
+`validation_only: true` uses the identical validation path without tags, GitHub releases,
+crate publication, release credentials, or other publication mutations. Manually dispatched full
+and focused migration-readiness artifacts remain diagnostic only.
 
 ## Automatic release validation
 
@@ -29,12 +29,13 @@ Release requires fresh complete CI and catalogue evidence for one immutable cand
 Release and validation-only Release explicitly select published API compatibility against
 an exact canonical registry version, using the actual chosen candidate manifest version.
 Breaking commit subjects cannot waive an insufficient version. The aggregate requires
-`published_api_candidate_sha` for the exact candidate; a development result or generic
-candidate output cannot substitute. [Development API checks](automation.md#api-comparison-purpose)
+exactly one explicit `published_api_candidate_sha` for the exact candidate; a development
+result or generic candidate output cannot substitute. The shared gate exposes that separate
+validated published-API binding only after every prerequisite succeeds. [Development API checks](automation.md#api-comparison-purpose)
 use trusted Git baselines for ordinary changes.
 
-Main pushes and manual CI also run completely; ordinary PRs may use reviewed change-aware
-selection. Required CI rejects unexpected skips and missing results.
+Main pushes and manual CI run completely; PRs may use reviewed change-aware selection.
+Required CI rejects unexpected skips and missing results.
 
 The catalogue retains one bound binary, at most four workers, budgets, privacy, cleanup and limitations. Every non-success blocks publication, including failed, timed-out,
 cancelled, missing or skipped prerequisites. Focused or historical diagnostics cannot replace
@@ -58,12 +59,11 @@ independent of BoxFerry. A shared workflow does not establish consumer or releas
 
 ## Release notes
 
-Release notes come only from `CHANGELOG.md`. The aggregate runs its validator as a dedicated job
-required by the aggregate gate. Yank a version only when it is unsafe or unusable.
+Release notes come only from `CHANGELOG.md`. Their dedicated validator job is required by the
+aggregate gate. Yank a version only when unsafe or unusable.
 
-Record pending changes under `Unreleased`. Only release-plz creates numbered sections,
-dates them or bumps lockstep versions. It inserts a heading with blank lines,
-assigning notes to that release once.
+Record pending changes under `Unreleased`. Only release-plz creates and dates numbered sections
+or bumps lockstep versions. It inserts a heading with blank lines, assigning notes once.
 
 Both validator modes require one dated, usable numbered section matching the workspace version.
 Local/ordinary CI selects `--development`, permitting pending notes without publication.
@@ -75,9 +75,9 @@ Release-plz PRs and Release (including `validation_only`) select `--release`, re
 The workflow publishes crates in manifest dependency order. Normal, build, and development
 dependencies must all be available on crates.io before a dependent package is prepared.
 
-The publication helper skips package versions already visible on crates.io. After correcting an
-interrupted release, remove only the unpublished release tag and rerun the workflow from the
-corrected default branch. Never move or remove a tag belonging to a published GitHub release.
+The helper skips package versions already visible on crates.io. After correcting an interrupted
+release, remove only the unpublished release tag and rerun from the corrected default branch.
+Never move or remove a published GitHub release tag.
 
 ## CLI binary assets
 

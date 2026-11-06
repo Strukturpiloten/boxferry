@@ -201,6 +201,8 @@ fn shell_quoted_value<'a>(contents: &'a str, declaration: &str) -> Option<&'a st
     })
 }
 
+// Native Node ownership is validated with Renovate's real YAML parser/extractors in
+// automation/tests/test_presets.py (NativePresetTests); Rust jobs need no Node runtime.
 fn validate_workflow_renovate_pins(workflow_name: &str, workflow: &str) -> Result<(), String> {
     let lines = workflow.lines().collect::<Vec<_>>();
     for (index, line) in lines.iter().enumerate() {
@@ -242,16 +244,6 @@ fn validate_workflow_renovate_pins(workflow_name: &str, workflow: &str) -> Resul
                     ));
                 }
             }
-        }
-
-        if trimmed.starts_with("node-version:")
-            && !trimmed.contains("${{")
-            && previous != "# renovate: datasource=node-version depName=node"
-        {
-            return Err(format!(
-                "{workflow_name}:{} has a literal Node.js version without its adjacent Renovate marker",
-                index + 1
-            ));
         }
 
         if trimmed.starts_with("version:")
@@ -8837,12 +8829,18 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
 
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    if !ci.contains("renovate: datasource=crate depName=cargo-llvm-cov") {
+        return Err("canonical CI is missing the Cargo coverage tool Renovate marker".to_owned());
+    }
     for required in [
-        "renovate: datasource=crate depName=cargo-llvm-cov",
-        "renovate: datasource=node-version depName=node",
+        "Prepare the integrity-pinned native Renovate test runtime",
+        "python -m boxferry_ci.test_reporting",
+        "BOXFERRY_RENOVATE_PACKAGE:",
     ] {
         if !ci.contains(required) {
-            return Err(format!("canonical CI is missing Renovate marker `{required}`"));
+            return Err(format!(
+                "canonical CI must retain its actual native ownership validation route `{required}`"
+            ));
         }
     }
     let release_path = root.join(".github/workflows/release.yml");
@@ -9395,12 +9393,26 @@ fn devcontainer_renovate_extraction_and_replacement_are_complete() -> Result<(),
 }
 
 #[test]
+fn github_actions_reject_a_mutable_setup_node_reference() -> Result<(), String> {
+    let directory = std::env::temp_dir().join(format!("boxferry-node-action-pin-{}", std::process::id()));
+    let workflows = directory.join(".github/workflows");
+    fs::create_dir_all(&workflows).map_err(|error| error.to_string())?;
+    fs::write(
+        workflows.join("fixture.yml"),
+        "steps:\n  - uses: actions/setup-node@example\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let result = support::validate_action_pins(&directory);
+    fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+    if result.is_ok() {
+        return Err("generic immutable Action guard accepted actions/setup-node@example".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
 fn renovate_policy_rejects_unmanaged_workflow_pin_counterexamples() -> Result<(), String> {
     for (description, workflow) in [
-        (
-            "Node.js version",
-            "steps:\n  - uses: actions/setup-node@example\n    with:\n      node-version: 25.0.0\n",
-        ),
         (
             "Cargo tool version",
             "steps:\n  - run: cargo install --locked --version 1.2.3 example-tool\n",

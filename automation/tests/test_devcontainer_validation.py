@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import textwrap
@@ -14,12 +16,13 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from boxferry_ci import devcontainer_lifetime as lifetime
 from boxferry_ci import devcontainer_validation as validation
-from boxferry_ci.runner import run
+from boxferry_ci.runner import Diagnostic, RunResult, run
 
 SHA = "a" * 40
 POLICY = "b" * 40
@@ -36,6 +39,7 @@ class FakeCommands(validation.Commands):
         self.budget: validation.Budget | None = None
         self.outcomes: list[dict[str, object]] = []
         self.calls: list[tuple[tuple[str, ...], str, int]] = []
+        self.abort_reports: list[dict[str, object]] = []
         self.token = ""
         self.tag = ""
         self.failure = ""
@@ -48,10 +52,23 @@ class FakeCommands(validation.Commands):
         self.checkouts: list[Path] = []
         self.engine = "docker"
         self.mode = "hosted"
+        self.outer_mode = "rootful"
+        self.profile: dict[str, object] = {
+            "cgroupManager": "cgroupfs",
+            "eventLogger": "file",
+            "ociRuntime": {"name": "runc", "path": "/usr/bin/runc"},
+        }
         self.responses: dict[str, str] = {}
 
     def call(
-        self, argv: tuple[str, ...], stage: str, timeout: int = 30, *, cwd: Path | None = None
+        self,
+        argv: tuple[str, ...],
+        stage: str,
+        timeout: int = 30,
+        *,
+        cwd: Path | None = None,
+        while_running: Callable[[], None] | None = None,
+        max_output_bytes: int = 2_000_000,
     ) -> str:
         self.calls.append((argv, stage, timeout))
         if self.failure == stage:
@@ -64,6 +81,8 @@ class FakeCommands(validation.Commands):
             return "4.9.3+ds1-1ubuntu0.1"
         if stage == "podman-rootful-prerequisite":
             return "0"
+        if stage == "engine-process-uid":
+            return "0" if self.outer_mode == "rootful" else str(os.getuid())
         if stage in {"engine-info", "cleanup-store-identity"}:
             if self.engine == "podman":
                 return json.dumps(
@@ -71,9 +90,11 @@ class FakeCommands(validation.Commands):
                         "host": {
                             "serviceIsRemote": False,
                             "arch": "amd64",
-                            "security": {"rootless": self.mode == "local" and os.geteuid() != 0},
+                            "security": {"rootless": self.outer_mode == "rootless"},
+                            **self.profile,
                         },
                         "store": {
+                            "graphDriverName": "overlay",
                             "graphRoot": str(self.private / "store"),
                             "runRoot": str(self.private / "runroot"),
                         },
@@ -346,6 +367,694 @@ class ProducerTests(unittest.TestCase):
         self.assertNotIn("sudo", local_script)
         self.assertNotIn("docker", local_script)
         self.assertEqual((hosted / "containers.conf").read_text(), '[engine]\nlock_type = "file"\n')
+
+    def test_rootful_operator_mode_is_local_only_and_never_inferred_from_euid(self) -> None:
+        self.assertEqual(validation.effective_outer_mode("local", "podman"), "rootless")
+        self.assertEqual(validation.effective_outer_mode("local", "podman", "rootful"), "rootful")
+        for mode, engine, choice in (
+            ("hosted", "podman", "rootful"),
+            ("hosted", "docker", "rootless"),
+            ("local", "docker", "rootful"),
+            ("local", "podman", "auto"),
+        ):
+            with (
+                self.subTest(mode=mode, engine=engine, choice=choice),
+                self.assertRaises(ValueError),
+            ):
+                validation.effective_outer_mode(mode, engine, choice)
+        with (
+            patch.object(os, "getuid", return_value=0),
+            patch.object(os, "geteuid", return_value=0),
+            self.assertRaises(ValueError),
+        ):
+            validation.effective_outer_mode("local", "podman", "rootful")
+
+    def test_local_rootful_bridge_is_byte_equivalent_to_hosted_at_same_private_path(self) -> None:
+        private = self.root / "bridge"
+        private.mkdir()
+        hosted = Path(validation._engine(private, "podman", "hosted")).read_bytes()
+        local = Path(validation._engine(private, "podman", "local", rootful=True)).read_bytes()
+        self.assertEqual(local, hosted)
+        text = local.decode()
+        self.assertIn("/usr/bin/env -i", text)
+        self.assertIn("--storage-driver overlay", text)
+        self.assertNotIn("cgroup", text)
+        self.assertNotIn("CONTAINER_HOST", text)
+
+    def test_installed_podman_guard_runs_before_outer_root_namespace_launch(self) -> None:
+        events: list[str] = []
+
+        def guard() -> dict[str, object]:
+            events.append("guard")
+            raise validation.ValidationError("untrusted installed Podman")
+
+        with (
+            patch.object(validation, "installed_podman", side_effect=guard),
+            patch.object(lifetime, "execute") as launch,
+            self.assertRaisesRegex(ValueError, "untrusted installed Podman"),
+        ):
+            validation.qualify(
+                repository="compose-lens",
+                candidate=SHA,
+                policy_sha=POLICY,
+                automation_sha=AUTOMATION,
+                source=self.root,
+                policy=self.root,
+                automation=self.root,
+                manifest={"schema": 1, "repositories": {"compose-lens": SHA}},
+                engine="podman",
+                mode="local",
+                work=self.root,
+                outer_mode="rootful",
+            )
+        self.assertEqual(events, ["guard"])
+        launch.assert_not_called()
+
+    def test_installed_podman_observation_precedes_any_rootful_engine_call(self) -> None:
+        report, fake = self.simulate(
+            engine="podman", mode="local", outer_mode="rootful", installed_guard_failure=True
+        )
+        self.assertEqual(report["status"], "failure")
+        self.assertIn("installed Podman custody failed", str(report["cause"]))
+        self.assertFalse(any(stage.startswith("engine-") for _, stage, _ in fake.calls))
+        self.assertFalse(fake.checkouts)
+
+    def test_installed_podman_fixed_path_parent_custody_and_observed_integrity(self) -> None:
+        executable = self.root / "podman"
+        executable.write_bytes(b"inert installed binary fixture")
+        executable.chmod(0o755)
+        original_stat = Path.stat
+        version = RunResult(
+            "success",
+            0,
+            "podman version 5.0.0\n",
+            "",
+            0,
+            Diagnostic("installed-podman-version", "", "", "", ""),
+            (),
+        )
+        for fault in (
+            "none",
+            "owner",
+            "parent-owner",
+            "parent-write",
+            "file-write",
+            "no-exec",
+            "privileged-mode",
+            "not-regular",
+            "version",
+            "failed",
+            "drift",
+        ):
+            calls = [0]
+
+            def facts(
+                path: Path,
+                *,
+                follow_symlinks: bool = True,
+                fault: str = fault,
+                calls: list[int] = calls,
+            ) -> os.stat_result:
+                actual = original_stat(path, follow_symlinks=follow_symlinks)
+                values: list[Any] = list(actual)
+                if path != executable:
+                    values[0] &= ~0o022
+                values[4] = 0
+                if fault == "owner" and path == executable:
+                    values[4] = os.getuid()
+                if fault == "parent-owner" and path == executable.parent:
+                    values[4] = os.getuid()
+                if fault == "parent-write" and path == executable.parent:
+                    values[0] |= 0o020
+                if fault == "file-write" and path == executable:
+                    values[0] |= 0o002
+                if fault == "no-exec" and path == executable:
+                    values[0] &= ~0o111
+                if fault == "privileged-mode" and path == executable:
+                    values[0] |= stat.S_ISUID
+                if fault == "not-regular" and path == executable:
+                    values[0] = stat.S_IFDIR | 0o755
+                if fault == "drift" and path == executable:
+                    calls[0] += 1
+                    if calls[0] > 1:
+                        values[6] += 1
+                return os.stat_result(values)
+
+            observed = version
+            if fault in ("version", "failed"):
+                observed = RunResult(
+                    "success" if fault == "version" else "failed",
+                    1,
+                    "unknown version",
+                    "",
+                    0,
+                    version.diagnostic,
+                    (),
+                )
+            with (
+                self.subTest(fault=fault),
+                patch.object(
+                    validation,
+                    "_podman_path_custody",
+                    side_effect=lambda: validation._root_owned_executable(executable),
+                ),
+                patch.object(Path, "stat", side_effect=facts, autospec=True),
+                patch.object(validation, "run", return_value=observed) as invoke,
+            ):
+                if fault != "none":
+                    with self.assertRaises((OSError, ValueError)):
+                        validation.installed_podman()
+                else:
+                    receipt = validation.installed_podman()
+                    self.assertEqual(receipt["path"], "/usr/bin/podman")
+                    self.assertEqual(
+                        receipt["sha256"], hashlib.sha256(executable.read_bytes()).hexdigest()
+                    )
+                    self.assertEqual(receipt["version"], "podman version 5.0.0")
+                    self.assertTrue(receipt["path_custody"])
+                    self.assertEqual(invoke.call_args.args[0], (str(executable), "--version"))
+                    self.assertNotIn("sudo", str(invoke.call_args))
+
+    def test_installed_podman_intermediate_symlink_parent_custody_is_checked(self) -> None:
+        trusted = self.root / "trusted"
+        untrusted = self.root / "untrusted"
+        trusted.mkdir()
+        untrusted.mkdir()
+        binary = trusted / "binary"
+        binary.write_text("inert fixture")
+        binary.chmod(0o755)
+        (untrusted / "redirect").symlink_to(binary)
+        selected = trusted / "podman"
+        selected.symlink_to(untrusted / "redirect")
+        original_stat = Path.stat
+
+        def facts(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            actual = original_stat(path, follow_symlinks=follow_symlinks)
+            values: list[Any] = list(actual)
+            values[4] = os.getuid() if path == untrusted else 0
+            if not stat.S_ISLNK(actual.st_mode):
+                values[0] &= ~0o022
+            return os.stat_result(values)
+
+        with (
+            patch.object(Path, "stat", side_effect=facts, autospec=True),
+            self.assertRaisesRegex(ValueError, "parent custody"),
+        ):
+            validation._root_owned_executable(selected)
+        with patch.object(
+            validation, "_root_owned_executable", side_effect=ValueError("stop")
+        ) as observe:
+            with self.assertRaisesRegex(ValueError, "stop"):
+                validation._podman_path_custody()
+        observe.assert_called_once_with(Path("/usr/bin/podman"))
+
+    def test_local_rootful_observes_uid_and_uses_only_finite_rootful_cleanup(self) -> None:
+        report, fake = self.simulate(engine="podman", mode="local", outer_mode="rootful")
+        self.assertEqual(report["status"], "success", report)
+        self.assertEqual(report["outer_mode"], "rootful")
+        self.assertEqual(report["caller_uid"], os.getuid())
+        self.assertEqual(report["engine_uid"], 0)
+        self.assertEqual(report["engine_storage_driver"], "overlay")
+        self.assertEqual(report["engine_graph_root"], str(fake.private / "store"))
+        self.assertEqual(report["engine_run_root"], str(fake.private / "runroot"))
+        self.assertIs(report["engine_remote"], False)
+        self.assertEqual(report["engine_cgroup_manager"], "cgroupfs")
+        self.assertEqual(report["engine_runtime"], "runc")
+        observer = next(argv for argv, stage, _ in fake.calls if stage == "engine-process-uid")
+        self.assertEqual(
+            observer[:6],
+            ("/usr/bin/sudo", "-n", "/usr/bin/timeout", "--signal=TERM", "--kill-after=2s", "5s"),
+        )
+        self.assertEqual(observer[6:8], ("/usr/bin/env", "-i"))
+        self.assertEqual(observer[-2:], ("/usr/bin/id", "-u"))
+        self.assertFalse(
+            any(stage == "cleanup-private-rootful-store" for _, stage, _ in fake.calls)
+        )
+        self.assertEqual(report["directory_cleanup"], "deferred-to-outer")
+        self.assertEqual(report["engine_resource_cleanup"], "success")
+        self.assertTrue(fake.private.exists())
+        self.assertFalse(
+            any(
+                "unshare" in argv or "apt-get" in str(argv) or "dpkg" in str(argv)
+                for argv, _, _ in fake.calls
+            )
+        )
+        self.assertFalse(any(stage == "cleanup-private-store" for _, stage, _ in fake.calls))
+
+    def test_local_rootful_wrong_uid_and_store_or_cleanup_failures_retain_failure(self) -> None:
+        for uid in ("", "1000", "unknown"):
+            with self.subTest(uid=uid):
+                report, fake = self.simulate(
+                    engine="podman",
+                    mode="local",
+                    outer_mode="rootful",
+                    responses={"engine-process-uid": uid},
+                )
+                self.assertEqual(report["status"], "failure", report)
+                self.assertFalse(fake.checkouts)
+        for stage in ("build", "cleanup-store-containers", "cleanup-store-identity"):
+            with self.subTest(stage=stage):
+                report, fake = self.simulate(
+                    stage, engine="podman", mode="local", outer_mode="rootful"
+                )
+                self.assertEqual(report["status"], "failure", report)
+                if stage != "build":
+                    self.assertEqual(report["cleanup"], "failure")
+                    self.assertTrue(fake.private.exists())
+
+    def test_local_missing_podman_has_no_installer_or_privilege_fallback(self) -> None:
+        report, fake = self.simulate(
+            engine="podman", mode="local", outer_mode="rootful", installed_podman=False
+        )
+        self.assertEqual(report["status"], "failure", report)
+        self.assertIn("installed /usr/bin/podman", str(report["cause"]))
+        self.assertFalse(fake.calls)
+        self.assertFalse(fake.checkouts)
+
+    def test_rootful_failed_build_aborts_without_another_engine_cleanup_budget(self) -> None:
+        report, fake = self.simulate("build", engine="podman", mode="local", outer_mode="rootful")
+        self.assertEqual(report["status"], "failure", report)
+        self.assertIn("build failed", str(report["cause"]))
+        self.assertEqual(report["cleanup"], "pending-outer-closure")
+        self.assertEqual(report["directory_cleanup"], "deferred-to-outer")
+        self.assertTrue(fake.private.exists())
+        build = next(index for index, (_, stage, _) in enumerate(fake.calls) if stage == "build")
+        self.assertEqual(len(fake.calls), build + 1, "abort cannot start late engine cleanup")
+
+    def test_local_runtime_accepts_only_exact_same_binary_name_and_path_spellings(self) -> None:
+        for name, name_kind in (
+            ("runc", "alias-runc"),
+            ("/usr/bin/runc", "selected-path"),
+            ("/usr/sbin/runc", "resolved-path"),
+        ):
+            for path, path_kind in (
+                ("/usr/bin/runc", "selected-path"),
+                ("/usr/sbin/runc", "resolved-path"),
+            ):
+                with self.subTest(name=name, path=path):
+                    report, fake = self.simulate(
+                        engine="podman",
+                        mode="local",
+                        outer_mode="rootful",
+                        profile={"ociRuntime": {"name": name, "path": path}},
+                    )
+                    self.assertEqual(report["status"], "success", report)
+                    self.assertEqual(report["engine_runtime"], "runc")
+                    self.assertEqual(report["engine_runtime_name_representation"], name_kind)
+                    self.assertEqual(report["engine_runtime_path_representation"], path_kind)
+                    self.assertTrue(fake.checkouts)
+        receipt = {"path": "/usr/bin/runc", "resolved_path": "/usr/bin/runc"}
+        for field in ("name", "path"):
+            self.assertEqual(
+                validation._runtime_representation({field: "/usr/bin/runc"}, field, receipt),
+                "selected-path",
+            )
+        self.assertIsNone(validation.LIVE_PID_SCHEMA)
+
+    def test_local_runtime_rejects_unknown_evidence_before_build_without_retaining_it(self) -> None:
+        invalid: tuple[tuple[object, str], ...] = (
+            (None, "invalid-type"),
+            (True, "invalid-type"),
+            (False, "invalid-type"),
+            (1, "invalid-type"),
+            (1.5, "invalid-type"),
+            ([], "invalid-type"),
+            ({}, "invalid-type"),
+            ("", "other"),
+            ("RUNC", "other"),
+            ("runc ", "other"),
+            (" runc", "other"),
+            ("usr/bin/runc", "other"),
+            ("./runc", "other"),
+            ("/foreign/runc", "other"),
+            ("/usr/bin/crun", "other"),
+            ("crun", "other"),
+            ("/usr/bin/../bin/runc", "other"),
+            ("/usr//bin/runc", "other"),
+            ("/usr/bin/runc/", "other"),
+            ("/usr/bin/runc-canary-secret", "other"),
+            ("/usr/bin/runc ", "other"),
+            (" /usr/bin/runc", "other"),
+            ("/usr/sbin/../sbin/runc", "other"),
+            ("/usr//sbin/runc", "other"),
+        )
+        for field in ("name", "path"):
+            for missing, value, expected in [
+                (True, None, "missing"),
+                *((False, value, expected) for value, expected in invalid),
+            ]:
+                runtime = {"name": "runc", "path": "/usr/bin/runc"}
+                if missing:
+                    del runtime[field]
+                else:
+                    runtime[field] = value
+                with self.subTest(field=field, value=value, missing=missing):
+                    report, fake = self.simulate(
+                        engine="podman",
+                        mode="local",
+                        outer_mode="rootful",
+                        profile={"ociRuntime": runtime},
+                    )
+                    self.assertEqual(report["status"], "failure", report)
+                    self.assertEqual(report[f"engine_runtime_{field}_representation"], expected)
+                    self.assertFalse(fake.checkouts)
+                    self.assertFalse(any(stage == "build" for _, stage, _ in fake.calls))
+                    self.assertNotIn("engine_runtime", report)
+                    self.assertEqual(report["cleanup"], "pending-outer-closure")
+                    self.assertTrue(fake.abort_reports)
+                    compact = json.loads(
+                        validation.serialize_report(
+                            {**report, "large": "x" * validation.MAX_REPORT}
+                        )
+                    )
+                    for key in (
+                        "engine_runtime_name_representation",
+                        "engine_runtime_path_representation",
+                    ):
+                        self.assertEqual(compact[key], report[key])
+                        self.assertEqual(fake.abort_reports[0][key], report[key])
+                    self.assertEqual(compact["primary_cause"], report["cause"])
+                    sinks = json.dumps([report, compact, fake.abort_reports, fake.outcomes])
+                    self.assertNotIn("runc-canary-secret", sinks)
+        for runtime in (None, [], True, "runc-canary-secret"):
+            report, fake = self.simulate(
+                engine="podman", mode="local", outer_mode="rootful", profile={"ociRuntime": runtime}
+            )
+            self.assertEqual(report["status"], "failure", report)
+            self.assertEqual(report["engine_runtime_name_representation"], "invalid-type")
+            self.assertEqual(report["engine_runtime_path_representation"], "invalid-type")
+            self.assertNotIn("runc-canary-secret", json.dumps([report, fake.abort_reports]))
+            self.assertFalse(fake.checkouts)
+
+    def test_installed_runc_reuses_complete_executable_custody_and_checks_drift(self) -> None:
+        executable = self.root / "runc"
+        executable.write_bytes(b"inert installed runtime")
+        executable.chmod(0o755)
+        original_stat = Path.stat
+        original_custody = validation._root_owned_executable
+        for fault in (
+            "none",
+            "owner",
+            "parent-owner",
+            "parent-write",
+            "file-write",
+            "no-exec",
+            "privileged-mode",
+            "not-regular",
+            "ctime",
+            "content",
+            "version",
+            "version-failed",
+            "read-limit",
+            "short-read",
+            "inode",
+            "custody-drift",
+            "resolved-drift",
+        ):
+            visits = [0]
+
+            def facts(
+                path: Path,
+                *,
+                follow_symlinks: bool = True,
+                fault: str = fault,
+                visits: list[int] = visits,
+            ) -> os.stat_result:
+                actual = original_stat(path, follow_symlinks=follow_symlinks)
+                result = Mock(spec=os.stat_result)
+                for attr in (
+                    "st_dev",
+                    "st_ino",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
+                    "st_uid",
+                    "st_mode",
+                ):
+                    setattr(result, attr, getattr(actual, attr))
+                result.st_uid = 0
+                result.st_mode &= ~0o022
+                if fault == "owner" and path == executable:
+                    result.st_uid = os.getuid()
+                if fault == "parent-owner" and path == executable.parent:
+                    result.st_uid = os.getuid()
+                if fault == "parent-write" and path == executable.parent:
+                    result.st_mode |= 0o020
+                if fault == "file-write" and path == executable:
+                    result.st_mode |= 0o002
+                if fault == "no-exec" and path == executable:
+                    result.st_mode &= ~0o111
+                if fault == "privileged-mode" and path == executable:
+                    result.st_mode |= stat.S_ISUID
+                if fault == "not-regular" and path == executable:
+                    result.st_mode = stat.S_IFDIR | 0o755
+                if fault == "read-limit" and path == executable:
+                    result.st_size = 64 * 1024**2 + 1
+                if fault == "short-read" and path == executable:
+                    result.st_size += 1
+                if visits[0] > 1 and fault == "ctime" and path == executable:
+                    result.st_ctime_ns += 1
+                return result
+
+            def observe(
+                selected: Path,
+                *,
+                fault: str = fault,
+                visits: list[int] = visits,
+            ) -> tuple[Path, os.stat_result, list[dict[str, object]]]:
+                self.assertEqual(selected, Path("/usr/bin/runc"))
+                visits[0] += 1
+                resolved, observed, custody = original_custody(executable)
+                if visits[0] > 1 and fault == "custody-drift":
+                    custody[0]["ctime_ns"] = -1
+                if visits[0] > 1 and fault == "resolved-drift":
+                    resolved = self.root / "other"
+                return resolved, observed, custody
+
+            commands = Mock(spec=validation.Commands)
+
+            def version(*_args: object, fault: str = fault) -> str:
+                if fault == "version-failed":
+                    raise validation.ValidationError("selected-runc-version failed")
+                if fault == "content":
+                    before = original_stat(executable)
+                    executable.write_bytes(b"changed binary content!")
+                    os.utime(executable, ns=(before.st_atime_ns, before.st_mtime_ns))
+                return "crun version 1.0.0" if fault == "version" else "runc version 1.5.1"
+
+            commands.call.side_effect = version
+            real_fstat = os.fstat
+
+            def opened(
+                fd: int,
+                *,
+                fault: str = fault,
+                real_fstat: Callable[[int], os.stat_result] = real_fstat,
+            ) -> os.stat_result:
+                result = real_fstat(fd)
+                if fault == "inode":
+                    changed = list(result)
+                    changed[1] += 1
+                    return os.stat_result(changed)
+                return result
+
+            with (
+                self.subTest(fault=fault),
+                patch.object(Path, "stat", side_effect=facts, autospec=True),
+                patch.object(validation, "_root_owned_executable", side_effect=observe) as guard,
+                patch.object(validation.os, "fstat", side_effect=opened),
+            ):
+                if fault == "none":
+                    receipt = validation.installed_runc(commands)
+                    self.assertEqual(receipt["path"], "/usr/bin/runc")
+                    self.assertEqual(receipt["resolved_path"], str(executable))
+                    self.assertEqual(
+                        receipt["sha256"], hashlib.sha256(executable.read_bytes()).hexdigest()
+                    )
+                    self.assertTrue(receipt["path_custody"])
+                    self.assertEqual(
+                        guard.call_args_list,
+                        [call(Path("/usr/bin/runc")), call(Path("/usr/bin/runc"))],
+                    )
+                else:
+                    with self.assertRaises((OSError, ValueError)):
+                        validation.installed_runc(commands)
+            executable.write_bytes(b"inert installed runtime")
+
+        report, fake = self.simulate(
+            engine="podman", mode="local", outer_mode="rootful", installed_runtime_failure=True
+        )
+        self.assertEqual(report["status"], "failure", report)
+        self.assertIn("installed runtime custody failed", str(report["cause"]))
+        self.assertFalse(fake.checkouts)
+        self.assertFalse(any(stage == "build" for _, stage, _ in fake.calls))
+
+    def test_installed_runc_checks_symlink_parent_target_and_link_swap(self) -> None:
+        trusted, untrusted = self.root / "trusted", self.root / "untrusted"
+        trusted.mkdir()
+        untrusted.mkdir()
+        binary = trusted / "binary"
+        binary.write_bytes(b"inert runtime")
+        binary.chmod(0o755)
+        other = trusted / "other"
+        other.write_bytes(binary.read_bytes())
+        other.chmod(0o755)
+        redirect = untrusted / "redirect"
+        redirect.symlink_to(binary)
+        selected = trusted / "runc"
+        selected.symlink_to(redirect)
+        original_stat = Path.stat
+        original_custody = validation._root_owned_executable
+        for fault in ("none", "parent", "target", "link", "swap"):
+
+            def facts(
+                path: Path,
+                *,
+                follow_symlinks: bool = True,
+                fault: str = fault,
+            ) -> os.stat_result:
+                actual = original_stat(path, follow_symlinks=follow_symlinks)
+                values: list[Any] = list(actual)
+                values[4] = (
+                    os.getuid()
+                    if (
+                        (fault == "parent" and path == untrusted)
+                        or (fault == "target" and path == binary)
+                        or (fault == "link" and path == redirect)
+                    )
+                    else 0
+                )
+                if not stat.S_ISLNK(actual.st_mode):
+                    values[0] &= ~0o022
+                return os.stat_result(values)
+
+            def observe(path: Path) -> tuple[Path, os.stat_result, list[dict[str, object]]]:
+                self.assertEqual(path, Path("/usr/bin/runc"))
+                return original_custody(selected)
+
+            commands = Mock(spec=validation.Commands)
+
+            def version(*_args: object, fault: str = fault) -> str:
+                if fault == "swap":
+                    redirect.unlink()
+                    redirect.symlink_to(other)
+                return "runc version 1.5.1"
+
+            commands.call.side_effect = version
+            with (
+                self.subTest(fault=fault),
+                patch.object(Path, "stat", side_effect=facts, autospec=True),
+                patch.object(validation, "_root_owned_executable", side_effect=observe),
+            ):
+                if fault == "none":
+                    self.assertTrue(validation.installed_runc(commands)["path_custody"])
+                else:
+                    with self.assertRaises((OSError, ValueError)):
+                        validation.installed_runc(commands)
+            redirect.unlink()
+            redirect.symlink_to(binary)
+
+    def test_local_profile_has_no_runtime_manager_or_event_fallback(self) -> None:
+        profiles: tuple[dict[str, object], ...] = (
+            {"cgroupManager": "systemd"},
+            {"eventLogger": "journald"},
+            {"ociRuntime": {"name": "crun", "path": "/usr/bin/crun"}},
+            {"ociRuntime": {"name": "runc", "path": "/unreviewed/runc"}},
+        )
+        for profile in profiles:
+            with self.subTest(profile=profile):
+                report, fake = self.simulate(
+                    engine="podman", mode="local", outer_mode="rootful", profile=profile
+                )
+                self.assertEqual(report["status"], "failure", report)
+                self.assertFalse(fake.checkouts)
+                self.assertFalse(any(stage == "build" for _, stage, _ in fake.calls))
+        private = self.root / "profile-command"
+        private.mkdir()
+        script = Path(
+            validation._engine(private, "podman", "local", rootful=True, local_profile=True)
+        ).read_text()
+        self.assertIn(
+            "--cgroup-manager cgroupfs --events-backend file --runtime /usr/bin/runc", script
+        )
+        self.assertNotIn("systemd", script)
+        self.assertNotIn("crun", script)
+        with self.assertRaises(ValueError):
+            validation._engine(private, "podman", "hosted", rootful=True, local_profile=True)
+
+    def test_rootful_overlay_and_native_facts_are_independently_required(self) -> None:
+        document = {
+            "host": {"serviceIsRemote": False, "arch": "amd64", "security": {"rootless": False}},
+            "store": {
+                "graphRoot": str(self.root / "store"),
+                "runRoot": str(self.root / "runroot"),
+                "graphDriverName": "overlay",
+            },
+        }
+        validation.validate_engine(
+            document, "podman", "amd64", self.root, rootless=False, storage_driver="overlay"
+        )
+        for section, key, value in (
+            ("host", "serviceIsRemote", True),
+            ("host", "arch", "arm64"),
+            ("host", "security", {"rootless": True}),
+            ("store", "graphRoot", "/personal"),
+            ("store", "runRoot", "/run/personal"),
+            ("store", "graphDriverName", "vfs"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                changed = {**document, section: {**document[section], key: value}}
+                validation.validate_engine(
+                    changed, "podman", "amd64", self.root, rootless=False, storage_driver="overlay"
+                )
+
+    def test_compact_report_retains_modes_uids_nonce_and_both_failure_causes(self) -> None:
+        report = {
+            "schema": 1,
+            "status": "failure",
+            "requested_outer_mode": "rootful",
+            "outer_mode": "rootful",
+            "caller_uid": 1000,
+            "engine_uid": 0,
+            "run_nonce": "a" * 32,
+            "private_directory_identity": "1:2:1000:700",
+            "cause": "budget exceeded",
+            "outer_abort_stage": "local-rootful-lifetime",
+            "outer_abort_status": "cancelled",
+            "outer_abort_cause": "actual SIGTERM (15)",
+            "outer_abort_signal_number": 15,
+            "outer_abort_signal_name": "SIGTERM",
+            "outer_abort_persisted": False,
+            "outer_abort_receipt": "/owned/outer-abort.json",
+            "outer_abort_persistence_failure": "disk failure",
+            "outer_abort_receipt_disposition": "persistence/custody unproved",
+            "cleanup_cause": "owned cleanup failed",
+            "retained_private_directory": "/owned/private",
+            "large": "x" * validation.MAX_REPORT,
+        }
+        compact = json.loads(validation.serialize_report(report))
+        for key in (
+            "requested_outer_mode",
+            "outer_mode",
+            "caller_uid",
+            "engine_uid",
+            "run_nonce",
+            "private_directory_identity",
+            "cleanup_cause",
+            "outer_abort_stage",
+            "outer_abort_status",
+            "outer_abort_cause",
+            "outer_abort_signal_number",
+            "outer_abort_signal_name",
+            "outer_abort_persisted",
+            "outer_abort_receipt",
+            "outer_abort_persistence_failure",
+            "outer_abort_receipt_disposition",
+            "retained_private_directory",
+        ):
+            self.assertEqual(compact[key], report[key])
+        self.assertEqual(compact["primary_cause"], report["cause"])
+        self.assertLess(len(validation.serialize_report(report).encode()), validation.MAX_REPORT)
 
     def test_hosted_podman_signed_apt_exception_is_explicit_and_rootful_is_mandatory(self) -> None:
         environment = {
@@ -786,11 +1495,18 @@ class ProducerTests(unittest.TestCase):
         docker_root: Path | None = None,
         engine: str = "docker",
         mode: str = "hosted",
+        outer_mode: str | None = None,
+        installed_podman: bool = True,
+        installed_guard_failure: bool = False,
+        installed_runtime_failure: bool = False,
+        profile: dict[str, object] | None = None,
         responses: dict[str, str] | None = None,
     ) -> tuple[dict[str, object], FakeCommands]:
         fake = FakeCommands(self.root)
         fake.engine, fake.mode = engine, mode
+        fake.outer_mode = outer_mode or ("rootful" if mode == "hosted" else "rootless")
         fake.responses = responses or {}
+        fake.profile.update(profile or {})
         repository = "podman-lens" if engine == "podman" else "boxferry"
         if docker_root is not None:
             fake.docker_root = docker_root
@@ -821,7 +1537,74 @@ class ProducerTests(unittest.TestCase):
                     )
             return fake
 
+        original_is_file = Path.is_file
+        context: dict[str, Any] | None = None
+        if mode == "local" and fake.outer_mode == "rootful":
+            scope = Path(tempfile.mkdtemp(prefix="fixture-lifetime-", dir=self.root))
+            scope.chmod(0o700)
+            context = {"private": str(scope), "nonce": "a" * 32}
+
+        def notify(control: dict[str, Any], failure: object, report: object) -> None:
+            control["abort_notified"] = True
+            assert isinstance(report, dict)
+            fake.abort_reports.append(json.loads(validation.serialize_report(report)))
+
+        def podman_guard() -> dict[str, object]:
+            self.assertFalse(any(stage.startswith("engine-") for _, stage, _ in fake.calls))
+            if installed_guard_failure:
+                raise validation.ValidationError("installed Podman custody failed")
+            return {
+                "path": "/usr/bin/podman",
+                "uid": 0,
+                "sha256": "a" * 64,
+                "version": "podman version 5.0.0",
+            }
+
         with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(validation, "LiveProcessObservation", return_value=Mock())
+            )
+            stack.enter_context(
+                patch.object(validation, "installed_podman", side_effect=podman_guard)
+            )
+            stack.enter_context(
+                patch.object(
+                    lifetime,
+                    "validate_worker_context",
+                    side_effect=lambda control: Path(control["private"]),
+                )
+            )
+            stack.enter_context(patch.object(lifetime, "notify_abort", side_effect=notify))
+            stack.enter_context(
+                patch.object(
+                    validation,
+                    "installed_runc",
+                    side_effect=(
+                        validation.ValidationError("installed runtime custody failed")
+                        if installed_runtime_failure
+                        else None
+                    ),
+                    return_value={
+                        "path": "/usr/bin/runc",
+                        "resolved_path": "/usr/sbin/runc",
+                        "uid": 0,
+                        "mode": 0o755,
+                        "sha256": "f" * 64,
+                        "version": "runc version 1.5.1",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    Path,
+                    "is_file",
+                    lambda path: (
+                        installed_podman
+                        if path == Path("/usr/bin/podman")
+                        else original_is_file(path)
+                    ),
+                )
+            )
             stack.enter_context(
                 patch.dict(
                     "os.environ",
@@ -879,6 +1662,8 @@ class ProducerTests(unittest.TestCase):
                 },
                 engine=engine,
                 mode=mode,
+                outer_mode=outer_mode,
+                lifetime_context=context,
                 work=self.root,
                 expected_architecture="amd64",
             )
@@ -1038,7 +1823,7 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(commands.calls, [])
 
     def test_rootless_store_mount_queries_enter_namespace_without_fallback(self) -> None:
-        with patch.object(validation.os, "geteuid", return_value=1000):
+        with patch.object(validation.os, "geteuid", return_value=os.getuid()):
             report, fake = self.simulate("build", engine="podman", mode="local")
         self.assertEqual(report["cleanup"], "success")
         for argv, stage, _timeout in fake.calls:
@@ -1254,6 +2039,460 @@ class ProducerTests(unittest.TestCase):
         self.assertNotIn("secrets:", source)
         self.assertNotIn("continue-on-error", source)
         self.assertNotIn("docker/login", source)
+
+
+class LiveObservationContracts(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.private = self.root / "private"
+        self.private.mkdir(mode=0o700)
+        self.commands = validation.Commands(self.private)
+        self.report: dict[str, object] = {"schema": 1, "status": "failure"}
+        self.commands.lifetime_report = self.report
+        self.result = self.root / "result"
+        self.result.touch(mode=0o600)
+        reader, writer = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        self.addCleanup(os.close, writer)
+        self.reader, self.writer = reader, writer
+        self.commands.lifetime_context = {
+            "private": str(self.private),
+            "nonce": "c" * 32,
+            "result": str(self.result),
+            "result_identity": [self.result.stat().st_dev, self.result.stat().st_ino],
+            "abort_fd": writer,
+            "pid_namespace": "pid:[100]",
+            "mount_namespace": "mnt:[200]",
+            "host_pid_namespace": "pid:[90]",
+            "host_mount_namespace": "mnt:[190]",
+        }
+        self.commands.budget = Mock(deadline=time.monotonic() + 300, check=Mock())
+        self.held = validation.LiveHeldIdentity(
+            CONTAINER, IMAGE, "c" * 32, 1000, "d" * 64, "podman version 5.0.0"
+        )
+
+    def native(self, *, running: bool = True) -> list[dict[str, Any]]:
+        return [
+            {
+                "Id": CONTAINER,
+                "Image": IMAGE,
+                "Config": {
+                    "Labels": {"io.boxferry.devcontainer.run": "c" * 32, "unrelated": "discarded"},
+                    "Env": ["not-retained"],
+                },
+                "State": {
+                    "Running": running,
+                    "Status": "running" if running else "created",
+                    "Pid": 20 if running else 0,
+                    "ConmonPid": 30 if running else 0,
+                    "StartedAt": "2026-11-05T18:00:00.123456789Z",
+                    "Error": "not-retained",
+                },
+            }
+        ]
+
+    def request(self) -> validation.LiveProcessRequest:
+        return validation.LiveProcessRequest(
+            20, 30, 1000, "pid:[100]", "mnt:[200]", "pid:[90]", "mnt:[190]"
+        )
+
+    def observed(self) -> dict[str, Any]:
+        return {
+            "schema": 1,
+            "status": "observed",
+            "observer": {
+                "pid": 40,
+                "uids": [0] * 4,
+                "pid_namespace": "pid:[100]",
+                "mount_namespace": "mnt:[200]",
+                "proc_pid_view": "lifetime",
+            },
+            "processes": [
+                {
+                    "role": "container-init",
+                    "pid": 20,
+                    "uids": [1000] * 4,
+                    "nspid": [20, 1],
+                    "start_ticks": "77",
+                    "pid_namespace": "pid:[101]",
+                    "mount_namespace": "mnt:[201]",
+                    "pidfd_alive_before": True,
+                    "pidfd_alive_after": True,
+                },
+                {
+                    "role": "conmon",
+                    "pid": 30,
+                    "uids": [0] * 4,
+                    "nspid": [30],
+                    "start_ticks": "78",
+                    "pid_namespace": "pid:[100]",
+                    "mount_namespace": "mnt:[333]",
+                    "pidfd_alive_before": True,
+                    "pidfd_alive_after": True,
+                },
+            ],
+        }
+
+    def inspect_run(self, argv: tuple[str, ...], **options: object) -> RunResult:
+        mode = options["opaque_observation"]
+        assert isinstance(mode, validation.OpaqueObservation)
+        consumer = options["on_private_stdout"]
+        assert callable(consumer)
+        content = json.dumps(self.native()).encode()
+        consumer(content)
+        metrics = validation.OpaqueMetrics(
+            mode,
+            validation.OpaqueReason.COMPLETED,
+            "success",
+            hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest(),
+            None,
+            len(content),
+            0,
+            hashlib.sha256(content).hexdigest(),
+            hashlib.sha256(b"").hexdigest(),
+        )
+        return validation.OpaqueRunResult(
+            "success",
+            0,
+            "",
+            "",
+            0,
+            Diagnostic(mode.stage, "completed", "held", "metrics", "review"),
+            ("opaque-observation", mode.value, metrics.argv_sha256),
+            metrics=metrics,
+        )
+
+    def test_private_inspect_drops_unknown_fields_and_rejects_untrusted_timestamp(self) -> None:
+        with (
+            patch.object(validation, "run", side_effect=self.inspect_run),
+            patch.object(
+                validation, "_redacted_argv", side_effect=AssertionError("legacy renderer")
+            ),
+            patch.object(
+                validation, "failure_evidence", side_effect=AssertionError("legacy excerpts")
+            ),
+        ):
+            dto = self.commands._live_inspect(
+                self.held, validation.OpaqueObservation.INSPECT_BEFORE
+            )
+        self.assertEqual((dto.container_pid, dto.conmon_pid), (20, 30))
+        self.assertNotIn("not-retained", repr(dto))
+        for timestamp in (
+            "unknown text",
+            "2026-99-01T00:00:00Z",
+            "0001-01-01T00:00:00Z",
+            "2026-11-05 18:00:00Z",
+        ):
+            data = self.native()
+            data[0]["State"]["StartedAt"] = timestamp
+            with self.subTest(timestamp=timestamp), self.assertRaises(validation.OpaqueParseError):
+                validation._parse_live_inspect(json.dumps(data).encode(), self.held)
+
+    def test_known_two_pid_schema_rejects_bad_types_topology_uid_and_liveness(self) -> None:
+        good = validation._parse_live_processes(
+            json.dumps(self.observed()).encode(), self.request()
+        )
+        self.assertEqual(
+            good.processes[1].mount_namespace, "mnt:[333]"
+        )  # No invented mount equality.
+        changes = (
+            ("pid", True),
+            ("nspid", [20]),
+            ("uids", [0] * 4),
+            ("pid_namespace", "pid:[100]"),
+            ("pidfd_alive_after", False),
+            ("start_ticks", "invalid"),
+        )
+        for key, value in changes:
+            data = self.observed()
+            data["processes"][0][key] = value
+            with self.subTest(key=key), self.assertRaises(validation.OpaqueParseError):
+                validation._parse_live_processes(json.dumps(data).encode(), self.request())
+        data = self.observed()
+        data["observer"]["uids"] = [False] * 4
+        with self.assertRaises(validation.OpaqueParseError):
+            validation._parse_live_processes(json.dumps(data).encode(), self.request())
+
+    def test_only_closed_private_producer_opts_into_runner_opacity(self) -> None:
+        import ast
+
+        tree = ast.parse(Path(validation.__file__).read_text())
+        owners: list[str] = []
+        for owner in ast.walk(tree):
+            if isinstance(owner, ast.FunctionDef):
+                for node in ast.walk(owner):
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == "run"
+                        and any(key.arg == "opaque_observation" for key in node.keywords)
+                    ):
+                        owners.append(owner.name)
+        self.assertEqual(owners, ["_invoke_live_observation"])
+        self.assertIsNone(validation.LIVE_PID_SCHEMA)
+
+    def test_unapproved_selector_never_invokes_root_observer(self) -> None:
+        with (
+            patch.object(validation, "LIVE_PID_SCHEMA", None),
+            patch.object(validation, "run") as execute,
+            patch.object(validation, "_rootful_bridge") as bridge,
+            self.assertRaises(validation.OpaqueRunError),
+        ):
+            self.commands._live_processes(self.request())
+        execute.assert_not_called()
+        bridge.assert_not_called()
+
+    def test_schema_capture_survives_normal_compact_handoff_and_outer_merge_without_observer(
+        self,
+    ) -> None:
+        def case(compact: bool) -> None:
+            automation = self.root / str(compact)
+            selected = automation / "automation/src/boxferry_ci/devcontainer_lifetime.py"
+            selected.parent.mkdir(parents=True)
+            selected.write_bytes(Path(lifetime.__file__).read_bytes())
+            captures: list[dict[str, object]] = []
+            inner_causes: list[str] = []
+            runtime_facts = {
+                "engine_runtime": "runc",
+                "engine_runtime_name_representation": "selected-path",
+                "engine_runtime_path_representation": "resolved-path",
+            }
+
+            def invoke(argv: tuple[str, ...], **options: object) -> RunResult:
+                phase, plan = argv[-2], json.loads(argv[-1])
+                scope, control = Path(plan["scope"]), Path(plan["preparation"])
+                if phase == "qualify":
+                    self.addCleanup(shutil.rmtree, scope, ignore_errors=True)
+                    self.addCleanup(shutil.rmtree, control, ignore_errors=True)
+                    commands = validation.Commands(scope)
+                    commands.budget = Mock(deadline=time.monotonic() + 300, check=Mock())
+                    commands.lifetime_report = {
+                        "schema": 1,
+                        "status": "failure",
+                        "cleanup_cause": "separate",
+                        **runtime_facts,
+                    }
+                    if compact:
+                        commands.lifetime_report["large"] = "x" * validation.MAX_REPORT
+                    commands.lifetime_context = {
+                        **(self.commands.lifetime_context or {}),
+                        "private": str(scope),
+                        "result": plan["result"],
+                        "result_identity": plan["result_identity"],
+                    }
+                    live = validation.LiveProcessObservation(commands, self.held)
+                    with (
+                        patch.object(validation, "run", side_effect=self.inspect_run),
+                        patch.object(commands, "_live_processes") as observer,
+                        self.assertRaises(validation.OpaqueRunError),
+                    ):
+                        live.tick()
+                    observer.assert_not_called()
+                    self.assertEqual(os.read(self.reader, 1), b"A")
+                    inner = json.loads(Path(plan["result"]).read_text())
+                    capture = inner["live_process_schema_capture"]
+                    self.assertEqual(capture["state_pid_candidate"], 20)
+                    self.assertEqual(capture["candidate_state_conmon_pid_candidate"], 30)
+                    self.assertIs(capture["selector_approved"], False)
+                    self.assertIs(capture["observer_executed"], False)
+                    self.assertEqual(inner["cleanup_cause"], "separate")
+                    captures.append(capture)
+                    inner_causes.append(inner["cause"])
+                    for key, expected in runtime_facts.items():
+                        self.assertEqual(inner[key], expected)
+                    hook = options["on_abort"]
+                    assert callable(hook)
+                    hook(
+                        validation.AbortContext(
+                            "local-rootful-lifetime", "failed", "command exited125"
+                        )
+                    )
+                    return RunResult(
+                        "failed",
+                        125,
+                        "",
+                        "",
+                        0,
+                        Diagnostic("outer", "command exited125", "", "", ""),
+                        argv,
+                    )
+                for directory in (scope, control):
+                    for path in directory.iterdir():
+                        if path.is_dir():
+                            shutil.rmtree(path)
+                        else:
+                            path.unlink()
+                return RunResult(
+                    "success", 0, "", "", 0, Diagnostic("finalize", "done", "", "", ""), argv
+                )
+
+            with (
+                patch.object(validation, "LIVE_PID_SCHEMA", None),
+                patch.object(lifetime, "run", side_effect=invoke),
+                patch.object(
+                    lifetime,
+                    "_witness",
+                    return_value=[
+                        {"event": "closed", "namespace_closed": True, "supervisor_closed": True}
+                    ],
+                ),
+            ):
+                report = lifetime.execute(
+                    {"work": self.root, "automation": automation, "local_sources": None}
+                )
+            self.assertEqual(report["live_process_schema_capture"], captures[0])
+            self.assertEqual(report["status"], "failure")
+            self.assertTrue(report["namespace_closed"])
+            self.assertEqual(report["cause"], inner_causes[0])
+            self.assertEqual(report["cleanup_cause"], "separate")
+            for key, expected in runtime_facts.items():
+                self.assertEqual(report[key], expected)
+
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                case(compact)
+
+    def test_live_sandwich_is_once_and_requires_exact_before_after_identity(self) -> None:
+        with patch.object(
+            validation, "LIVE_PID_SCHEMA", validation.LivePidSchema.PODMAN_STATE_FIELDS
+        ):
+            before = validation._parse_live_inspect(json.dumps(self.native()).encode(), self.held)
+            sample = validation._parse_live_processes(
+                json.dumps(self.observed()).encode(), self.request()
+            )
+            live = validation.LiveProcessObservation(self.commands, self.held)
+            with (
+                patch.object(
+                    self.commands, "_live_inspect", side_effect=[before, before]
+                ) as inspected,
+                patch.object(self.commands, "_live_processes", return_value=sample) as observed,
+            ):
+                live.tick()
+                live.tick()
+                live.require_complete()
+            self.assertEqual(inspected.call_count, 2)
+            observed.assert_called_once()
+            observed_report = self.report["live_process_observation"]
+            assert isinstance(observed_report, dict)
+            self.assertEqual(observed_report["scope"], "known-two-pid-snapshot")
+            changed = self.native()
+            changed[0]["State"]["StartedAt"] = "2026-11-05T18:00:01Z"
+            after = validation._parse_live_inspect(json.dumps(changed).encode(), self.held)
+            live = validation.LiveProcessObservation(self.commands, self.held)
+            with (
+                patch.object(self.commands, "_live_inspect", side_effect=[before, after]),
+                patch.object(self.commands, "_live_processes", return_value=sample),
+                self.assertRaises(validation.OpaqueRunError),
+            ):
+                live.tick()
+            self.assertIsNone(live.completed)
+
+    def test_readiness_is_finite_scheduled_without_sleep_or_new_stage_budget(self) -> None:
+        created = validation._parse_live_inspect(
+            json.dumps(self.native(running=False)).encode(), self.held
+        )
+        live = validation.LiveProcessObservation(self.commands, self.held)
+        assert self.commands.budget is not None
+        deadline = self.commands.budget.deadline
+        with (
+            patch.object(validation.time, "monotonic", return_value=100.0),
+            patch.object(self.commands, "_live_inspect", return_value=created) as inspect,
+            patch.object(validation.time, "sleep", side_effect=AssertionError("sleep forbidden")),
+        ):
+            live.tick()
+            live.tick()
+        inspect.assert_called_once()
+        for when in (100.11, 100.22, 100.33):
+            with (
+                patch.object(validation.time, "monotonic", return_value=when),
+                patch.object(self.commands, "_live_inspect", return_value=created),
+            ):
+                live.tick()
+        with (
+            patch.object(validation.time, "monotonic", return_value=100.44),
+            self.assertRaises(validation.OpaqueRunError),
+        ):
+            live.tick()
+        self.assertEqual(live.attempts, 4)
+        self.assertEqual(self.commands.budget.deadline, deadline)
+
+    def test_root_observer_literal_uses_only_bounded_known_proc_reads_and_closes_local_fds(
+        self,
+    ) -> None:
+        import ast
+
+        tree = ast.parse(validation.LIVE_PROCESS_OBSERVER_PROGRAM)
+        namespace: dict[str, Any] = {}
+        definitions = ast.Module(
+            body=[node for node in tree.body if not isinstance(node, ast.If)], type_ignores=[]
+        )
+        exec(compile(definitions, "fixed-root-observer-unit-only", "exec"), namespace)
+        opened: dict[int, tuple[int, str]] = {}
+        closed: list[int] = []
+        pidfds: list[int] = []
+        count = [500]
+
+        def open_fd(name: str, _flags: int, *, dir_fd: int | None = None) -> int:
+            if name == "/proc":
+                return 10
+            if dir_fd == 10:
+                return int(name) + 1000
+            assert dir_fd is not None
+            count[0] += 1
+            opened[count[0]] = (dir_fd - 1000, name)
+            return count[0]
+
+        def read(fd: int, _bound: int) -> bytes:
+            pid, name = opened[fd]
+            if name == "stat":
+                return (
+                    str(pid) + " (name with ) and spaces) R " + " ".join(["0"] * 18 + ["77"])
+                ).encode()
+            uid = 1000 if pid == 20 else 0
+            nspid = [20, 1] if pid == 20 else [pid]
+            return (
+                "Uid: " + " ".join([str(uid)] * 4) + "\nNSpid: " + " ".join(map(str, nspid)) + "\n"
+            ).encode()
+
+        def link(name: str, *, dir_fd: int) -> str:
+            pid = dir_fd - 1000
+            return (
+                ("pid:[101]" if pid == 20 else "pid:[100]")
+                if name == "ns/pid"
+                else ("mnt:[200]" if pid == 40 else "mnt:[333]")
+            )
+
+        def pidfd(pid: int, _flags: int) -> int:
+            pidfds.append(2000 + pid)
+            return 2000 + pid
+
+        with (
+            patch.object(os, "getpid", return_value=40),
+            patch.object(os, "getuid", return_value=0),
+            patch.object(os, "geteuid", return_value=0),
+            patch.object(os, "getresuid", return_value=(0, 0, 0)),
+            patch.object(os, "open", side_effect=open_fd),
+            patch.object(os, "read", side_effect=read),
+            patch.object(os, "readlink", side_effect=link),
+            patch.object(os, "pidfd_open", side_effect=pidfd),
+            patch.object(os, "set_inheritable") as inheritable,
+            patch.object(os, "close", side_effect=closed.append),
+            patch.object(namespace["select"], "select", return_value=([], [], [])),
+        ):
+            result = namespace["observe"](validation.asdict(self.request()))
+        self.assertEqual(result["status"], "observed")
+        self.assertEqual(pidfds, [2020, 2030])
+        self.assertTrue(set(pidfds).issubset(closed))
+        self.assertEqual(
+            inheritable.call_args_list,
+            [call(2020, False), call(2030, False)],
+        )
+        self.assertTrue(set(opened).issubset(closed))
+        self.assertIn(10, closed)
+        self.assertNotIn("listdir", validation.LIVE_PROCESS_OBSERVER_PROGRAM)
+        self.assertNotIn("setns", validation.LIVE_PROCESS_OBSERVER_PROGRAM)
 
 
 if __name__ == "__main__":

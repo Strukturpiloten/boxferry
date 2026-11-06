@@ -177,11 +177,12 @@ def load_policy(path: Path, repository: str) -> dict[str, Any]:
     return policy
 
 
-def verify_gate(policy: dict[str, Any], needs: object, candidate_sha: str) -> None:
+def verify_gate(policy: dict[str, Any], needs: object, candidate_sha: str) -> str:
     if not SHA.fullmatch(candidate_sha):
         raise ReleaseError("candidate must be one full commit SHA")
     if not isinstance(needs, dict) or set(needs) != set(policy["required_jobs"]):
         raise ReleaseError("release needs must contain exactly every configured prerequisite")
+    published_candidates: list[str] = []
     for name in policy["required_jobs"]:
         prerequisite = needs[name]
         if not isinstance(prerequisite, dict) or prerequisite.get("result") != "success":
@@ -189,6 +190,20 @@ def verify_gate(policy: dict[str, Any], needs: object, candidate_sha: str) -> No
         outputs = prerequisite.get("outputs")
         if not isinstance(outputs, dict) or outputs.get("candidate_sha") != candidate_sha:
             raise ReleaseError(f"release prerequisite has no exact candidate binding: {name}")
+        if "published_api_candidate_sha" in outputs:
+            published_candidate = outputs["published_api_candidate_sha"]
+            if (
+                not isinstance(published_candidate, str)
+                or not SHA.fullmatch(published_candidate)
+                or published_candidate != candidate_sha
+            ):
+                raise ReleaseError(
+                    f"release prerequisite has invalid published API binding: {name}"
+                )
+            published_candidates.append(published_candidate)
+    if len(published_candidates) != 1:
+        raise ReleaseError("release needs exactly one explicit published API candidate binding")
+    return published_candidates[0]
 
 
 def publication_inventory(
@@ -412,8 +427,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "gate":
             if args.needs_json is None:
                 raise ReleaseError("release gate needs exact prerequisite results")
-            verify_gate(policy, read_json(args.needs_json), args.candidate_sha)
-            write_outputs({"candidate_sha": args.candidate_sha})
+            published_candidate = verify_gate(
+                policy, read_json(args.needs_json), args.candidate_sha
+            )
+            write_outputs(
+                {
+                    "candidate_sha": args.candidate_sha,
+                    "published_api_candidate_sha": published_candidate,
+                }
+            )
             return 0
         if args.validation_sha != args.candidate_sha or args.validation_result != "success":
             raise ReleaseError(

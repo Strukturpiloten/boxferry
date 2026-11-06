@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from enum import Enum
 from pathlib import Path
 
 MAX_OUTPUT = 64 * 1024
@@ -29,8 +31,111 @@ class RenovateRuntimeError(ValueError):
     """The pinned runtime could not be acquired or verified."""
 
 
+class _Operation(Enum):
+    UNKNOWN = "unknown"
+    PULL = "image-pull"
+    INSPECT = "digest-inspect"
+    CREATE = "stopped-create"
+    COPY = "copy"
+    CLEANUP = "cleanup"
+    RE2 = "native-RE2"
+
+
+class _Reason(Enum):
+    UNKNOWN = "unknown"
+    STORAGE = "storage"
+    AUTHENTICATION = "authentication"
+    PERMISSION = "permission"
+    NETWORK = "network"
+    MISSING_RUNTIME = "missing-runtime"
+    TIME_BOUND = "time bound"
+    BYTE_BOUND = "output byte bound"
+    INVALID_OUTPUT = "invalid-output"
+
+
+class _CommandFailure(RenovateRuntimeError):
+    def __init__(
+        self, reason: _Reason, status: int | None, operation: _Operation = _Operation.UNKNOWN
+    ) -> None:
+        self.reason, self.status, self.operation = reason, status, operation
+        super().__init__(
+            f"runtime operation {operation.value} failed "
+            f"(exit status {status if status is not None else 'unavailable'}; "
+            f"reason {reason.value})"
+        )
+
+
+class _AcquisitionFailure(RenovateRuntimeError):
+    def __init__(
+        self, primary: RenovateRuntimeError, cleanup: Sequence[RenovateRuntimeError]
+    ) -> None:
+        self.primary, self.cleanup = primary, tuple(cleanup)
+        suffix = "; cleanup failure: " + "; ".join(map(str, cleanup)) if cleanup else ""
+        super().__init__(str(primary) + suffix)
+
+
+def _failure_reason(content: bytes | bytearray) -> _Reason:
+    # These are bounded diagnostic hints, never proof of the underlying host cause.
+    # Only the closed category escapes; streams, matched text and credentials stay private.
+    lowered = content.lower()
+    for reason, phrases in (
+        (_Reason.STORAGE, (b"no space left on device", b"disk quota exceeded")),
+        (
+            _Reason.AUTHENTICATION,
+            (
+                b"authentication required",
+                b"unauthorized",
+                b"requested access to the resource is denied",
+            ),
+        ),
+        (_Reason.PERMISSION, (b"permission denied", b"operation not permitted")),
+        (
+            _Reason.NETWORK,
+            (
+                b"network is unreachable",
+                b"connection refused",
+                b"could not resolve host",
+                b"no such host",
+                b"connection reset by peer",
+                b"connection timed out",
+                b"temporary failure in name resolution",
+                b"i/o timeout",
+                b"tls handshake timeout",
+            ),
+        ),
+        (_Reason.MISSING_RUNTIME, (b"executable file not found in $path", b"command not found")),
+    ):
+        if any(phrase in lowered for phrase in phrases):
+            return reason
+    return _Reason.UNKNOWN
+
+
+def _os_reason(error: OSError, *, spawning: bool = False) -> _Reason:
+    if spawning and error.errno == errno.ENOENT:
+        return _Reason.MISSING_RUNTIME
+    if error.errno in (errno.EACCES, errno.EPERM):
+        return _Reason.PERMISSION
+    if error.errno in (errno.ENOSPC, errno.EDQUOT):
+        return _Reason.STORAGE
+    if error.errno in (errno.ENETUNREACH, errno.ECONNREFUSED, errno.ETIMEDOUT):
+        return _Reason.NETWORK
+    return _Reason.UNKNOWN
+
+
+def _invoke(operation: _Operation, argv: Sequence[str], timeout: float, command: Command) -> str:
+    """Bind a fixed call site to safe runner facts, without rendering injected exceptions."""
+    try:
+        return command(argv, timeout)
+    except _CommandFailure as error:
+        raise _CommandFailure(error.reason, error.status, operation) from None
+    except OSError as error:
+        raise _CommandFailure(_os_reason(error), None, operation) from None
+    except Exception:
+        raise _CommandFailure(_Reason.UNKNOWN, None, operation) from None
+
+
 def run_command(command: Sequence[str], timeout: float) -> str:
-    """Bound time and all output; do not print registry or engine credentials."""
+    """Bound time and aggregate output; publish only closed reasons and numeric status."""
     try:
         process = subprocess.Popen(
             command,
@@ -40,23 +145,23 @@ def run_command(command: Sequence[str], timeout: float) -> str:
             start_new_session=True,
         )
     except OSError as error:
-        raise RenovateRuntimeError(
-            f"runtime command unavailable: {type(error).__name__}"
-        ) from error
-    stdout = bytearray()
+        raise _CommandFailure(_os_reason(error, spawning=True), None) from None
+    stdout, stderr = bytearray(), bytearray()
     observed = 0
     successful = False
+    failure: _CommandFailure | None = None
     deadline = time.monotonic() + timeout
+    result = ""
     try:
         with selectors.DefaultSelector() as streams:
             if process.stdout is None or process.stderr is None:
-                raise RenovateRuntimeError("runtime command output streams are unavailable")
+                raise _CommandFailure(_Reason.UNKNOWN, None)
             streams.register(process.stdout, selectors.EVENT_READ, True)
             streams.register(process.stderr, selectors.EVENT_READ, False)
             while streams.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise RenovateRuntimeError("runtime command exceeded its time bound")
+                    raise _CommandFailure(_Reason.TIME_BOUND, None)
                 for key, _ in streams.select(remaining):
                     chunk = os.read(key.fd, 8192)
                     if not chunk:
@@ -64,21 +169,23 @@ def run_command(command: Sequence[str], timeout: float) -> str:
                         continue
                     observed += len(chunk)
                     if observed > MAX_OUTPUT:
-                        raise RenovateRuntimeError("runtime command output exceeds the byte bound")
-                    if key.data:
-                        stdout.extend(chunk)
+                        raise _CommandFailure(_Reason.BYTE_BOUND, None)
+                    (stdout if key.data else stderr).extend(chunk)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RenovateRuntimeError("runtime command exceeded its time bound")
+                raise _CommandFailure(_Reason.TIME_BOUND, None)
             if process.wait(timeout=remaining):
-                raise RenovateRuntimeError(f"runtime command failed ({Path(command[0]).name})")
+                raise _CommandFailure(_failure_reason(stdout + b"\n" + stderr), process.returncode)
         result = stdout.decode("utf-8")
         successful = True
-        return result
-    except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
-        raise RenovateRuntimeError(
-            f"runtime command unavailable: {type(error).__name__}"
-        ) from error
+    except _CommandFailure as error:
+        failure = error
+    except subprocess.TimeoutExpired:
+        failure = _CommandFailure(_Reason.TIME_BOUND, None)
+    except OSError as error:
+        failure = _CommandFailure(_os_reason(error), None)
+    except UnicodeError:
+        failure = _CommandFailure(_Reason.INVALID_OUTPUT, None)
     finally:
         if process.poll() is None or not successful:
             try:
@@ -90,6 +197,9 @@ def run_command(command: Sequence[str], timeout: float) -> str:
             process.stdout.close()
         if process.stderr is not None:
             process.stderr.close()
+    if failure is not None:
+        raise _CommandFailure(failure.reason, process.returncode) from None
+    return result
 
 
 def _pin(path: Path) -> tuple[str, str]:
@@ -111,7 +221,7 @@ def _pin(path: Path) -> tuple[str, str]:
     except (OSError, ValueError) as error:
         if isinstance(error, RenovateRuntimeError):
             raise
-        raise RenovateRuntimeError("runtime pin is unavailable or malformed") from error
+        raise RenovateRuntimeError("runtime pin is unavailable or malformed") from None
 
 
 def _verify(path: Path, version: str, command: Command) -> None:
@@ -126,7 +236,7 @@ def _verify(path: Path, version: str, command: Command) -> None:
     except (OSError, ValueError, AttributeError) as error:
         if isinstance(error, RenovateRuntimeError):
             raise
-        raise RenovateRuntimeError("runtime package identity is malformed") from error
+        raise RenovateRuntimeError("runtime package identity is malformed") from None
     code = (
         "import {pathToFileURL} from 'node:url';"
         "const module=await import(pathToFileURL(process.argv[1]+'/dist/util/regex.js'));"
@@ -134,7 +244,9 @@ def _verify(path: Path, version: str, command: Command) -> None:
         "throw new Error('pinned runtime requires native RE2');"
         "process.stdout.write('native-re2-available');"
     )
-    result = command(["node", "--input-type=module", "-e", code, str(path)], 30)
+    result = _invoke(
+        _Operation.RE2, ["node", "--input-type=module", "-e", code, str(path)], 30, command
+    )
     if result.strip() != "native-re2-available":
         raise RenovateRuntimeError("native RE2 verification did not return its expected evidence")
 
@@ -181,10 +293,17 @@ def prepare_runtime(
     destination.parent.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix=".renovate-extract-", dir=destination.parent))
     container_id: str | None = None
+    failure: RenovateRuntimeError | None = None
+    cleanup_failures: list[RenovateRuntimeError] = []
     try:
-        command([engine, "pull", image], 300)
+        _invoke(_Operation.PULL, [engine, "pull", image], 300, command)
         identities = json.loads(
-            command([engine, "image", "inspect", "--format", "{{json .RepoDigests}}", image], 30)
+            _invoke(
+                _Operation.INSPECT,
+                [engine, "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+                30,
+                command,
+            )
         )
         expected = "ghcr.io/renovatebot/renovate@" + image.rsplit("@", 1)[1]
         if not isinstance(identities, list) or expected not in identities:
@@ -192,31 +311,57 @@ def prepare_runtime(
                 "pulled OCI image identity differs from the requested digest"
             )
         container_id = "boxferry-renovate-" + uuid.uuid4().hex
-        created = command(
-            [engine, "create", "--name", container_id, "--network", "none", image], 30
+        created = _invoke(
+            _Operation.CREATE,
+            [engine, "create", "--name", container_id, "--network", "none", image],
+            30,
+            command,
         ).strip()
         if re.fullmatch(r"[a-f0-9]{12,64}", created) is None:
             raise RenovateRuntimeError("engine returned an invalid stopped-container identity")
-        command([engine, "cp", f"{container_id}:/usr/local/renovate/.", str(scratch)], 180)
+        _invoke(
+            _Operation.COPY,
+            [engine, "cp", f"{container_id}:/usr/local/renovate/.", str(scratch)],
+            180,
+            command,
+        )
         _verify(scratch, version, command)
         (scratch / "source-image.txt").write_text(image + "\n")
-        command([engine, "rm", "--force", container_id], 30)
+        _invoke(_Operation.CLEANUP, [engine, "rm", "--force", container_id], 30, command)
         container_id = None
         if destination.exists():
             shutil.rmtree(destination)
         scratch.rename(destination)
-        return destination
     except (OSError, ValueError) as error:
-        if isinstance(error, RenovateRuntimeError):
-            raise
-        raise RenovateRuntimeError("runtime acquisition returned malformed evidence") from error
+        failure = (
+            error
+            if isinstance(error, RenovateRuntimeError)
+            else RenovateRuntimeError("runtime acquisition returned malformed evidence")
+        )
     finally:
         try:
             if container_id is not None:
-                command([engine, "rm", "--force", container_id], 30)
+                try:
+                    _invoke(
+                        _Operation.CLEANUP, [engine, "rm", "--force", container_id], 30, command
+                    )
+                except RenovateRuntimeError as error:
+                    cleanup_failures.append(error)
         finally:
-            if scratch.exists():
-                shutil.rmtree(scratch)
+            try:
+                if scratch.exists():
+                    shutil.rmtree(scratch)
+            except OSError as error:
+                cleanup_failures.append(
+                    _CommandFailure(_os_reason(error), None, _Operation.CLEANUP)
+                )
+    if failure is not None:
+        if cleanup_failures:
+            raise _AcquisitionFailure(failure, cleanup_failures) from None
+        raise failure from None
+    if cleanup_failures:
+        raise _AcquisitionFailure(cleanup_failures[0], cleanup_failures[1:]) from None
+    return destination
 
 
 def main() -> int:

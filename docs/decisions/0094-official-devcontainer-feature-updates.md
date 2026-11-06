@@ -74,6 +74,28 @@ actual `dpkg` package/version, UID-0 and rootful observations separately from fi
 Before consumer activation, cold storage budget proof must cover the actual Docker daemon
 filesystem; producer definitions alone establish no measured resource or native evidence.
 
+Explicit operator-selected local rootful qualification keeps preparation/reports under
+the original user. Before its first root bridge, the literal installed Podman executable
+and every parent/symlink hop require root ownership, no operator write access, and
+bounded user-observed version/hash evidence with drift checks. Trusted selection/npm bootstrap stay outside; existing candidate
+snapshot/context copies may run inside after the verified groups/GID/UID drop. The
+fixed isolated stdlib bootstrap/root PID1 owns one foreground PID/mount namespace.
+A sole close-on-exec FIFO writer is established with a temporary reader that closes
+before root launch. The claimed FIFO EOF lease and pre-cleanup abort handoff handle startup and cancellation;
+only bound PID1 pidfd/supervisor closure authorizes outside anchored, no-follow finite
+cleanup. No stale-store recovery, global process scan or service controller is added.
+The local-only cgroupfs/file-events profile selects installed `/usr/bin/runc` with observed
+root-owned resolved executable, version and digest, not a downloadable/cross-architecture
+pin or invented Renovate owner. Existing pins and hosted/rootless selection stay intact.
+Live inspection uses an opt-in opaque output/private-parser boundary; default runner
+logs remain unchanged. Exact-owned numeric schema capture and independent selector
+review precede a bounded container/conmon snapshot. This establishes no global absence
+of namespace export, delegation or other holders, and no engine readiness.
+
+The previous detached cancellation failed. Independent source review, exact-payload
+harmless preflight and fresh-store compatibility remain mandatory before admission;
+these definitions establish no native, ARM, App or updater readiness.
+
 Existing release-plz App credential names are reused with a one-repository
 contents/PR-write token and the checks/status reads required for eligibility.
 Actual restricted-token compatibility and bot-triggered ordinary CI must be

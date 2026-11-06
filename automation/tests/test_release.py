@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from copy import deepcopy
@@ -53,6 +55,7 @@ class ReleaseTests(unittest.TestCase):
             name: {"result": "success", "outputs": {"candidate_sha": SHA}}
             for name in self.policy["required_jobs"]
         }
+        self.needs["deterministic"]["outputs"]["published_api_candidate_sha"] = SHA
 
     def args(self, command: str) -> list[str]:
         return [
@@ -74,12 +77,168 @@ class ReleaseTests(unittest.TestCase):
         ]
 
     def test_complete_gate_success_and_every_non_success_fails(self) -> None:
-        release.verify_gate(self.policy, self.needs, SHA)
-        for status in ("failure", "cancelled", "skipped", "", None):
-            with self.subTest(status=status):
-                self.needs["native"]["result"] = status
-                with self.assertRaises(release.ReleaseError):
-                    release.verify_gate(self.policy, self.needs, SHA)
+        self.assertEqual(release.verify_gate(self.policy, self.needs, SHA), SHA)
+        for name in self.policy["required_jobs"]:
+            for status in ("failure", "cancelled", "skipped", "", None):
+                needs = deepcopy(self.needs)
+                needs[name]["result"] = status
+                with (
+                    self.subTest(name=name, status=status),
+                    self.assertRaises(release.ReleaseError),
+                ):
+                    release.verify_gate(self.policy, needs, SHA)
+
+    def test_published_evidence_can_come_from_exactly_one_configured_prerequisite(self) -> None:
+        proof = self.needs["deterministic"]["outputs"].pop("published_api_candidate_sha")
+        self.needs["native"]["outputs"]["published_api_candidate_sha"] = proof
+        self.assertEqual(release.verify_gate(self.policy, self.needs, SHA), SHA)
+
+    def test_single_published_proof_preserves_current_caller_prerequisite_shapes(self) -> None:
+        for jobs, api_job in (
+            (["validate"], "validate"),
+            (["candidate", "native-conformance", "dependencies", "api"], "api"),
+        ):
+            needs: dict[str, dict[str, Any]] = {
+                name: {"result": "success", "outputs": {"candidate_sha": SHA}} for name in jobs
+            }
+            needs[api_job]["outputs"]["published_api_candidate_sha"] = SHA
+            with self.subTest(jobs=jobs):
+                self.assertEqual(
+                    release.verify_gate(self.policy | {"required_jobs": jobs}, needs, SHA), SHA
+                )
+
+    def test_malformed_tested_candidate_cannot_be_accepted_by_either_output(self) -> None:
+        for candidate in ("", SHA[:12], "g" * 40, SHA.upper(), SHA + "\n"):
+            needs = deepcopy(self.needs)
+            for prerequisite in needs.values():
+                prerequisite["outputs"]["candidate_sha"] = candidate
+            needs["deterministic"]["outputs"]["published_api_candidate_sha"] = candidate
+            with self.subTest(candidate=candidate), self.assertRaises(release.ReleaseError):
+                release.verify_gate(self.policy, needs, candidate)
+
+    def test_generic_candidate_and_development_evidence_cannot_replace_published_proof(
+        self,
+    ) -> None:
+        self.needs["deterministic"]["outputs"].pop("published_api_candidate_sha")
+        for other_evidence in (
+            {},
+            {"api_purpose": "published"},
+            {"api_purpose": "development", "development_api_candidate_sha": SHA},
+        ):
+            needs = deepcopy(self.needs)
+            needs["deterministic"]["outputs"].update(other_evidence)
+            with (
+                self.subTest(other_evidence=other_evidence),
+                self.assertRaises(release.ReleaseError),
+            ):
+                release.verify_gate(self.policy, needs, SHA)
+
+    def test_explicit_published_evidence_must_be_one_full_exact_candidate_sha(self) -> None:
+        for value in (
+            None,
+            "",
+            False,
+            1,
+            [],
+            {},
+            SHA[:12],
+            "g" * 40,
+            SHA.upper(),
+            SHA + "\n",
+            AUTOMATION,
+        ):
+            needs = deepcopy(self.needs)
+            needs["deterministic"]["outputs"]["published_api_candidate_sha"] = value
+            with self.subTest(value=value), self.assertRaises(release.ReleaseError):
+                release.verify_gate(self.policy, needs, SHA)
+
+    def test_repeated_contradictory_and_empty_additional_published_evidence_fail(self) -> None:
+        for value in (SHA, AUTOMATION, "", None):
+            needs = deepcopy(self.needs)
+            needs["native"]["outputs"]["published_api_candidate_sha"] = value
+            with self.subTest(value=value), self.assertRaises(release.ReleaseError):
+                release.verify_gate(self.policy, needs, SHA)
+
+    def test_real_gate_cli_writes_both_outputs_only_after_all_evidence_succeeds(self) -> None:
+        # Stub only immutable Git identity reads. The CLI, JSON reader, gate and
+        # GITHUB_OUTPUT writer run in a real child process with no publication command.
+        automation_root = Path(release.__file__).resolve().parents[3]
+        git = self.root / "git"
+        git.write_text(
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            f"identities = { {str(self.root): SHA, str(automation_root): AUTOMATION}!r}\n"
+            "args = sys.argv[1:]\n"
+            "if len(args) != 4 or args[0] != '-C' or args[2:] != ['rev-parse', 'HEAD']:\n"
+            "    raise SystemExit(99)\n"
+            "print(identities[args[1]])\n",
+            encoding="utf-8",
+        )
+        git.chmod(0o755)
+        output = self.root / "github-output"
+        env = os.environ | {
+            "PATH": str(self.root) + os.pathsep + os.environ.get("PATH", ""),
+            "PYTHONPATH": str(automation_root / "automation/src"),
+            "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+            "GITHUB_SHA": SHA,
+            "GITHUB_OUTPUT": str(output),
+        }
+        cases: list[tuple[str, dict[str, Any] | None]] = [("success", self.needs)]
+        for label in ("generic-only", "empty", "stale", "multiple", "failed", "missing"):
+            needs = deepcopy(self.needs)
+            if label == "generic-only":
+                needs["deterministic"]["outputs"].pop("published_api_candidate_sha")
+            elif label in {"empty", "stale"}:
+                needs["deterministic"]["outputs"]["published_api_candidate_sha"] = (
+                    "" if label == "empty" else AUTOMATION
+                )
+            elif label == "multiple":
+                needs["native"]["outputs"]["published_api_candidate_sha"] = SHA
+            elif label == "failed":
+                needs["native"]["result"] = "failure"
+            else:
+                needs.pop("native")
+            cases.append((label, needs))
+        cases.append(("no-needs", None))
+        for label, needs in cases:
+            with self.subTest(label=label):
+                output.write_text("existing=retained\n", encoding="utf-8")
+                args = self.args("gate")
+                if needs is not None:
+                    args += ["--needs-json", json.dumps(needs)]
+                child = subprocess.run(
+                    [sys.executable, "-m", "boxferry_ci.release", *args],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                if label == "success":
+                    self.assertEqual(child.returncode, 0, child.stderr)
+                    self.assertEqual(
+                        output.read_text(),
+                        f"existing=retained\ncandidate_sha={SHA}\npublished_api_candidate_sha={SHA}\n",
+                    )
+                else:
+                    self.assertNotEqual(child.returncode, 0)
+                    self.assertIn("release contract failed:", child.stderr)
+                    self.assertEqual(output.read_text(), "existing=retained\n")
+
+    def test_shared_workflow_forwards_the_validated_cli_published_api_output(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/shared-release-validation.yml").read_text()
+        self.assertIn("value: ${{ jobs.validate.outputs.published_api_candidate_sha }}", workflow)
+        self.assertIn(
+            "published_api_candidate_sha: ${{ steps.gate.outputs.published_api_candidate_sha }}",
+            workflow,
+        )
+        steps = workflow.split("      - name: ")
+        gate_step = next(step for step in steps if "python -m boxferry_ci.release gate" in step)
+        self.assertIn("        id: gate\n", gate_step)
+        self.assertNotIn("continue-on-error", workflow)
+        self.assertNotIn("published_api_candidate_sha: ${{ inputs.candidate_sha }}", workflow)
+        self.assertIn("candidate_sha: ${{ steps.result.outputs.candidate_sha }}", workflow)
 
     def test_queue_semver_preserves_exact_source_pr_breaking_title(self) -> None:
         binding = release.QueueBinding(SHA, AUTOMATION, 42, "c" * 40)
@@ -258,6 +417,14 @@ class ReleaseTests(unittest.TestCase):
                 release.load_policy(self.config, "Strukturpiloten/boxferry")
         with self.assertRaises(release.ReleaseError):
             release.read_json('{"schema":1,"schema":1}')
+        with self.assertRaises(release.ReleaseError):
+            release.read_json(
+                '{"published_api_candidate_sha":"'
+                + SHA
+                + '","published_api_candidate_sha":"'
+                + SHA
+                + '"}'
+            )
 
     def test_validation_only_has_no_registry_or_mutating_command(self) -> None:
         with (

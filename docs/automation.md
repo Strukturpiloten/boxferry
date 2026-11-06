@@ -1,10 +1,10 @@
 # Shared development automation
 
-BoxFerry owns the shared [automation package](../automation/), [reusable workflows](../.github/workflows/) and composite actions. Lens products consume development tooling without joining product dependency graphs; the website retains its own site checks. [ADR 0092](decisions/0092-shared-development-automation.md) defines ownership and rollout: adoption remains incomplete, and each consumer requires independent validation.
+[ADR 0092](decisions/0092-shared-development-automation.md) assigns shared [automation](../automation/), [workflows](../.github/workflows/) and actions to BoxFerry. Lens product graphs stay independent; the website keeps site checks. Adoption remains incomplete; every consumer requires independent validation.
 
 ## Revisions and admission
 
-Shared workflow callers bind three immutable identities: `candidate_sha` is the exact tested `github.sha`; `automation_sha` identifies the BoxFerry implementation and must match the reusable workflow reference's full SHA; `policy_sha` identifies the trusted pull request or merge queue base, or the candidate for other events. Policy paths are repository-relative and validated against the trusted checkout. See [shared-source](../.github/actions/shared-source/action.yml) and the [shared workflows](../.github/workflows/).
+Callers bind immutable identities: `candidate_sha` is tested `github.sha`; `automation_sha` is the BoxFerry implementation matching the reusable workflow’s full SHA; `policy_sha` is the trusted PR/merge-queue base, or candidate for other events. Validate repository-relative policy paths against the trusted checkout. See [shared-source](../.github/actions/shared-source/action.yml) and [workflows](../.github/workflows/).
 
 Dependency admission reads the manifest from the exact trusted base Git object. If that base selects automation A while the candidate proposes B, the [admission reader](../.github/workflows/shared-dependency-wait.yml) checks the exact candidate using A and reports A as implementation; other CI validates B. The base manifest must exist: there is no candidate fallback. Push, manual and release validation add no age-admission hold. See [admission](../automation/src/boxferry_ci/admission.py), [eligibility](../automation/src/boxferry_ci/eligibility.py), [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md), and [ADR 0095](decisions/0095-bounded-older-base-dependency-recovery.md) for age policy and bounded recovery.
 
@@ -14,7 +14,7 @@ For pull requests and merge queues, the planner compares trusted base and tested
 
 Main pushes, manual CI, release validation and the local [complete gate](../scripts/check-all.sh) remain complete. Change-aware feedback, formatting and linting do not replace that gate. During adoption, consumers preserve complete existing tasks when trusted policy lacks new definitions. The [Dev Container seed adapter](../automation/src/boxferry_ci/devcontainer_seed.py) remains opt-in with reviewed approvals.
 
-The shared [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) define canonical uv, Ruff and ty tooling. The interface-1 local loader verifies pinned source before delegating uv setup and locked execution. Each repository owns its feature checks, coverage thresholds, native suites, binaries and evidence; runtime selection and safeguards follow [ADR 0079](decisions/0079-native-test-runtime-selection.md) and the owning harness.
+The shared [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) define canonical uv, Ruff and ty tooling. The interface-1 local loader verifies pinned source before delegating uv setup and locked execution. The [shared Node action](../.github/actions/shared-node/action.yml) uses locked Python and the producer CI version, preserving cache inputs. Mandatory native automation validates decoded Node ownership and replacements; Rust retains generic Action pin checks. Updater caching stays disabled; consumer adoption waits for producer admission. Repositories own checks, thresholds, native suites, binaries and evidence; runtime safeguards follow [ADR 0079](decisions/0079-native-test-runtime-selection.md) and the owning harness.
 
 ## Daily checks and agent repairs
 
