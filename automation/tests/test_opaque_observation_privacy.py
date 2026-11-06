@@ -1,8 +1,7 @@
 """Independent unknown-canary checks at opaque observation publication boundaries.
 
-Only harmless nonroot fixture children run. The PROCESSES invocation keeps its real
-source-owned program/digest at the runner boundary; a Popen test double substitutes
-our harmless child instead of observing any host processes or invoking a runtime.
+Only harmless nonroot fixture children run. Private inspection streams are tested
+with unknown canaries through runner, serializer and CLI publication boundaries.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ import hashlib
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,8 +22,6 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock, patch
 
-from boxferry_ci import devcontainer_lifetime as lifetime
-from boxferry_ci import devcontainer_local as local
 from boxferry_ci import devcontainer_validation as validation
 from boxferry_ci import runner
 
@@ -132,15 +128,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
     ) -> runner.OpaqueRunResult:
         actual_popen = subprocess.Popen
         argv = (sys.executable, "-I", "-S", "-c", program, CANARIES["request"])
-        if mode is runner.OpaqueObservation.PROCESSES:
-            argv = (
-                "/usr/bin/python3",
-                "-I",
-                "-S",
-                "-c",
-                validation.LIVE_PROCESS_OBSERVER_PROGRAM,
-                CANARIES["request"],
-            )
 
         def harmless_child(_argv: tuple[str, ...], **kwargs: object) -> subprocess.Popen[bytes]:
             self.assertEqual(_argv, argv)
@@ -169,19 +156,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
             assert isinstance(result, runner.OpaqueRunResult)
             return result
 
-    def handoff(self) -> tuple[dict[str, Any], int]:
-        result = self.root / ("handoff-" + str(len(list(self.root.iterdir()))))
-        result.touch(mode=0o600)
-        facts = result.stat()
-        read_fd, write_fd = os.pipe()
-        self.addCleanup(os.close, read_fd)
-        self.addCleanup(os.close, write_fd)
-        return {
-            "result": str(result),
-            "result_identity": [facts.st_dev, facts.st_ino],
-            "abort_fd": write_fd,
-        }, read_fd
-
     def persisted_failure(
         self,
         mode: runner.OpaqueObservation,
@@ -189,13 +163,26 @@ class OpaqueObservationPrivacy(unittest.TestCase):
         *,
         monitor: Callable[[], None] | None = None,
     ) -> tuple[runner.OpaqueRunResult, runner.OpaqueAbortContext, dict[str, object]]:
-        context, read_fd = self.handoff()
+        # Fixture persistence is deliberately independent of the retired local
+        # namespace handoff; exercise the generic runner's safe abort contract.
+        output = self.root / "runner-failure.json"
         failures: list[runner.AbortContext] = []
         consumer = Mock()
 
         def abort(failure: runner.AbortContext) -> None:
             failures.append(failure)
-            lifetime.notify_abort(context, failure, {"schema": 1, "outcomes": []})
+            assert isinstance(failure, runner.OpaqueAbortContext)
+            output.write_text(
+                validation.serialize_report(
+                    {
+                        "schema": 1,
+                        "status": "failure",
+                        "command_failure_stage": failure.stage,
+                        "command_failure_cause": failure.cause,
+                        **failure.safe_fields(),
+                    }
+                )
+            )
 
         result = self.invoke(
             mode, self.fixture_program(ending), consumer=consumer, abort=abort, monitor=monitor
@@ -203,15 +190,13 @@ class OpaqueObservationPrivacy(unittest.TestCase):
         consumer.assert_not_called()
         self.assertEqual(len(failures), 1)
         self.assertIsInstance(failures[0], runner.OpaqueAbortContext)
-        self.assertEqual(os.read(read_fd, 1), b"A")
-        preview = json.loads(Path(context["result"]).read_text())
+        preview = json.loads(output.read_text())
         self.assertEqual(preview["status"], "failure")
         self.assertEqual(preview["command_failure_stage"], mode.stage)
         self.assert_private_absent(result, failures, preview)
         return result, cast(runner.OpaqueAbortContext, failures[0]), preview
 
     def publish(self, report: dict[str, object]) -> None:
-        """Exercise both actual CLI writers and their normal/overflow serializers."""
         for compact in (False, True):
             selected = dict(report)
             if compact:
@@ -229,57 +214,39 @@ class OpaqueObservationPrivacy(unittest.TestCase):
                     if key in selected:
                         self.assertEqual(decoded.get(key), selected[key])
             self.assert_private_absent(selected, encoded)
-            for frontend in ("validation", "local"):
-                with self.subTest(compact=compact, frontend=frontend):
-                    output = self.root / (frontend + "-" + str(compact) + ".json")
-                    stdout, stderr = io.StringIO(), io.StringIO()
-                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                        if frontend == "validation":
-                            with patch.object(validation, "qualify", return_value=selected):
-                                status = validation.main(
-                                    [
-                                        "qualify",
-                                        "--repository",
-                                        "boxferry",
-                                        "--candidate-sha",
-                                        "a" * 40,
-                                        "--output",
-                                        str(output),
-                                        "--source",
-                                        str(self.root),
-                                        "--policy",
-                                        str(self.root),
-                                        "--automation",
-                                        str(self.root),
-                                        "--policy-sha",
-                                        "b" * 40,
-                                        "--automation-sha",
-                                        "c" * 40,
-                                        "--engine",
-                                        "podman",
-                                        "--sources-json",
-                                        "{}",
-                                    ]
-                                )
-                        else:
-                            with (
-                                patch.object(local, "_owned_output"),
-                                patch.object(local, "execute", return_value=selected),
-                            ):
-                                status = local.main(
-                                    [
-                                        "--repository-root",
-                                        str(self.root),
-                                        "--config",
-                                        "unused.json",
-                                        "--output",
-                                        str(output),
-                                    ]
-                                )
-                    self.assertEqual(status, 0 if expected_status == "success" else 1)
-                    written = output.read_text()
-                    self.assertEqual(json.loads(written)["status"], expected_status)
-                    self.assert_private_absent(written, stdout.getvalue(), stderr.getvalue())
+            output = self.root / ("validation-" + str(compact) + ".json")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                with patch.object(validation, "qualify", return_value=selected):
+                    status = validation.main(
+                        [
+                            "qualify",
+                            "--repository",
+                            "boxferry",
+                            "--candidate-sha",
+                            "a" * 40,
+                            "--output",
+                            str(output),
+                            "--source",
+                            str(self.root),
+                            "--policy",
+                            str(self.root),
+                            "--automation",
+                            str(self.root),
+                            "--policy-sha",
+                            "b" * 40,
+                            "--automation-sha",
+                            "c" * 40,
+                            "--engine",
+                            "docker",
+                            "--sources-json",
+                            "{}",
+                        ]
+                    )
+            self.assertEqual(status, 0 if expected_status == "success" else 1)
+            written = output.read_text()
+            self.assertEqual(json.loads(written)["status"], expected_status)
+            self.assert_private_absent(written, stdout.getvalue(), stderr.getvalue())
 
     def test_all_modes_unknown_partial_nonzero_across_persisted_and_rendered_sinks(self) -> None:
         for mode in MODES:
@@ -381,7 +348,10 @@ class OpaqueObservationPrivacy(unittest.TestCase):
         def consume(content: bytes) -> None:
             nonlocal parsed
             if original_parser:
-                validation._live_json(content)
+                try:
+                    json.loads(content)
+                except json.JSONDecodeError:
+                    raise runner.OpaqueParseError(runner.OpaqueReason.INVALID_JSON) from None
             self.assertEqual(json.loads(content)["schema"], 1)
             parsed = True
             events.append("parsed")
@@ -484,8 +454,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
         expected = (
             runner.OpaqueReason.EXIT_NONZERO if original_nonzero else runner.OpaqueReason.CANCELLED
         )
-        if original_nonzero and mode is runner.OpaqueObservation.PROCESSES:
-            expected = runner.OpaqueReason.OBSERVER_FAILED
         expected_status = "failed" if original_nonzero else "cancelled"
         if original_timeout:
             expected, expected_status = runner.OpaqueReason.TIMEOUT, "infrastructure"
@@ -593,20 +561,9 @@ class OpaqueObservationPrivacy(unittest.TestCase):
                     "selector",
                     "initial-clock",
                 ]
-                if mode is runner.OpaqueObservation.PROCESSES:
-                    phases.append("observer-import")
                 for phase in phases:
                     with self.subTest(mode=mode, exception=exception, phase=phase):
                         argv = (sys.executable, "-c", "pass", CANARIES["request"])
-                        if mode is runner.OpaqueObservation.PROCESSES:
-                            argv = (
-                                "/usr/bin/python3",
-                                "-I",
-                                "-S",
-                                "-c",
-                                validation.LIVE_PROCESS_OBSERVER_PROGRAM,
-                                CANARIES["request"],
-                            )
                         error = exception(CANARIES["hook"])
                         error.__cause__ = ValueError(CANARIES["request"])
                         environment: Mapping[str, str] | None = None
@@ -705,160 +662,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
                         self.assert_private_absent(notifications)
                         self.assertTrue(all(f.status == "cancelled" for f in notifications))
 
-    def test_facade_preflight_and_postparse_cancellation_have_cancelled_abort_metadata(
-        self,
-    ) -> None:
-        held = validation.LiveHeldIdentity(
-            "a" * 64,
-            "sha256:" + "b" * 64,
-            "c" * 32,
-            1000,
-            "d" * 64,
-            "podman version 5.8.1",
-        )
-        request = validation.LiveProcessRequest(
-            101, 102, 1000, "pid:[1001]", "mnt:[1002]", "pid:[1003]", "mnt:[1004]"
-        )
-        for mode in MODES:
-            for exception in (runner.RunCancelled, KeyboardInterrupt):
-                for phase in ("budget", "builder", "postparse-budget"):
-                    with self.subTest(mode=mode, exception=exception, phase=phase):
-                        private = self.root / (mode.value + "-" + exception.__name__ + "-" + phase)
-                        private.mkdir(mode=0o700)
-                        commands = validation.Commands(private)
-                        commands.lifetime_context = {"private": str(private)}
-                        notifications: list[runner.AbortContext] = []
-                        error = exception(CANARIES["hook"])
-                        error.__cause__ = ValueError(CANARIES["parser"])
-                        budget = Mock()
-                        commands.budget = cast(validation.Budget, budget)
-                        if phase == "budget":
-                            budget.check.side_effect = error
-                        elif phase == "postparse-budget":
-                            budget.check.side_effect = [None, error]
-
-                        def notify(
-                            context: dict[str, Any],
-                            observed: runner.AbortContext,
-                            report: object,
-                            notifications: list[runner.AbortContext] = notifications,
-                        ) -> None:
-                            context["abort_notified"] = True
-                            notifications.append(observed)
-                            self.assert_private_absent(observed, report)
-
-                        def completed_runner(
-                            _argv: tuple[str, ...],
-                            mode: runner.OpaqueObservation = mode,
-                            **kwargs: object,
-                        ) -> runner.OpaqueRunResult:
-                            cast(Callable[[bytes], None], kwargs["on_private_stdout"])(b"{}")
-                            empty_hash = hashlib.sha256(b"").hexdigest()
-                            metrics = runner.OpaqueMetrics(
-                                mode,
-                                runner.OpaqueReason.COMPLETED,
-                                "success",
-                                "e" * 64,
-                                validation.LIVE_PROCESS_OBSERVER_SHA256
-                                if mode is runner.OpaqueObservation.PROCESSES
-                                else None,
-                                0,
-                                0,
-                                empty_hash,
-                                empty_hash,
-                            )
-                            return runner.OpaqueRunResult(
-                                "success",
-                                0,
-                                "",
-                                "",
-                                0.01,
-                                runner.Diagnostic(
-                                    mode.stage, "completed", "held", "safe", "review"
-                                ),
-                                ("opaque-observation", mode.value, "e" * 64),
-                                metrics=metrics,
-                            )
-
-                        with contextlib.ExitStack() as stack:
-                            stack.enter_context(
-                                patch.object(lifetime, "notify_abort", side_effect=notify)
-                            )
-                            launched = stack.enter_context(
-                                patch.object(
-                                    validation,
-                                    "run",
-                                    side_effect=completed_runner
-                                    if phase == "postparse-budget"
-                                    else AssertionError("prelaunch"),
-                                )
-                            )
-                            stack.enter_context(
-                                patch.object(
-                                    validation,
-                                    "LIVE_PID_SCHEMA",
-                                    validation.LivePidSchema.PODMAN_STATE_FIELDS,
-                                )
-                            )
-                            stack.enter_context(
-                                patch.object(validation, "_rootful_bridge", return_value=((), ()))
-                            )
-                            if phase == "builder":
-                                target = "_rootful_bridge" if mode is MODES[2] else "_live_held"
-                                stack.enter_context(
-                                    patch.object(validation, target, side_effect=error)
-                                )
-                            stack.enter_context(
-                                patch.object(
-                                    validation,
-                                    "_parse_live_inspect",
-                                    return_value=validation.LiveInspection(
-                                        held, True, "running", 101, 102, "integer", "integer", ""
-                                    ),
-                                )
-                            )
-                            stack.enter_context(
-                                patch.object(
-                                    validation,
-                                    "_parse_live_processes",
-                                    return_value=validation.LiveProcessSample(
-                                        103, request.pid_namespace, request.mount_namespace, ()
-                                    ),
-                                )
-                            )
-                            outcome: object = None
-                            try:
-                                if mode is runner.OpaqueObservation.PROCESSES:
-                                    cast(Any, commands)._live_processes(request)
-                                else:
-                                    cast(Any, commands)._live_inspect(held, mode)
-                            except BaseException as observed:
-                                outcome = observed
-                        self.assert_fixed_cancellation(outcome)
-                        if phase == "postparse-budget":
-                            launched.assert_called_once()
-                        else:
-                            launched.assert_not_called()
-                        self.assertEqual(len(notifications), 1)
-                        self.assertEqual(notifications[0].status, "cancelled")
-                        self.assertEqual(
-                            notifications[0].cause, runner.OpaqueReason.CANCELLED.value
-                        )
-                        self.assertEqual(commands.outcomes[-1]["status"], "cancelled")
-                        self.assertEqual(
-                            commands.outcomes[-1]["cause"], runner.OpaqueReason.CANCELLED.value
-                        )
-                        metadata = commands.outcomes[-1].get("opaque_observation")
-                        if metadata is not None:
-                            self.assertEqual(
-                                cast(dict[str, object], metadata)["status"], "cancelled"
-                            )
-                            self.assertEqual(
-                                cast(dict[str, object], metadata)["reason"],
-                                runner.OpaqueReason.CANCELLED,
-                            )
-                        self.assert_private_absent(notifications, commands.outcomes)
-
     def test_success_stderr_and_raw_unknown_fields_are_absent_after_private_consumer(self) -> None:
         for mode in MODES:
             with self.subTest(mode=mode):
@@ -916,33 +719,27 @@ class OpaqueObservationPrivacy(unittest.TestCase):
                 self.assert_private_absent(caught.exception, failures)
                 self.publish({"status": "failure", "cause": str(caught.exception)})
 
-    def test_actual_private_json_decoder_never_publishes_malformed_payload(self) -> None:
+    def test_private_json_decoder_never_publishes_malformed_payload(self) -> None:
         for mode in MODES:
-            with self.subTest(mode=mode):
-                context, read_fd = self.handoff()
-                failures: list[runner.AbortContext] = []
 
-                def consume(content: bytes) -> None:
-                    validation._live_json(content)
+            def consume(content: bytes) -> None:
+                json.loads(content)
 
-                def abort(
-                    failure: runner.AbortContext,
-                    context: dict[str, Any] = context,
-                    failures: list[runner.AbortContext] = failures,
-                ) -> None:
-                    failures.append(failure)
-                    lifetime.notify_abort(context, failure, {"schema": 1, "outcomes": []})
-
-                result = self.invoke(
-                    mode, self.fixture_program("sys.exit(0)"), consumer=consume, abort=abort
-                )
-                self.assertEqual(result.status, "infrastructure")
-                self.assertEqual(result.metrics.reason, runner.OpaqueReason.INVALID_JSON)
-                self.assertEqual(os.read(read_fd, 1), b"A")
-                preview = json.loads(Path(context["result"]).read_text())
-                self.assertEqual(preview["status"], "failure")
-                self.assert_private_absent(result, failures, preview)
-                self.publish(preview)
+            result = self.invoke(mode, self.fixture_program("sys.exit(0)"), consumer=consume)
+            self.assertEqual(result.metrics.reason, runner.OpaqueReason.PRIVATE_PARSER_FAILED)
+            self.assert_private_absent(result)
+            self.publish(
+                {
+                    "schema": 1,
+                    "status": "failure",
+                    **runner.OpaqueAbortContext(
+                        mode.stage,
+                        result.status,
+                        result.metrics.reason.value,
+                        result.metrics,
+                    ).safe_fields(),
+                }
+            )
 
     def test_parser_unprintable_attrs_and_chains_never_reach_public_surfaces(self) -> None:
         for mode in MODES:
@@ -974,15 +771,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
             with self.subTest(mode=mode, phase="spawn"):
                 consumer = Mock()
                 argv = (sys.executable, "-c", "pass", CANARIES["request"])
-                if mode is runner.OpaqueObservation.PROCESSES:
-                    argv = (
-                        "/usr/bin/python3",
-                        "-I",
-                        "-S",
-                        "-c",
-                        validation.LIVE_PROCESS_OBSERVER_PROGRAM,
-                        CANARIES["request"],
-                    )
                 with patch.object(
                     runner.subprocess,
                     "Popen",
@@ -1024,191 +812,6 @@ class OpaqueObservationPrivacy(unittest.TestCase):
                 self.assertTrue(caught.exception.metrics.cleanup_failed)
                 self.assert_private_absent(caught.exception.metrics)
 
-    def test_actual_abort_handoff_secondary_errors_keep_fixed_four_key_fallback(self) -> None:
-        for mode in MODES:
-            for phase in ("open", "serialize", "write"):
-                with self.subTest(mode=mode, phase=phase):
-                    _result, failure, _preview = self.persisted_failure(mode, "sys.exit(19)")
-                    context, read_fd = self.handoff()
-                    stderr: list[bytes] = []
-                    real_write = os.write
-
-                    def write(
-                        fd: int,
-                        content: bytes,
-                        stderr: list[bytes] = stderr,
-                        phase: str = phase,
-                        context: dict[str, Any] = context,
-                        real_write: Callable[[int, bytes], int] = real_write,
-                    ) -> int:
-                        if fd == 2:
-                            stderr.append(content)
-                            return len(content)
-                        if phase == "write" and fd != context["abort_fd"]:
-                            raise OSError(5, CANARIES["hook"])
-                        return real_write(fd, content)
-
-                    with contextlib.ExitStack() as stack:
-                        stack.enter_context(patch.object(lifetime.os, "write", side_effect=write))
-                        if phase == "open":
-                            stack.enter_context(
-                                patch.object(
-                                    lifetime.os, "open", side_effect=OSError(5, CANARIES["hook"])
-                                )
-                            )
-                        if phase == "serialize":
-                            stack.enter_context(
-                                patch.object(
-                                    validation,
-                                    "serialize_report",
-                                    side_effect=ValueError(CANARIES["hook"]),
-                                )
-                            )
-                        try:
-                            lifetime.notify_abort(context, failure, {"schema": 1})
-                        except BaseException as error:
-                            self.assert_private_absent(error)
-                    self.assertEqual(os.read(read_fd, 1), b"A")
-                    self.assertEqual(len(stderr), 1)
-                    prefix = b"BOXFERRY_LIFETIME_FAILURE "
-                    self.assertTrue(stderr[0].startswith(prefix))
-                    fallback = json.loads(stderr[0].removeprefix(prefix))
-                    self.assertEqual(
-                        set(fallback), {"stage", "status", "cause", "abort_hook_failure"}
-                    )
-                    self.assertEqual(fallback["cause"], failure.cause)
-                    self.assert_private_absent(stderr, fallback)
-
-    def test_abort_byte_exception_is_sanitized_by_runner_after_safe_preview(self) -> None:
-        for mode in MODES:
-            with self.subTest(mode=mode):
-                context, _read_fd = self.handoff()
-                real_write = os.write
-
-                def write(
-                    fd: int,
-                    content: bytes,
-                    context: dict[str, Any] = context,
-                    real_write: Callable[[int, bytes], int] = real_write,
-                ) -> int:
-                    if fd == context["abort_fd"]:
-                        raise OSError(5, CANARIES["hook"])
-                    return real_write(fd, content)
-
-                def abort(
-                    failure: runner.AbortContext,
-                    context: dict[str, Any] = context,
-                    write: Callable[[int, bytes], int] = write,
-                ) -> None:
-                    with patch.object(lifetime.os, "write", side_effect=write):
-                        lifetime.notify_abort(context, failure, {"schema": 1})
-
-                result = self.invoke(mode, self.fixture_program("sys.exit(19)"), abort=abort)
-                self.assertEqual(result.status, "failed")
-                self.assertTrue(result.abort_hook_failure)
-                preview = json.loads(Path(context["result"]).read_text())
-                self.assert_private_absent(result, preview)
-                self.publish(preview)
-
-    def test_facade_budget_and_builder_canaries_are_sanitized_before_any_runner(self) -> None:
-        held = validation.LiveHeldIdentity(
-            "a" * 64,
-            "sha256:" + "b" * 64,
-            "c" * 32,
-            1000,
-            "d" * 64,
-            "podman version 5.8.1",
-        )
-        request = validation.LiveProcessRequest(
-            101, 102, 1000, "pid:[1001]", "mnt:[1002]", "pid:[1003]", "mnt:[1004]"
-        )
-        for mode in MODES:
-            phases = ("budget", "bridge", "json") if mode is MODES[2] else ("budget", "held")
-            for phase in phases:
-                with self.subTest(mode=mode, phase=phase):
-                    private = self.root / (mode.value + "-" + phase)
-                    private.mkdir(mode=0o700)
-                    commands = validation.Commands(private)
-                    commands.lifetime_context = {"private": str(private)}
-                    commands.budget = cast(validation.Budget, Mock())
-                    failure = UnprintablePrivateError(CANARIES["request"])
-                    failure.private_payload = CANARIES["program"]
-                    if phase == "budget":
-                        cast(Mock, commands.budget).check.side_effect = failure
-                    notifications: list[runner.AbortContext] = []
-
-                    def notify(
-                        _context: dict[str, Any],
-                        observed: runner.AbortContext,
-                        report: object,
-                        notifications: list[runner.AbortContext] = notifications,
-                    ) -> None:
-                        notifications.append(observed)
-                        self.assert_private_absent(observed, report)
-
-                    with contextlib.ExitStack() as stack:
-                        stack.enter_context(
-                            patch.object(lifetime, "notify_abort", side_effect=notify)
-                        )
-                        launched = stack.enter_context(
-                            patch.object(
-                                validation,
-                                "run",
-                                side_effect=AssertionError("must fail before launch"),
-                            )
-                        )
-                        rendered = stack.enter_context(
-                            patch.object(
-                                validation,
-                                "_redacted_argv",
-                                side_effect=AssertionError("opaque argv must not be rendered"),
-                            )
-                        )
-                        excerpted = stack.enter_context(
-                            patch.object(
-                                validation,
-                                "failure_evidence",
-                                side_effect=AssertionError("opaque error must not be excerpted"),
-                            )
-                        )
-                        stack.enter_context(
-                            patch.object(
-                                validation,
-                                "LIVE_PID_SCHEMA",
-                                validation.LivePidSchema.PODMAN_STATE_FIELDS,
-                            )
-                        )
-                        if phase == "held":
-                            stack.enter_context(
-                                patch.object(validation, "_live_held", side_effect=failure)
-                            )
-                        elif phase == "bridge":
-                            stack.enter_context(
-                                patch.object(validation, "_rootful_bridge", side_effect=failure)
-                            )
-                        elif phase == "json":
-                            stack.enter_context(
-                                patch.object(validation, "_rootful_bridge", return_value=((), ()))
-                            )
-                            stack.enter_context(
-                                patch.object(validation.json, "dumps", side_effect=failure)
-                            )
-                        with self.assertRaises(runner.OpaqueRunError) as caught:
-                            if mode is runner.OpaqueObservation.PROCESSES:
-                                cast(Any, commands)._live_processes(request)
-                            else:
-                                cast(Any, commands)._live_inspect(held, mode)
-                    launched.assert_not_called()
-                    rendered.assert_not_called()
-                    excerpted.assert_not_called()
-                    self.assertTrue(commands.outcomes)
-                    self.assertTrue(all(o["status"] != "success" for o in commands.outcomes))
-                    self.assertEqual(
-                        caught.exception.reason, runner.OpaqueReason.INVOCATION_UNAVAILABLE
-                    )
-                    self.assert_private_absent(caught.exception, commands.outcomes, notifications)
-                    self.publish({"status": "failure", "outcomes": commands.outcomes})
-
     def test_cli_exception_paths_emit_only_sanitized_runner_exception(self) -> None:
         def monitor() -> None:
             raise ValueError(CANARIES["hook"])
@@ -1217,151 +820,24 @@ class OpaqueObservationPrivacy(unittest.TestCase):
             self.invoke(MODES[0], self.fixture_program("time.sleep(7)"), monitor=monitor)
         error = caught.exception
         self.assert_private_absent(error)
-        for frontend in ("validation", "local"):
-            with self.subTest(frontend=frontend):
-                output = self.root / (frontend + "-exception.json")
-                stdout, stderr = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                    if frontend == "validation":
-                        with patch.object(validation, "prepare_hosted_podman", side_effect=error):
-                            status = validation.main(
-                                [
-                                    "prepare-podman",
-                                    "--repository",
-                                    "boxferry",
-                                    "--candidate-sha",
-                                    "a" * 40,
-                                    "--output",
-                                    str(output),
-                                ]
-                            )
-                    else:
-                        with (
-                            patch.object(local, "_owned_output"),
-                            patch.object(local, "execute", side_effect=error),
-                        ):
-                            status = local.main(
-                                [
-                                    "--repository-root",
-                                    str(self.root),
-                                    "--config",
-                                    "unused.json",
-                                    "--output",
-                                    str(output),
-                                ]
-                            )
-                self.assertEqual(status, 1)
-                self.assertEqual(json.loads(output.read_text())["status"], "failure")
-                self.assert_private_absent(
-                    output.read_bytes(), stdout.getvalue(), stderr.getvalue()
+        output = self.root / "validation-exception.json"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with patch.object(validation, "prepare_hosted_podman", side_effect=error):
+                status = validation.main(
+                    [
+                        "prepare-podman",
+                        "--repository",
+                        "podman-lens",
+                        "--candidate-sha",
+                        "a" * 40,
+                        "--output",
+                        str(output),
+                    ]
                 )
-
-    def actual_fallback(self, failure: runner.OpaqueAbortContext) -> str:
-        context, read_fd = self.handoff()
-        stderr: list[bytes] = []
-        real_write = os.write
-
-        def write(fd: int, content: bytes) -> int:
-            if fd == 2:
-                stderr.append(content)
-                return len(content)
-            return real_write(fd, content)
-
-        with (
-            patch.object(validation, "serialize_report", side_effect=ValueError(CANARIES["hook"])),
-            patch.object(lifetime.os, "write", side_effect=write),
-        ):
-            try:
-                lifetime.notify_abort(context, failure, {"schema": 1})
-            except BaseException as error:
-                self.assert_private_absent(error)
-        self.assertEqual(os.read(read_fd, 1), b"A")
-        self.assertEqual(len(stderr), 1)
-        self.assert_private_absent(stderr)
-        return stderr[0].decode()
-
-    def test_actual_outer_receipt_and_execute_merge_without_runtime_execution(self) -> None:
-        for handoff_kind in ("preview", "fallback", "missing"):
-            with self.subTest(handoff=handoff_kind):
-                _result, failure, preview = self.persisted_failure(MODES[0], "sys.exit(19)")
-                receipt = self.root / (handoff_kind + "-outer.json")
-                close = Mock()
-                outer = lifetime._OuterAbortEvidence(receipt, "f" * 32, close)
-                outer.abort(failure)
-                close.assert_called_once()
-                self.assertTrue(outer.fields()["outer_abort_persisted"])
-                self.assert_private_absent(receipt.read_bytes(), vars(outer), outer.fields())
-                self.publish({**preview, **outer.fields()})
-
-                fallback_line = self.actual_fallback(failure) if handoff_kind == "fallback" else ""
-
-                # Actual execute owns setup/persistence/merge/closure. Only the root
-                # subprocess and witness are mocked; no sudo or runtime is invoked.
-                created: list[Path] = []
-                real_mkdtemp = tempfile.mkdtemp
-
-                def mkdtemp(
-                    *args: object,
-                    created: list[Path] = created,
-                    real_mkdtemp: Callable[..., str] = real_mkdtemp,
-                    **kwargs: object,
-                ) -> str:
-                    kwargs["dir"] = self.root
-                    path = cast(Any, real_mkdtemp)(*args, **kwargs)
-                    created.append(Path(path))
-                    return path
-
-                def root_call(
-                    _argv: tuple[str, ...],
-                    handoff_kind: str = handoff_kind,
-                    preview: dict[str, object] = preview,
-                    failure: runner.OpaqueAbortContext = failure,
-                    fallback_line: str = fallback_line,
-                    **kwargs: object,
-                ) -> runner.RunResult:
-                    self.assertEqual(kwargs["stage"], "local-rootful-lifetime")
-                    preparation = Path(cast(Path, kwargs["cwd"]))
-                    if handoff_kind == "preview":
-                        (preparation / "result").write_text(validation.serialize_report(preview))
-                    cast(Callable[[runner.AbortContext], None], kwargs["on_abort"])(
-                        runner.AbortContext("local-rootful-lifetime", "failed", "command exited 19")
-                    )
-                    stderr = fallback_line
-                    return runner.RunResult(
-                        "failed",
-                        19,
-                        "",
-                        stderr,
-                        0.01,
-                        runner.Diagnostic(
-                            "local-rootful-lifetime", "command exited 19", "held", "local", "review"
-                        ),
-                        ("fixed-root-envelope",),
-                    )
-
-                with (
-                    patch.object(lifetime.tempfile, "mkdtemp", side_effect=mkdtemp),
-                    patch.object(lifetime, "run", side_effect=root_call) as mocked_run,
-                    patch.object(lifetime, "_witness", return_value=[{"event": "uncertain"}]),
-                    patch.object(lifetime, "CLOSURE_SECONDS", 0.01),
-                ):
-                    merged = lifetime.execute(
-                        {
-                            "automation": Path(__file__).resolve().parents[2],
-                            "work": self.root,
-                        }
-                    )
-                self.assertEqual(mocked_run.call_count, 1)
-                self.assertEqual(merged["status"], "failure")
-                self.assertFalse(merged["namespace_closed"])
-                self.assertEqual(merged["cleanup"], "failure")
-                self.assertTrue(merged["outer_abort_persisted"])
-                if handoff_kind != "missing":
-                    self.assertEqual(merged["command_failure_stage"], failure.stage)
-                self.assert_private_absent(merged)
-                self.publish(merged)
-                for path in created:
-                    shutil.rmtree(path)
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.read_text())["status"], "failure")
+        self.assert_private_absent(output.read_bytes(), stdout.getvalue(), stderr.getvalue())
 
 
 if __name__ == "__main__":

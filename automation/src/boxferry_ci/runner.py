@@ -57,11 +57,10 @@ class AbortHookError(ContractError):
 
 
 class OpaqueObservation(StrEnum):
-    """Closed, opt-in purposes for the three source-owned live observation calls."""
+    """Closed, opt-in purposes for bounded private inspection calls."""
 
     INSPECT_BEFORE = "inspect-before"
     INSPECT_AFTER = "inspect-after"
-    PROCESSES = "processes"
 
     @property
     def stage(self) -> str:
@@ -69,11 +68,11 @@ class OpaqueObservation(StrEnum):
 
     @property
     def timeout(self) -> int:
-        return 5 if self is OpaqueObservation.PROCESSES else 2
+        return 2
 
     @property
     def output_cap(self) -> int:
-        return 8192 if self is OpaqueObservation.PROCESSES else 65536
+        return 65536
 
 
 class OpaqueReason(StrEnum):
@@ -86,20 +85,10 @@ class OpaqueReason(StrEnum):
     MONITOR_FAILED = "monitor-failed"
     INVALID_JSON = "invalid-json"
     INVALID_NATIVE_SCHEMA = "invalid-native-schema"
-    INVALID_PROCESS_OBSERVATION = "invalid-process-observation"
     PRIVATE_PARSER_FAILED = "private-parser-failed"
-    ABORT_HANDOFF_FAILED = "abort-handoff-failed"
     ABORT_HOOK_FAILED = "abort-hook-failed"
     CLEANUP_FAILED = "cleanup-failed"
     INVOCATION_UNAVAILABLE = "invocation-unavailable"
-    INVALID_REQUEST = "invalid-observer-request"
-    PROCESS_UNAVAILABLE = "known-process-unavailable"
-    PROCESS_CHANGED = "known-process-exited-or-reused"
-    NAMESPACE_MISMATCH = "namespace-contract-mismatch"
-    UID_MISMATCH = "uid-contract-mismatch"
-    OBSERVER_LIMIT = "observer-read-or-output-limit"
-    ROOT_DEADLINE = "existing-root-deadline-expired"
-    OBSERVER_FAILED = "observer-failed"
 
 
 @dataclass(frozen=True)
@@ -248,15 +237,6 @@ def _opaque_setup(
         if len(encoded) > 32768:
             raise ValueError
         argv_hash = hashlib.sha256(encoded).hexdigest()
-        if mode is OpaqueObservation.PROCESSES:
-            # Runtime import occurs only for this closed opt-in purpose, never legacy calls.
-            from .devcontainer_validation import LIVE_PROCESS_OBSERVER_SHA256
-
-            if len(argv) < 6 or argv[-6:-2] != ("/usr/bin/python3", "-I", "-S", "-c"):
-                raise ValueError
-            program_hash = hashlib.sha256(argv[-2].encode()).hexdigest()
-            if program_hash != LIVE_PROCESS_OBSERVER_SHA256:
-                raise ValueError
     except BaseException as error:
         cancellation = _cancellation(error)
         failed = True
@@ -264,20 +244,6 @@ def _opaque_setup(
     if failed:
         raise OpaqueRunError(OpaqueReason.INVOCATION_UNAVAILABLE) from None
     return argv_hash, program_hash
-
-
-def _opaque_exit_reason(mode: OpaqueObservation, returncode: int | None) -> OpaqueReason:
-    if mode is not OpaqueObservation.PROCESSES:
-        return OpaqueReason.EXIT_NONZERO
-    return {
-        2: OpaqueReason.INVALID_REQUEST,
-        3: OpaqueReason.PROCESS_UNAVAILABLE,
-        4: OpaqueReason.PROCESS_CHANGED,
-        5: OpaqueReason.NAMESPACE_MISMATCH,
-        6: OpaqueReason.UID_MISMATCH,
-        7: OpaqueReason.OBSERVER_LIMIT,
-        124: OpaqueReason.ROOT_DEADLINE,
-    }.get(returncode, OpaqueReason.OBSERVER_FAILED)
 
 
 @dataclass(frozen=True)
@@ -551,7 +517,7 @@ def run(
                         # must first know whether an abort is needed, before cleanup can wait.
                         if returncode != 0:
                             if opaque:
-                                reason = _opaque_exit_reason(opaque_observation, returncode)
+                                reason = OpaqueReason.EXIT_NONZERO
                             notify("" if opaque else f"command exited {returncode}", "failed")
                         if on_abort is None or returncode != 0:
                             phase = "cleanup"
@@ -569,7 +535,7 @@ def run(
                             reason = (
                                 OpaqueReason.COMPLETED
                                 if returncode == 0
-                                else _opaque_exit_reason(opaque_observation, returncode)
+                                else OpaqueReason.EXIT_NONZERO
                             )
                             if returncode == 0:
                                 phase = "parse"

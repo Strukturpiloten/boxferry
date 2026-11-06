@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -191,18 +192,49 @@ class TrackedMainAuthority(unittest.TestCase):
 
     @classmethod
     def snapshot_source(cls, source_root, destination):
-        """Copy tracked working bytes and nonignored new files from a source tree."""
+        """Copy working bytes; only confirmed Git tombstones may be absent."""
         inventory = frozenset(name for name in cls.git(
             source_root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
         ).split("\0") if name)
+        deleted = frozenset(name for name in cls.git(
+            source_root, "ls-files", "--deleted", "-z"
+        ).split("\0") if name)
+        copied = set()
         for name in inventory:
             source, target = source_root / name, destination / name
+            try:
+                observed = source.lstat()
+            except FileNotFoundError:
+                if name in deleted:
+                    continue
+                raise
+            if name in deleted:
+                raise ValueError("fixture deletion changed during source snapshot")
             target.parent.mkdir(parents=True, exist_ok=True)
-            if source.is_symlink():
+            if stat.S_ISLNK(observed.st_mode):
                 target.symlink_to(os.readlink(source))
-            else:
+            elif stat.S_ISREG(observed.st_mode):
                 shutil.copy2(source, target)
-        return inventory
+            else:
+                raise ValueError("fixture snapshot source must be a regular file or symlink")
+            copied.add(name)
+        final_deleted = frozenset(name for name in cls.git(
+            source_root, "ls-files", "--deleted", "-z"
+        ).split("\0") if name)
+        if final_deleted != deleted:
+            raise ValueError("fixture deletion changed during source snapshot")
+        return frozenset(copied)
+
+    @staticmethod
+    def snapshot_digest(source_root, inventory):
+        """Independent expected identity of the present working-source inventory."""
+        digest = hashlib.sha256()
+        for name in sorted(inventory):
+            path = os.fsencode(name)
+            content = (source_root / name).read_bytes()
+            digest.update(len(path).to_bytes(4, "big") + path)
+            digest.update(len(content).to_bytes(8, "big") + content)
+        return digest.hexdigest()
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="custody-tracked-main-")
@@ -211,6 +243,7 @@ class TrackedMainAuthority(unittest.TestCase):
         self.main = self.base / "main"
         self.main.mkdir()
         self.tracked = self.snapshot_source(ROOT, self.main)
+        self.snapshot_source_sha256 = self.snapshot_digest(ROOT, self.tracked)
         self.git(self.main, "init", "--quiet")
         self.revision = self.commit()
         snapshot_tracked = frozenset(name for name in self.git(self.main, "ls-files", "--cached", "-z").split("\0") if name)
@@ -242,6 +275,76 @@ class TrackedMainAuthority(unittest.TestCase):
         )
         self.assertEqual(auth.source_digest(source), auth.source_digest(destination))
 
+    def test_snapshot_omits_staged_and_unstaged_deletions_without_recreating_stubs(self):
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                source = self.base / ("deleted-source-" + str(staged))
+                destination = self.base / ("deleted-snapshot-" + str(staged))
+                source.mkdir()
+                destination.mkdir()
+                self.git(source, "init", "--quiet")
+                (source / "kept.txt").write_bytes(b"kept\n")
+                (source / "removed.txt").write_bytes(b"removed\n")
+                self.git(source, "add", "--all")
+                self.git(source, "commit", "--quiet", "--no-gpg-sign", "-m", "initial")
+                revision = self.git(source, "rev-parse", "HEAD")
+                if staged:
+                    self.git(source, "rm", "--quiet", "--", "removed.txt")
+                else:
+                    (source / "removed.txt").unlink()
+                inventory = self.snapshot_source(source, destination)
+                self.assertEqual(inventory, {"kept.txt"})
+                self.assertFalse((source / "removed.txt").exists())
+                self.assertFalse((destination / "removed.txt").exists())
+                self.assertEqual((destination / "kept.txt").read_bytes(), b"kept\n")
+                expected = hashlib.sha256(
+                    (8).to_bytes(4, "big") + b"kept.txt" + (5).to_bytes(8, "big") + b"kept\n"
+                ).hexdigest()
+                self.assertEqual(self.snapshot_digest(source, inventory), expected)
+                with self.assertRaises(auth.Rejection):
+                    auth.custody_main_source(source, revision)
+                if not staged:
+                    with self.assertRaises(FileNotFoundError):
+                        auth.source_digest(source)
+                self.git(destination, "init", "--quiet")
+                self.git(destination, "add", "--all", "--force")
+                self.git(destination, "commit", "--quiet", "--no-gpg-sign", "-m", "snapshot")
+                self.assertEqual(self.git(destination, "ls-files", "--cached", "-z"), "kept.txt\0")
+                self.assertEqual(auth.source_digest(destination), expected)
+
+    def test_snapshot_preserves_symlinks_and_refuses_unconfirmed_or_racy_deletions(self):
+        source, destination = self.base / "invalid-source", self.base / "invalid-snapshot"
+        source.mkdir()
+        destination.mkdir()
+        (source / "directory").mkdir()
+        (source / "restored.txt").write_bytes(b"restored\n")
+        (source / "link").symlink_to("absent-target")
+        for name, deleted, expected_error in (
+            ("missing.txt", "", FileNotFoundError),
+            ("directory", "", ValueError),
+            ("restored.txt", "restored.txt\0", ValueError),
+        ):
+            def inventory(_root, *arguments):
+                return deleted if arguments == ("ls-files", "--deleted", "-z") else name + "\0"
+            with self.subTest(name=name), mock.patch.object(type(self), "git", side_effect=inventory):
+                with self.assertRaises(expected_error):
+                    self.snapshot_source(source, destination)
+        with mock.patch.object(type(self), "git", side_effect=("missing.txt\0", "missing.txt\0", "")):
+            with self.assertRaises(ValueError):
+                self.snapshot_source(source, destination)
+        with mock.patch.object(type(self), "git", side_effect=("link\0", "", "")):
+            self.assertEqual(self.snapshot_source(source, destination), {"link"})
+        self.assertTrue((destination / "link").is_symlink())
+        self.assertEqual(os.readlink(destination / "link"), "absent-target")
+        original_copy = shutil.copy2
+        def disappear_before_copy(path, target):
+            path.unlink()
+            return original_copy(path, target)
+        with mock.patch.object(type(self), "git", side_effect=("restored.txt\0", "")):
+            with mock.patch.object(shutil, "copy2", side_effect=disappear_before_copy):
+                with self.assertRaises(FileNotFoundError):
+                    self.snapshot_source(source, destination)
+
     def commit(self, *, empty=False):
         self.git(self.main, "add", "--all", "--force")
         arguments = ["commit", "--quiet", "--no-gpg-sign", "-m", "tracked source fixture"]
@@ -272,7 +375,7 @@ print(json.dumps({'record':record,'files':sorted(files)},sort_keys=True))
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         value = json.loads(result.stdout)
         self.assertEqual(value["record"]["revision"], self.revision)
-        self.assertEqual(value["record"]["source_sha256"], auth.source_digest(ROOT))
+        self.assertEqual(value["record"]["source_sha256"], self.snapshot_source_sha256)
         selected = set(value["files"])
         self.assertEqual(selected, self.EXPECTED_MAIN_FILES)
         self.assertEqual(selected, set(value["record"]["files"]))
