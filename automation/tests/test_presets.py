@@ -537,6 +537,15 @@ class PresetTests(unittest.TestCase):
             ),
             (
                 {
+                    "manager": "github-actions",
+                    "datasource": "github-runners",
+                    "packageName": "ubuntu",
+                    "fileName": ".github/workflows/ci.yml",
+                },
+                True,
+            ),
+            (
+                {
                     "manager": "custom.regex",
                     "datasource": "docker",
                     "packageName": "mcr.microsoft.com/devcontainers/rust",
@@ -1665,6 +1674,288 @@ class NativePresetTests(unittest.TestCase):
     assert.equal(limitedOption.automerge,true);
     assert.equal(limitedOption.groupName,"Dev Container features");
     replacements++;
+    // Runner policy uses the real native extractor; matrix-only discovery remains caller-owned.
+    const runnerSemantics = {
+      native: [],
+      matrix: [],
+      exclusions: [],
+      scopeControls: [],
+    };
+    const runnerWorkflow = [
+      "---",
+      "jobs:",
+      "  linux:",
+      "    runs-on: ubuntu-24.04",
+      "    steps:",
+      "      - uses: " + setup,
+      "        with:",
+      "          node-version: " + nodeVersion,
+      // Synthetic immutable Action identity: extraction fixture only, never downloaded/executed.
+      "      - uses: actions/setup-python@" + old + " # v1.2.3",
+      "        with:",
+      "          python-version: 3.13.14",
+      "  apple:",
+      "    runs-on: macos-15",
+      "    steps:",
+      "      - run: true",
+      "  microsoft:",
+      "    runs-on: windows-2025",
+      "    steps:",
+      "      - run: true",
+      "",
+    ].join("\n");
+    const runnerFile = ".github/workflows/runner-policy.yml";
+    const runnerDiscovery = await actions.extractPackageFile(
+      runnerWorkflow,
+      runnerFile,
+      {},
+    );
+    const nativeRunners = runnerDiscovery.deps.filter(
+      (dep) => dep.datasource === "github-runners",
+    );
+    assert.deepEqual(nativeRunners.map((dep) => dep.depName).sort(), [
+      "macos",
+      "ubuntu",
+      "windows",
+    ]);
+    assert.ok(
+      nativeRunners.every(
+        (dep) => dep.depType === "github-runner" && !dep.skipReason,
+      ),
+    );
+    const runnerRule = shared.packageRules.filter((rule) =>
+      rule.matchDatasources?.includes("github-runners"),
+    );
+    assert.equal(
+      runnerRule.length,
+      1,
+      "one existing runner rule, not a duplicate policy",
+    );
+    assert.deepEqual(runnerRule[0].matchManagers, [
+      "custom.regex",
+      "github-actions",
+    ]);
+    const priorRunnerConfig = structuredClone(shared);
+    priorRunnerConfig.packageRules.find((rule) =>
+      rule.matchDatasources?.includes("github-runners"),
+    ).matchManagers = ["custom.regex"];
+    async function runnerPolicy(dep, manager, file, config = shared) {
+      const result = await applyPackageRules({
+        ...config,
+        ...dep,
+        manager,
+        packageFile: file,
+        packageName: dep.packageName || dep.depName,
+      });
+      return {
+        enabled: result.enabled !== false,
+        minimumReleaseAge: result.minimumReleaseAge,
+        behaviour: result.minimumReleaseAgeBehaviour,
+        approval: result.dependencyDashboardApproval,
+        automerge: result.automerge,
+      };
+    }
+    function requireRunnerPolicy(result) {
+      assert.deepEqual(
+        result,
+        {
+          enabled: true,
+          minimumReleaseAge: "3 days",
+          behaviour: "timestamp-optional",
+          approval: false,
+          automerge: true,
+        },
+        "native/custom runner selector retains operational age and quarantine policy",
+      );
+    }
+    for (const file of [runnerFile, ".github/workflows/runner-policy.yaml"]) {
+      for (const dep of nativeRunners) {
+        const result = await runnerPolicy(dep, "github-actions", file);
+        requireRunnerPolicy(result);
+        runnerSemantics.native.push({
+          file,
+          depName: dep.depName,
+          depType: dep.depType,
+          datasource: dep.datasource,
+          currentValue: dep.currentValue,
+          result,
+        });
+      }
+    }
+    const actualProducerRunners = producerDiscovery.deps.filter(
+      (dep) => dep.datasource === "github-runners",
+    );
+    assert.ok(
+      actualProducerRunners.length > 0,
+      "real producer CI native runner rows remain discoverable",
+    );
+    for (const dep of actualProducerRunners)
+      requireRunnerPolicy(await runnerPolicy(dep, "github-actions", producerFile));
+    runnerSemantics.actualProducerNativeRows = actualProducerRunners.length;
+    const oldNative = await runnerPolicy(
+      nativeRunners[0],
+      "github-actions",
+      runnerFile,
+      priorRunnerConfig,
+    );
+    assert.equal(oldNative.behaviour, "timestamp-required");
+    assert.throws(
+      () => requireRunnerPolicy(oldNative),
+      /runner selector retains operational age/,
+    );
+    runnerSemantics.preFixNativeControl = oldNative;
+    const matrixWorkflow = [
+      "---",
+      "jobs:",
+      "  fixture:",
+      "    runs-on: ${{ matrix.runner }}",
+      "    strategy:",
+      "      matrix:",
+      "        # renovate: datasource=github-runners",
+      "        runner:",
+      "          - ubuntu-24.04",
+      "    steps:",
+      "      - run: true",
+      "",
+    ].join("\n");
+    const matrixNative = await actions.extractPackageFile(
+      matrixWorkflow,
+      runnerFile,
+      {},
+    );
+    assert.equal(
+      (matrixNative?.deps || []).filter(
+        (dep) => dep.datasource === "github-runners",
+      ).length,
+      0,
+      "pinned SDK leaves annotated matrix discovery to the caller custom extractor",
+    );
+    const matrixManager = {
+      customType: "regex",
+      datasourceTemplate: "github-runners",
+      matchStrings: [
+        "# renovate: datasource=github-runners\\n\\s+runner:\\n\\s+-\\s+" +
+          "(?<depName>ubuntu)-(?<currentValue>[0-9]+\\.[0-9]+)",
+      ],
+    };
+    const matrixRows =
+      extract(matrixWorkflow, runnerFile, matrixManager)?.deps || [];
+    assert.equal(matrixRows.length, 1);
+    for (const dep of matrixRows) {
+      const result = await runnerPolicy(dep, "regex", runnerFile);
+      requireRunnerPolicy(result);
+      runnerSemantics.matrix.push({
+        depName: dep.depName,
+        datasource: dep.datasource,
+        currentValue: dep.currentValue,
+        result,
+      });
+    }
+    const canonicalRunnerRows = (shared.customManagers || [])
+      .flatMap(
+        (manager) =>
+          extract(runnerWorkflow + matrixWorkflow, runnerFile, manager)?.deps || [],
+      )
+      .filter((dep) => dep.datasource === "github-runners");
+    assert.equal(
+      canonicalRunnerRows.length,
+      0,
+      "common must not add a runner extractor/inventory",
+    );
+    runnerSemantics.canonicalCustomRunnerRows = canonicalRunnerRows.length;
+    const nativeControls = runnerDiscovery.deps.filter(
+      (dep) =>
+        dep.packageName === "actions/python-versions" ||
+        dep.packageName === "actions/node-versions" ||
+        (dep.datasource === "github-tags" && dep.currentDigest),
+    );
+    assert.equal(
+      nativeControls.length,
+      4,
+      "native Action SHA, Python and Node controls must be observed",
+    );
+    for (const dep of nativeControls) {
+      const result = await runnerPolicy(dep, "github-actions", runnerFile);
+      assert.deepEqual(
+        result,
+        await runnerPolicy(dep, "github-actions", runnerFile, priorRunnerConfig),
+      );
+      assert.deepEqual(result, {
+        enabled: true,
+        minimumReleaseAge: "3 days",
+        behaviour: "timestamp-required",
+        approval: false,
+        automerge: true,
+      });
+      runnerSemantics.exclusions.push({
+        depName: dep.depName,
+        packageName: dep.packageName,
+        depType: dep.depType,
+        datasource: dep.datasource,
+        result,
+      });
+    }
+    for (const [manager, dep, expectedAge] of [
+      [
+        "cargo",
+        { depName: "podman-lens", packageName: "podman-lens", datasource: "crate" },
+        "0 days",
+      ],
+      [
+        "pep621",
+        { depName: "ruff", packageName: "ruff", datasource: "pypi" },
+        "3 days",
+      ],
+      [
+        "regex",
+        {
+          depName: "astral-sh/uv",
+          packageName: "astral-sh/uv",
+          datasource: "github-release-attachments",
+        },
+        "3 days",
+      ],
+    ]) {
+      const result = await runnerPolicy(dep, manager, runnerFile);
+      assert.deepEqual(
+        result,
+        await runnerPolicy(dep, manager, runnerFile, priorRunnerConfig),
+      );
+      assert.equal(result.enabled, true);
+      assert.equal(result.approval, false);
+      assert.equal(result.minimumReleaseAge, expectedAge);
+      runnerSemantics.exclusions.push({
+        depName: dep.depName,
+        datasource: dep.datasource,
+        result,
+      });
+    }
+    for (const [label, manager, dep, file] of [
+      [
+        "outside workflow path",
+        "github-actions",
+        nativeRunners[0],
+        "fixtures/runner.yml",
+      ],
+      [
+        "unrelated package",
+        "github-actions",
+        { ...nativeRunners[0], packageName: "self-hosted" },
+        runnerFile,
+      ],
+      [
+        "unrelated datasource",
+        "github-actions",
+        { ...nativeRunners[0], datasource: "github-tags" },
+        runnerFile,
+      ],
+      ["unrelated manager", "npm", nativeRunners[0], runnerFile],
+    ]) {
+      const result = await runnerPolicy(dep, manager, file);
+      assert.equal(result.behaviour, "timestamp-required", label);
+      assert.equal(result.minimumReleaseAge, "3 days", label);
+      runnerSemantics.scopeControls.push({ label, result });
+    }
     const timestampCases = [
       [
         "regex",
@@ -1870,6 +2161,7 @@ class NativePresetTests(unittest.TestCase):
         replacements,
         ruleCases: cases.length,
         operationalExtractions: extracted,
+        runnerSemantics,
         nodeOwnership: {physicalProducerLiterals:literalVersions.length,
           nativeProducerRows:producerNodes, lookup:nodeLookupProof,
           actionOwners:setupOwners, matrix},
@@ -1925,6 +2217,17 @@ validationWiring: (() => {
         report = self._native_report()
         self.assertGreater(report["replacements"], 0)
         self.assertGreater(report["operationalExtractions"], 0)
+
+    def test_native_and_custom_runner_selectors_preserve_age_and_unrelated_updates(self) -> None:
+        proof = self._native_report()["runnerSemantics"]
+        self.assertEqual(len(proof["native"]), 6)
+        self.assertGreater(proof["actualProducerNativeRows"], 0)
+        self.assertEqual(len(proof["matrix"]), 1)
+        self.assertEqual(proof["canonicalCustomRunnerRows"], 0)
+        self.assertEqual(proof["preFixNativeControl"]["behaviour"], "timestamp-required")
+        self.assertEqual(len(proof["exclusions"]), 7)
+        self.assertEqual(len(proof["scopeControls"]), 4)
+        self.assertTrue(all(row["result"]["enabled"] for row in proof["exclusions"]))
 
     def test_native_node_owner_accepts_real_block_anchor_alias_and_decoded_yaml(self) -> None:
         matrix = self._native_report()["nodeOwnership"]["matrix"]

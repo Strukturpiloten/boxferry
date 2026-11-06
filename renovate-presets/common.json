@@ -254,7 +254,7 @@
     },
     {
       "description": "The required trusted guard quarantines literal GitHub-hosted runner selectors; this is selector observation, not immutable runner-image evidence.",
-      "matchManagers": ["custom.regex"],
+      "matchManagers": ["custom.regex", "github-actions"],
       "matchDatasources": ["github-runners"],
       "matchPackageNames": ["ubuntu", "macos", "windows"],
       "matchFileNames": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
