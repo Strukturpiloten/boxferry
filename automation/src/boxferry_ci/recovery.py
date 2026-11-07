@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import re
+import tempfile
 import tomllib
 import zipfile
 from copy import deepcopy
@@ -39,6 +40,101 @@ READER_CLOSURE = (
     "automation/pyproject.toml",
     "automation/uv.lock",
     "automation/uv-artifacts.json",
+)
+
+
+# Reviewed complete Docker aggregate; only immutable source/checkout pins vary.
+_DOCKER_REQUIRED_GATE = (
+    "  check-gate:\n"
+    "    name: Required CI\n"
+    "    if: always() && !(github.event_name == 'workflow_dispatch' &&"
+    " github.ref == 'refs/heads/main')\n"
+    "    needs:\n"
+    "      [\n"
+    "        validation-plan,\n"
+    "        rust,\n"
+    "        msrv,\n"
+    "        dependencies,\n"
+    "        api,\n"
+    "        documentation,\n"
+    "        lockfile-release-age,\n"
+    "        native-conformance,\n"
+    "      ]\n"
+    "    runs-on: ubuntu-24.04\n"
+    "    timeout-minutes: 5\n"
+    "    outputs:\n"
+    "      candidate_sha: ${{ github.sha }}\n"
+    "    steps:\n"
+    "      - name: Check out immutable shared automation\n"
+    "        uses: __CHECKOUT_PIN__\n"
+    "        with:\n"
+    "          repository: Strukturpiloten/boxferry\n"
+    "          # renovate: datasource=github-digest depName=Strukturpi"
+    "loten/boxferry currentValue=automation-v1\n"
+    "          ref: __ADMISSION_SHA__\n"
+    "          path: _automation\n"
+    "          persist-credentials: false\n"
+    "      - name: Bind exact candidate and trusted policy\n"
+    "        id: source\n"
+    "        uses: ./_automation/.github/actions/shared-source\n"
+    "        with:\n"
+    "          candidate-sha: ${{ github.sha }}\n"
+    "          automation-sha: __ADMISSION_SHA__\n"
+    "          policy-sha: ${{ github.event.pull_request.base.sha || g"
+    "ithub.event.merge_group.base_sha || github.sha }}\n"
+    "          config-path: scripts/validation-policy.json\n"
+    "      - name: Install locked shared Python tooling\n"
+    "        uses: ./_automation/.github/actions/shared-python\n"
+    "      - name: Require selected jobs and only intentional skips\n"
+    "        id: offline\n"
+    "        env:\n"
+    "          EVENT_NAME: ${{ github.event_name }}\n"
+    "          BASE_SHA: ${{ github.event.pull_request.base.sha || git"
+    "hub.event.merge_group.base_sha || github.sha }}\n"
+    "          HEAD_SHA: ${{ github.event.pull_request.head.sha || git"
+    "hub.event.merge_group.head_sha || github.sha }}\n"
+    "          POLICY_SHA: ${{ github.event.pull_request.base.sha || g"
+    "ithub.event.merge_group.base_sha || github.sha }}\n"
+    "          AUTOMATION_SHA: __ADMISSION_SHA__\n"
+    "          POLICY_CONFIG: ${{ steps.source.outputs.config }}\n"
+    "          PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}\n"
+    "          NEEDS_JSON: ${{ toJSON(needs) }}\n"
+    "        run: |\n"
+    "          NEEDS_JSON=\"$(python3 -c 'import json, os; needs = json"
+    '.loads(os.environ["NEEDS_JSON"]); needs.pop("native-conformance")'
+    "; print(json.dumps(needs))')\"\n"
+    "          uv run --locked --project _automation/automation python"
+    " -m boxferry_ci gate \\\n"
+    '            --repository-root source --config "${POLICY_CONFIG}" '
+    "\\\n"
+    '            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --he'
+    'ad-sha "${HEAD_SHA}" \\\n'
+    '            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_S'
+    'HA}" \\\n'
+    '            --automation-sha "${AUTOMATION_SHA}" \\\n'
+    '            --plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON'
+    '}"\n'
+    "      - name: Fail on skipped, cancelled, or failed validation\n"
+    "        env:\n"
+    "          EVENT_NAME: ${{ github.event_name }}\n"
+    "          EVENT_REF: ${{ github.ref }}\n"
+    "          SCAFFOLD_RESULT: ${{ steps.offline.outcome }}\n"
+    "          NATIVE_RESULT: ${{ needs.native-conformance.result }}\n"
+    "        run: |\n"
+    '          test "$SCAFFOLD_RESULT" = success\n'
+    '          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" =='
+    " merge_group ]]; then\n"
+    '            test "$NATIVE_RESULT" = skipped\n'
+    "            echo 'PR and queue validation is offline-only; native"
+    " Engine evidence is not claimed'\n"
+    '          elif [[ "$EVENT_NAME" == push && "$EVENT_REF" == refs/h'
+    "eads/main ]]; then\n"
+    '            test "$NATIVE_RESULT" = success\n'
+    "          else\n"
+    "            echo 'unexpected validation event; native evidence is"
+    " required' >&2\n"
+    "            exit 1\n"
+    "          fi\n"
 )
 
 
@@ -375,7 +471,12 @@ def protection(api: core.GitHub, branch: str) -> dict[str, Any]:
 
 
 def original_run(
-    api: core.GitHub, run_id: int, candidate: core.Candidate, implementation: str | None
+    api: core.GitHub,
+    run_id: int,
+    candidate: core.Candidate,
+    implementation: str | None,
+    *,
+    excluded_jobs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     run = api.get(f"actions/runs/{run_id}")
     if not all(isinstance(run.get(field), dict) for field in ("repository", "head_repository")):
@@ -442,11 +543,19 @@ def original_run(
         "check_suite", {}
     ).get("id"):
         raise RecoveryRefused("Required CI check suite does not match the original job")
+    for name in excluded_jobs:
+        matches = [job for job in jobs if isinstance(job, dict) and job.get("name") == name]
+        if len(matches) != 1 or matches[0].get("conclusion") != "skipped":
+            raise RecoveryRefused(
+                "static excluded original job is missing, duplicated or not skipped"
+            )
     failed_reader = False
     for job in jobs:
         if not isinstance(job, dict) or job.get("status") != "completed":
             raise RecoveryRefused("original CI attempt is not fully completed")
         conclusion = job.get("conclusion")
+        if conclusion == "skipped" and job.get("name") in excluded_jobs:
+            continue
         # No artifact/failed aggregate authenticates a selected skip plan here.
         # Until a bounded trusted plan is available, even planned skips refuse recovery.
         if conclusion not in {"success", "failure"}:
@@ -730,6 +839,7 @@ def merge_budgets(selected: dict[str, Any], evidence: list[dict[str, Any]]) -> d
                     "kind",
                     "merge_base_sha",
                     "transition_fingerprint",
+                    "original_identity_sha256",
                 )
                 if any(existing.get(name) != entry.get(name) for name in bindings):
                     raise RecoveryRefused(
@@ -920,6 +1030,9 @@ def require_effect(
     checkpoint = api.get(f"actions/runs/{context.checkpoint_run['id']}")
     if (
         current.get("id") != context.run_id
+        or current.get("status") != "in_progress"
+        or "conclusion" not in current
+        or current["conclusion"] is not None
         or current.get("run_attempt") != context.attempt
         or context.attempt != 1
         or core.utc(current.get("created_at")) != context.created_at
@@ -932,7 +1045,7 @@ def require_effect(
         or core.utc(checkpoint.get("created_at")) > context.created_at
         or checkpoint.get("id", context.run_id) >= context.run_id
     ):
-        context.frontier["fence"] = "effect-time checkpoint/run attempt changed; budget suspended"
+        context.frontier["fence"] = "effect-time actor/checkpoint changed; budget suspended"
         context.can_effect = False
         context.can_prepare = False
         raise RecoveryRefused(str(context.frontier["fence"]))
@@ -1165,14 +1278,35 @@ def consume(
     branch: str,
     now: datetime,
     context: ServiceContext,
+    *,
+    retained: RetainedBinding | None = None,
 ) -> None:
     identifier = run["id"]
     label_handoff = reservation["kind"] in {"handoff", "native-legacy-handoff"}
-    require_effect(api, context, reservation["authority"], branch)
-    original_run(api, identifier, candidate, reader_revision)
-    protection(api, branch)
-    if not core.still_current(api, candidate, branch):
-        raise RecoveryRefused("PR changed before consuming the prepared recovery")
+    if retained is None:
+        require_effect(api, context, reservation["authority"], branch)
+        original_run(api, identifier, candidate, reader_revision)
+        protection(api, branch)
+        if not core.still_current(api, candidate, branch):
+            raise RecoveryRefused("PR changed before consuming the prepared recovery")
+    else:
+        fresh = retained_proof(api, candidate.number, reservation["authority"], branch)
+        if fresh != retained or reservation.get("original_identity_sha256") != fresh.identity:
+            raise RecoveryRefused("retained original changed before consuming prepared recovery")
+        protection(api, branch)
+        if retained_pr(api, candidate.number, branch) != RetainedBinding(
+            fresh.historical, fresh.target, fresh.identity
+        ):
+            raise RecoveryRefused("retained source or target changed before the effect")
+        original = original_run(
+            api, identifier, candidate, reader_revision, excluded_jobs=fresh.excluded_jobs
+        )
+        hint = candidate_hint(api, original, candidate)
+        if (hint["candidate_sha"], hint["base_sha"]) != (candidate.head, candidate.base):
+            raise RecoveryRefused("original hint changed before consuming prepared recovery")
+        # The retained closed proof is more expensive than ordinary resolution.
+        # Recheck the actor/checkpoint immediately after it, not before that work.
+        require_effect(api, context, reservation["authority"], branch)
     if label_handoff:
         label_unused(
             api, candidate.number, now, source_head=candidate.source_head, since=run["created_at"]
@@ -1331,6 +1465,99 @@ def version_only(before: object, after: object, path: tuple[str, ...] = ()) -> b
     )
 
 
+def python_pin_changes(before: object, after: object) -> set[tuple[str, str, str]]:
+    """Compare only existing exact dotted package pins at four finite TOML locations."""
+    normal: set[tuple[str, str, str]] = set()
+    builders: set[tuple[str, str, str]] = set()
+    pin = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9]+(?:\.[0-9]+)+)")
+
+    def compare(old: object, new: object, path: tuple[str, ...]) -> None:
+        if old == new:
+            return
+        if isinstance(old, dict) and isinstance(new, dict) and old.keys() == new.keys():
+            for key in old:
+                compare(old[key], new[key], (*path, key))
+            return
+        allowed = (
+            path in {("project", "dependencies"), ("build-system", "requires")}
+            or (len(path) == 3 and path[:2] == ("project", "optional-dependencies"))
+            or (len(path) == 2 and path[0] == "dependency-groups")
+        )
+        if (
+            not allowed
+            or not isinstance(old, list)
+            or not isinstance(new, list)
+            or len(old) != len(new)
+        ):
+            raise RecoveryRefused("Python source changed outside exact dependency-version pins")
+        for previous, current in zip(old, new, strict=True):
+            if previous == current:
+                continue
+            left = pin.fullmatch(previous) if isinstance(previous, str) else None
+            right = pin.fullmatch(current) if isinstance(current, str) else None
+            if left is None or right is None or left[1] != right[1]:
+                raise RecoveryRefused("Python dependency pin syntax, name or order is unsupported")
+            changed = (left[1], left[2], right[2])
+            (builders if path == ("build-system", "requires") else normal).add(changed)
+
+    compare(before, after, ())
+    if not normal or not builders <= normal:
+        raise RecoveryRefused("Python builder must mirror a changed locked normal/dev package pin")
+    return normal
+
+
+def python_lock_coverage(
+    api: core.GitHub,
+    path: str,
+    changes: set[tuple[str, str, str]],
+    base: str,
+    source: str,
+    files: list[Any],
+    trees: dict[str, dict[str, str]],
+) -> None:
+    """Use the normal PyPI identity/integrity decoder, never any changed lock bytes."""
+    from .dependencies import _uv
+
+    lock = "automation/uv.lock" if path == "automation/pyproject.toml" else "uv.lock"
+    if not any(
+        isinstance(item, dict)
+        and item.get("filename") == lock
+        and item.get("status") == "modified"
+        and item.get("previous_filename") is None
+        for item in files
+    ):
+        raise RecoveryRefused("Python pins require their modified same-project uv.lock")
+    with tempfile.TemporaryDirectory(prefix="boxferry-retained-python-metadata-") as temporary:
+        root = Path(temporary)
+        before, after = root / "before.lock", root / "after.lock"
+        before.write_bytes(required_file(api, lock, base, trees[base]))
+        after.write_bytes(required_file(api, lock, source, trees[source]))
+        old, new = _uv(before), _uv(after)
+    for name, old_version, new_version in changes:
+        normalized = re.sub(r"[-_.]+", "-", name).lower()
+        previous = {package for package in old if package.name == normalized}
+        current = {package for package in new if package.name == normalized}
+        if len(previous) != 1 or len(current) != 1:
+            raise RecoveryRefused(
+                "Python pin coverage requires one canonical locked package per name"
+            )
+        left, right = next(iter(previous)), next(iter(current))
+        if (
+            left.version != old_version
+            or right.version != new_version
+            or old_version == new_version
+            or left.ecosystem != "python"
+            or right.ecosystem != "python"
+            or left.source != "https://pypi.org"
+            or right.source != "https://pypi.org"
+            or not left.integrity
+            or not right.integrity
+        ):
+            raise RecoveryRefused(
+                "Python pin versions do not match exact old/new locked identities"
+            )
+
+
 def ordinary_native_changes(
     api: core.GitHub,
     comparison: dict[str, Any],
@@ -1338,6 +1565,8 @@ def ordinary_native_changes(
     merge_base: str,
     trees: dict[str, dict[str, str]],
     modes: dict[str, dict[str, str]],
+    *,
+    python_manifests: bool = False,
 ) -> None:
     commits, files = comparison.get("commits"), comparison.get("files")
     if (
@@ -1379,9 +1608,12 @@ def ordinary_native_changes(
         seen.add(path)
         cargo = path == "Cargo.toml" or re.fullmatch(r"crates/[^/]+/Cargo.toml", path) is not None
         npm = path in {"package.json", "automation/devcontainer/package.json"}
-        if path not in core.LOCK_PATHS and not cargo and not npm:
+        python = python_manifests and path in {"pyproject.toml", "automation/pyproject.toml"}
+        if path not in core.LOCK_PATHS and not cargo and not npm and not python:
             raise RecoveryRefused(
-                "native handoff excludes publication or unrelated product changes"
+                "retained source supports only the reviewed package manifests and known locks"
+                if python_manifests
+                else "native handoff excludes publication or unrelated product changes"
             )
         if (
             path not in trees[merge_base]
@@ -1389,15 +1621,25 @@ def ordinary_native_changes(
             or (modes[merge_base][path] != modes[candidate.source_head][path])
         ):
             raise RecoveryRefused("native dependency file is new, missing or changed mode")
-        if cargo or npm:
+        if cargo or npm or python:
             before = required_file(api, path, merge_base, trees[merge_base])
             after = required_file(api, path, candidate.source_head, trees[candidate.source_head])
-            if cargo:
+            if cargo or python:
                 old, new = tomllib.loads(before.decode()), tomllib.loads(after.decode())
             else:
                 old = json.loads(before, object_pairs_hook=unique_object)
                 new = json.loads(after, object_pairs_hook=unique_object)
-            if not version_only(old, new):
+            if python:
+                python_lock_coverage(
+                    api,
+                    path,
+                    python_pin_changes(old, new),
+                    merge_base,
+                    candidate.source_head,
+                    files,
+                    trees,
+                )
+            elif not version_only(old, new):
                 raise RecoveryRefused("native manifest includes a non-dependency-version change")
 
 
@@ -1674,6 +1916,395 @@ def recover_run(
             consume(
                 api, run, candidate, reservation, reader_revision, service_run, branch, now, context
             )
+        return state
+    except ValueError as error:
+        if reservation is not None:
+            reservation["phase"] = "suspended"
+            reservation["reason"] = str(error)
+        raise RecoveryRefused(str(error)) from error
+
+
+class RetainedBindingChanged(RecoveryRefused):
+    """An observed identity/target movement cannot restart resolution within this actor."""
+
+
+@dataclass(frozen=True)
+class RetainedBinding:
+    """A historical PR graph and observed live target, never a current merge candidate."""
+
+    historical: core.Candidate
+    target: str
+    identity: str
+    excluded_jobs: frozenset[str] = frozenset()
+
+
+def static_pr_exclusions(repository: str, caller: bytes, policy: bytes) -> frozenset[str]:
+    """Recognize only three reviewed false-on-PR job shapes, not selector expressions."""
+    blocks = job_blocks(caller)
+    try:
+        jobs = json.loads(policy, object_pairs_hook=unique_object)["jobs"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise RecoveryRefused(
+            "static event exclusions lack a trusted policy job inventory"
+        ) from error
+    if (
+        not isinstance(jobs, list)
+        or not 1 <= len(jobs) <= 100
+        or not all(isinstance(job, str) and re.fullmatch(r"[A-Za-z0-9_-]+", job) for job in jobs)
+        or len(set(jobs)) != len(jobs)
+    ):
+        raise RecoveryRefused("static event exclusions have malformed policy jobs")
+    shapes: tuple[tuple[str, str, str], ...] = ()
+    if repository == "Strukturpiloten/docker-lens":
+        shapes = (
+            (
+                "hosted-prerequisite-diagnostic",
+                "Hosted prerequisite diagnostic (not native validation)",
+                "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+            ),
+            (
+                "native-conformance",
+                "Native Engine ${{ matrix.lane }}",
+                "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            ),
+        )
+    elif repository == "Strukturpiloten/boxferry-website":
+        shapes = (
+            (
+                "publish-site",
+                "Publish validated website",
+                ">-\n      github.event_name == 'push' && github.ref == 'refs/heads/main' &&\n"
+                "      needs.pr-gate.result == 'success'",
+            ),
+        )
+    excluded: set[str] = set()
+    for identifier, name, condition in shapes:
+        if identifier not in blocks:
+            continue
+        block = blocks[identifier]
+        names = re.findall(r"(?m)^    name: ([^\n]+)$", block)
+        conditions = re.findall(r"(?m)^    if: ([^\n]*(?:\n      [^\n]+)*)", block)
+        if names != [name] or conditions != [condition] or identifier in jobs:
+            raise RecoveryRefused("non-PR job differs from its exact trusted event shape")
+        if sum(f"    name: {name}\n" in value for value in blocks.values()) != 1:
+            raise RecoveryRefused("static excluded job name is ambiguous")
+        if identifier == "native-conformance":
+            strategy = re.findall(r"(?m)^    strategy:\n((?:      [^\n]*\n)+)", block)
+            expected = (
+                "      fail-fast: false\n      matrix:\n        lane:\n          [\n"
+                "            debian11-rootful,\n            debian11-rootless,\n"
+                "            upstream-rootful,\n            upstream-rootless,\n          ]\n"
+            )
+            if strategy != [expected]:
+                raise RecoveryRefused("native event exclusion has an unsupported matrix shape")
+            gate = blocks.get("check-gate", "")
+            revisions = re.findall(
+                rf"(?m)^    uses: {re.escape(READER_PATH)}@([a-f0-9]{{40}})"
+                r"(?:[ \t]+#[^\n]*)?$",
+                blocks.get("lockfile-release-age", ""),
+            )
+            checkouts = re.findall(
+                r"(?m)^        uses: (actions/checkout@[a-f0-9]{40} # v[0-9]+\.[0-9]+\.[0-9]+)$",
+                gate,
+            )
+            if len(revisions) != 1 or len(checkouts) != 1:
+                raise RecoveryRefused("native aggregate lacks its exact immutable pin bindings")
+            expected_gate = _DOCKER_REQUIRED_GATE.replace(
+                "__ADMISSION_SHA__", revisions[0]
+            ).replace("__CHECKOUT_PIN__", checkouts[0])
+            if gate.rstrip("\n") != expected_gate.rstrip("\n"):
+                raise RecoveryRefused(
+                    "native event exclusion requires the complete reviewed aggregate"
+                )
+        if identifier == "publish-site" and (
+            "    needs: [pr-gate]\n" not in block
+            or "    needs: [validation-plan, quality, lockfile-release-age]\n"
+            not in blocks.get("pr-gate", "")
+        ):
+            raise RecoveryRefused("publisher exclusion is not downstream of the fixed PR gate")
+        excluded.add(name)
+    return frozenset(excluded)
+
+
+def retained_pr(api: core.GitHub, number: int, branch: str) -> RetainedBinding:
+    """Positively prove the stale [P,H] graph; the live candidate resolver stays strict."""
+
+    def identity(pull: dict[str, Any]) -> tuple[tuple[str, str, str, str, str], str]:
+        value = core.pr_identity(pull, api.repository, number, expected_target=branch)
+        head, title = pull.get("head"), pull.get("title")
+        if (
+            value[3:] != ("renovate[bot]", "Bot")
+            or pull.get("draft") is not False
+            or not isinstance(title, str)
+            or not 1 <= len(title) <= 512
+            or not isinstance(head, dict)
+            or not isinstance(head.get("repo"), dict)
+            or head["repo"].get("full_name") != api.repository
+            or not isinstance(head.get("ref"), str)
+            or re.fullmatch(r"renovate/[A-Za-z0-9._/-]+", head["ref"]) is None
+        ):
+            raise RecoveryRefused("retained original requires an unchanged owned Renovate PR")
+        fingerprint = hashlib.sha256(
+            json.dumps([value, title, head["ref"]], separators=(",", ":")).encode()
+        ).hexdigest()
+        return value, fingerprint
+
+    observed, fingerprint = identity(api.get(f"pulls/{number}"))
+    _, merge, source, actor, actor_type = observed
+    target = core.target_revision(api, branch)
+    commit = api.get(f"git/commits/{merge}")
+    parents = commit.get("parents")
+    if not isinstance(parents, list) or len(parents) != 2:
+        raise RecoveryRefused("retained original lacks two ordered merge parents")
+    parent = parents[0]
+    base = core.revision(parent.get("sha") if isinstance(parent, dict) else None)
+    ordered_merge(api, merge, base, source)
+    if base == target:
+        raise RecoveryRefused("retained original is not an older-base graph")
+    core.require_ancestor(api, base, target)
+    comparison = api.get(f"compare/{target}...{merge}")
+    merge_base = comparison.get("merge_base_commit")
+    if (
+        comparison.get("status") != "diverged"
+        or not isinstance(merge_base, dict)
+        or merge_base.get("sha") != base
+    ):
+        raise RecoveryRefused("PR does not expose the supported stale original merge")
+    try:
+        unchanged = identity(api.get(f"pulls/{number}")) == (observed, fingerprint)
+        unchanged = unchanged and core.target_revision(api, branch) == target
+    except ValueError as error:
+        raise RetainedBindingChanged("retained PR changed during proof") from error
+    if not unchanged:
+        raise RetainedBindingChanged("retained PR source, title or target moved during proof")
+    return RetainedBinding(
+        core.Candidate(base, merge, number, source, actor, actor_type, "pull_request"),
+        target,
+        fingerprint,
+    )
+
+
+def probe_retained(
+    api: core.GitHub,
+    number: int,
+    branch: str,
+    *,
+    run: dict[str, Any] | None = None,
+    source_head: str | None = None,
+) -> RetainedBinding | None:
+    """A bounded hint locates work; only affirmative stale proof selects recovery."""
+    try:
+        if run is None:
+            if not isinstance(source_head, str) or core.SHA.fullmatch(source_head) is None:
+                return None
+            workflow = core.workflow_file(api.repository).rsplit("/", 1)[1]
+            listing = api.get(
+                f"actions/workflows/{workflow}/runs?head_sha={source_head}&per_page=20"
+            )
+            runs = listing.get("workflow_runs")
+            if not isinstance(runs, list) or len(runs) > 20:
+                return None
+            run = next(
+                (
+                    item
+                    for item in runs
+                    if isinstance(item, dict) and core.candidate_run(api, item, source_head)
+                ),
+                None,
+            )
+            if run is None:
+                return None
+        artifact = hint_artifact(api, run)
+        if artifact is None:
+            return None  # No extra live PR/target reads for ordinary no-hint callers.
+        binding = retained_pr(api, number, branch)
+        hint = candidate_hint(api, run, binding.historical, artifact=artifact)
+        if (hint["candidate_sha"], hint["base_sha"]) != (
+            binding.historical.head,
+            binding.historical.base,
+        ):
+            return None
+        return binding
+    except RetainedBindingChanged as error:
+        raise core.EligibilityError("retained binding moved; next event must re-resolve") from error
+    except ValueError:
+        # A failed locator/proof grants no authority; the strict live resolver decides.
+        return None
+
+
+def retained_proof(
+    api: core.GitHub, number: int, implementation: str, branch: str
+) -> RetainedBinding:
+    """Reuse closed source/reader and ordinary dependency ownership, without inventing N/B."""
+    binding = retained_pr(api, number, branch)
+    original = binding.historical
+    comparison = api.get(f"compare/{original.base}...{original.source_head}")
+    base_commit, merge_base = comparison.get("base_commit"), comparison.get("merge_base_commit")
+    if not isinstance(base_commit, dict) or not isinstance(merge_base, dict):
+        raise RecoveryRefused("retained source comparison lacks exact base/merge-base metadata")
+    source_base = core.revision(merge_base.get("sha"))
+    if (
+        base_commit.get("sha") != original.base
+        or comparison.get("status") not in {"ahead", "diverged"}
+        or (comparison["status"] == "ahead") != (source_base == original.base)
+    ):
+        raise RecoveryRefused("retained source comparison is not anchored to the original base")
+    if source_base != original.base:
+        core.require_ancestor(api, source_base, original.base)
+        core.require_ancestor(api, source_base, original.source_head)
+    modes: dict[str, dict[str, str]] = {
+        sha: {}
+        for sha in {original.base, original.head, original.source_head, binding.target, source_base}
+    }
+    trees = {sha: inventory(api, sha, modes=modes[sha]) for sha in modes}
+    catalogs = [
+        {
+            path: (blob, modes[sha][path])
+            for path, blob in tree.items()
+            if re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path)
+        }
+        for sha, tree in trees.items()
+    ]
+    if not all(catalogs) or any(catalog != catalogs[0] for catalog in catalogs):
+        raise RecoveryRefused("retained original workflow catalogs changed; transition required")
+    selected = authority(api, original.base, trees[original.base])
+    if selected[0] != implementation or any(
+        authority(api, sha, tree) != selected for sha, tree in trees.items()
+    ):
+        raise RecoveryRefused("retained original requires the same admitted authority and policy")
+    caller = required_file(
+        api, core.workflow_file(api.repository), original.base, trees[original.base]
+    )
+    reader_shape(caller, implementation)
+    reader_closure(api, implementation)
+    ordinary_native_changes(
+        api, comparison, original, source_base, trees, modes, python_manifests=True
+    )
+    excluded = static_pr_exclusions(api.repository, caller, selected[2])
+    if retained_pr(api, number, branch) != binding:
+        raise RecoveryRefused("retained binding changed during closed-source proof")
+    return RetainedBinding(original, binding.target, binding.identity, excluded)
+
+
+def recover_retained(
+    api: core.GitHub,
+    number: int,
+    state: dict[str, Any],
+    previous: dict[str, Any] | None,
+    reservations: dict[str, Any],
+    reports: dict[str, Any],
+    *,
+    implementation: str,
+    service_run: int,
+    branch: str,
+    now: datetime,
+    context: ServiceContext,
+    original_run_id: int | None = None,
+) -> dict[str, Any]:
+    """Recheck only O/P and retry its existing waiter; fresh protected Q remains mandatory."""
+    if not context.can_prepare:
+        return state
+    observed = retained_pr(api, number, branch)
+    historical = observed.historical
+    if original_run_id is None:
+        file_name = core.workflow_file(api.repository).rsplit("/", 1)[1]
+        listing = api.get(
+            f"actions/workflows/{file_name}/runs?head_sha={historical.source_head}&per_page=20"
+        )
+        runs = listing.get("workflow_runs")
+        if not isinstance(runs, list) or len(runs) > 20:
+            raise RecoveryRefused("retained original CI discovery exceeds its bound")
+        run = next(
+            (
+                item
+                for item in runs
+                if isinstance(item, dict) and core.candidate_run(api, item, historical.source_head)
+            ),
+            None,
+        )
+        if run is None:
+            return state
+        original_run_id = run.get("id")
+    if type(original_run_id) is not int or original_run_id < 1:
+        raise RecoveryRefused("retained original run identifier is malformed")
+    key = hashlib.sha256(
+        f"{api.repository}:{original_run_id}:{historical.source_head}:{implementation}".encode()
+    ).hexdigest()
+    reservation = reservations.get(key)
+    if (reservation is not None and reservation.get("phase") != "prepared") or (
+        previous is not None and original_run_id in previous.get("reruns", {}).values()
+    ):
+        return state
+    try:
+        raw = api.get(f"actions/runs/{original_run_id}")
+        if raw.get("status") != "completed" or raw.get("conclusion") == "success":
+            return state
+        proof = retained_proof(api, number, implementation, branch)
+        if (proof.historical, proof.target, proof.identity) != (
+            observed.historical,
+            observed.target,
+            observed.identity,
+        ):
+            raise RecoveryRefused("retained original changed during discovery")
+        run = original_run(
+            api, original_run_id, historical, implementation, excluded_jobs=proof.excluded_jobs
+        )
+        hint = candidate_hint(api, run, historical)
+        if (hint["candidate_sha"], hint["base_sha"]) != (historical.head, historical.base):
+            raise RecoveryRefused("hint does not locate the observed stale original graph")
+        if core.utc(run.get("created_at")) > context.created_at:
+            raise RecoveryRefused("earlier-created service cannot target future original CI run")
+        facts = protection(api, branch)
+        bindings = {
+            "original_run_id": original_run_id,
+            "original_attempt": run["run_attempt"],
+            "source_head_sha": historical.source_head,
+            "authority": implementation,
+            "hinted_candidate_sha": historical.head,
+            "hinted_base_sha": historical.base,
+            "original_identity_sha256": proof.identity,
+            "kind": "retained-original",
+        }
+        if reservation is not None and any(
+            reservation.get(name) != value for name, value in bindings.items()
+        ):
+            raise RecoveryRefused("prepared retained-original bindings changed; budget suspended")
+        report = core.evaluate(api, historical, state, now)
+        state = report.pop("state")
+        if retained_pr(api, number, branch) != observed:
+            raise RecoveryRefused("retained original changed during metadata evaluation")
+        report["evidence_kind"] = "independently-evaluated-historical-hint"
+        report["protected_queue_required"] = True
+        prior = None if previous is None else previous["reports"].get(historical.head)
+        receipt = (
+            previous["run_id"]
+            if previous is not None and report_matches(prior, historical)
+            else service_run
+        )
+        core.report_status(api, report, receipt)
+        reports[historical.head] = report
+        if reservation is None:
+            reservations[key] = {
+                **bindings,
+                "phase": "prepared",
+                "prepared_at": now.isoformat(),
+                "prepared_service_run": service_run,
+                "protection": facts,
+            }
+        elif report_matches(report, historical) and report_matches(prior, historical):
+            if context.can_effect:
+                consume(
+                    api,
+                    run,
+                    historical,
+                    reservation,
+                    implementation,
+                    service_run,
+                    branch,
+                    now,
+                    context,
+                    retained=proof,
+                )
         return state
     except ValueError as error:
         if reservation is not None:

@@ -16,6 +16,11 @@ Main, manual, release and local [complete gates](../scripts/check-all.sh) remain
 
 The [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) own uv, Ruff and ty. The interface-1 loader verifies pinned source. The [Node action](../.github/actions/shared-node/action.yml) uses locked Python, producer CI version and cache inputs. Native automation validates Node ownership and replacements; Rust checks Action pins. Updater caching stays disabled; adoption awaits producer admission. Repositories own checks, thresholds, native suites, binaries and evidence under [ADR 0079](decisions/0079-native-test-runtime-selection.md).
 
+[Proposed original-graph recovery](decisions/0098-preserved-original-dependency-recheck.md) defines
+how dependency versions stay fixed while main moves. Its historical metadata receipt cannot approve
+a current merge: the original immutable waiter and fresh protected queue remain mandatory.
+Consumer activation and live recovery evidence remain separate.
+
 ## Daily checks and agent repairs
 
 Use [local verification](development-environment.md#local-verification), locked Python and [agent contract](../AGENTS.md). Complete gates and independent review remain required.

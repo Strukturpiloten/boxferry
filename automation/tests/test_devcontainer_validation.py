@@ -731,6 +731,49 @@ class ProducerTests(unittest.TestCase):
         self.assertNotIn("mkdir .git", script)
         self.assertNotIn("cargo fetch", script)
 
+    def test_llvm_cov_probe_uses_cargo_subcommand_and_preserves_version_failures(self) -> None:
+        tools = self.root / "bin"
+        tools.mkdir()
+        for name, output in (("id", "1000"), ("uname", "x86_64")):
+            executable = tools / name
+            executable.write_text("#!/bin/sh\nprintf '%s\\n' " + output + "\n")
+            executable.chmod(0o700)
+        (self.root / ".devcontainer").mkdir()
+        (self.root / ".devcontainer/verify-tools.sh").write_text("exit 0\n")
+        probes = tuple(argv for argv in validation.PROBES if argv[0] == "cargo-llvm-cov")
+        self.assertEqual(len(probes), 1)
+        for repository in ("boxferry", "compose-lens", "podman-lens", "quadlet-lens"):
+            with self.subTest(repository=repository), patch.object(validation, "PROBES", probes):
+                script = validation.probe_script({"cargo-llvm-cov": "0.9.0"}, {}, repository)
+                script = script.replace("/tmp/qualification-home", str(self.root / "owned-home"))
+                for version, exitcode, expected in (
+                    ("0.9.0", 0, "success"),
+                    ("0.8.0", 0, "failed"),
+                    ("0.9.0", 32, "failed"),
+                ):
+                    with self.subTest(version=version, exitcode=exitcode):
+                        executable = tools / "cargo-llvm-cov"
+                        executable.write_text(
+                            '#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = llvm-cov ] '
+                            '&& [ "$2" = --version ] || exit 64\n'
+                            f"printf 'cargo-llvm-cov {version}\\n'\nexit {exitcode}\n"
+                        )
+                        executable.chmod(0o700)
+                        result = run(
+                            ("/bin/bash", "-c", script, "qualification", "x86_64"),
+                            cwd=self.root,
+                            stage="llvm-cov-probe-shell-contract",
+                            timeout_seconds=5,
+                            environment={"PATH": str(tools) + ":/usr/bin:/bin"},
+                        )
+                        self.assertEqual(result.status, expected, result)
+                        self.assertIn("probe: cargo-llvm-cov", result.stdout)
+                        if exitcode:
+                            self.assertEqual(result.returncode, exitcode)
+                        elif expected == "failed":
+                            self.assertEqual(result.returncode, 1)
+                            self.assertIn("Version mismatch for cargo-llvm-cov", result.stderr)
+
     def test_version_probe_requires_successful_execution_and_exact_selected_version(self) -> None:
         tools = self.root / "bin"
         tools.mkdir()
