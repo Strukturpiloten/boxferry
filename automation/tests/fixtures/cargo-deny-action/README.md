@@ -6,7 +6,8 @@ packages or a license change. The declared BSD license distinguishes policy sele
 The separate temporary root manifest in the Python regression must also fail if selected.
 No Rust compilation, runtime, image or dependency download is needed for those controls.
 
-The producer's existing dependency job copies `source/` to its workspace root and
+The producer's existing Box-only automation job copies the exact candidate fixture from
+`_automation/` into the guarded separate `dependency-action-fixture/` directory and
 runs the same pinned Cargo Deny Action as the shared workflow. Its positive check
 retains all four default audit categories, explicit nested manifest, all features and
 non-default configuration. No expected-negative Action step emits error annotations.
@@ -28,4 +29,4 @@ The Dockerfile declares Cargo Deny 0.20.2; the local selected tool independently
 reported `cargo-deny 0.20.2`. The Action is dual MIT/Apache-2.0 licensed. No upstream
 implementation or oracle code is copied or redistributed here. The offline CLI controls
 skip when the selected binary is absent; the positive selected-Action fixture must
-still pass in the required dependency job.
+still pass in the required automation job.

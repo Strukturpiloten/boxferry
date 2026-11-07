@@ -1452,7 +1452,17 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                     r"(^|/)action\.ya?ml$")
         configuration = json.loads((ROOT / ".github/renovate.json").read_text())
         self.assertTrue(configuration.get("github-actions", {}).get("enabled", True))
-        paths = (".github/workflows/reviewed-docker-consumer-validation.yml",
+        source = json.loads((ROOT / ".github/automation.json").read_text())["revision"]
+        self.assertRegex(source, r"^[0-9a-f]{40}$")
+        canonical_path = ".github/workflows/shared-release-prepare.yml"
+        caller = (ROOT / ".github/workflows/release-plz.yml").read_text()
+        self.assertEqual(re.findall(
+            r"(?m)^\s+uses: (Strukturpiloten/boxferry/\.github/workflows/shared-release-prepare\.yml@[^\n]+)$",
+            caller), [f"Strukturpiloten/boxferry/{canonical_path}@{source} # automation-v1 interface v1"])
+        self.assertIn(f"      automation_sha: {source}\n", caller)
+        self.assertNotIn("actions/create-github-app-token", caller)
+        paths = (canonical_path,
+                 ".github/workflows/reviewed-docker-consumer-validation.yml",
                  ".github/workflows/reviewed-docker-consumer-lane.yml",
                  ".github/workflows/reviewed-docker-consumer-worker.yml",
                  ".github/actions/reviewed-docker-admission/action.yml")
@@ -1462,30 +1472,31 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             return records[0]
 
-        canonical = app_pin((ROOT / ".github/workflows/release-plz.yml").read_text())
-        extracted = []
+        canonical = app_pin((ROOT / canonical_path).read_text())
+        extracted = {}
         for path in paths:
             self.assertTrue(any(re.search(pattern, path) for pattern in patterns))
             text = (ROOT / path).read_text()
             if "actions/create-github-app-token" in text:
-                extracted.append(app_pin(text))
+                extracted[path] = app_pin(text)
             for manager in configuration["customManagers"]:
                 if any(re.search(pattern[1:-1], path) for pattern in manager.get("managerFilePatterns", [])):
                     for expression in manager["matchStrings"]:
                         python = re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression)
                         self.assertFalse(any(match.groupdict().get("depName") == "actions/create-github-app-token"
                                              for match in re.finditer(python, text)))
-        self.assertEqual(extracted, [canonical])
+        self.assertEqual(extracted, {canonical_path: canonical,
+                                     ".github/actions/reviewed-docker-admission/action.yml": canonical})
         for suffix in (canonical[1][:39] + " # v1.2.3", canonical[1], "main # v1.2.3",
                        canonical[1] + " # main", canonical[1] + " # v1.2"):
             with self.subTest(suffix=suffix), self.assertRaises(AssertionError):
                 app_pin("uses: actions/create-github-app-token@" + suffix)
         future = ("actions/create-github-app-token", "f" * 40, "v123.456.789")
         self.assertEqual(app_pin("uses: " + future[0] + "@" + future[1] + " # " + future[2]), future)
-        action_rules = [rule for rule in configuration["packageRules"]
-                        if rule.get("matchManagers") == ["github-actions"]]
-        self.assertEqual(len([rule for rule in action_rules if rule.get("pinDigests")]), 1)
-        self.assertEqual(len([rule for rule in action_rules if rule.get("groupName") == "GitHub Actions"]), 1)
+        # Effective native action pinning/grouping is checked by the safe native
+        # policy fixture after resolving this exact inherited common preset.
+        self.assertIn(f"github>Strukturpiloten/boxferry//renovate-presets/common#{source}",
+                      configuration["extends"])
 
     def transfer_fixture(self, lane="debian11-rootful", *, lens=None, consumer=None):
         directory = self.root / ("bundle-" + lane)

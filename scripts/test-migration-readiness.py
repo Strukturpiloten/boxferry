@@ -116,8 +116,15 @@ class MigrationReadinessTests(unittest.TestCase):
         )
         self.assertEqual(rule["matchDatasources"], ["github-tags"])
         self.assertTrue(rule["pinDigests"])
-        self.assertTrue(rule["dependencyDashboardApproval"])
-        self.assertFalse(rule["automerge"])
+        self.assertEqual(rule["groupName"], "Native Lens conformance")
+        self.assertEqual(
+            rule["prBodyNotes"],
+            [
+                "Review the exact release commit and native evidence; update processing or "
+                "generator target metadata and rerun downstream conformance. "
+                "Discovery alone does not admit support."
+            ],
+        )
 
     def assert_catalogue_rejected(self, source: str, pattern: str) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1885,12 +1892,52 @@ class MigrationReadinessTests(unittest.TestCase):
             [job.strip() for job in dependencies.group(1).split(",") if job.strip()],
             ["deterministic", "release-metadata", "migration-readiness", "migration-readiness-evidence", "release-binary-evidence"],
         )
+        release_policy = json.loads((ROOT / "scripts/shared-release-policy.json").read_text())
+        self.assertCountEqual(
+            release_policy["required_jobs"],
+            [job.strip() for job in dependencies.group(1).split(",") if job.strip()],
+        )
+        automation_sha = json.loads((ROOT / ".github/automation.json").read_text())["revision"]
+        self.assertRegex(automation_sha, r"^[0-9a-f]{40}$")
+        self.assertEqual(validation_job.count("shared-release-validation.yml@"), 1)
         for required in (
-            "BINARY_RESULT: ${{ needs.release-binary-evidence.result }}",
-            '\"${READINESS_RESULT}\" \"${EVIDENCE_RESULT}\" \"${BINARY_RESULT}\"; do',
-            'if [[ "${result}" != success ]]; then',
+            "    if: always()",
+            "    uses: Strukturpiloten/boxferry/.github/workflows/"
+            f"shared-release-validation.yml@{automation_sha}",
+            "      candidate_sha: ${{ github.sha }}",
+            f"      automation_sha: {automation_sha}",
+            "      policy_sha: ${{ github.sha }}",
+            "      config_path: scripts/shared-release-policy.json",
+            "      needs_json: ${{ toJSON(needs) }}",
         ):
-            self.assertTrue(required in validation_job, f"Release validation is missing result propagation: {required}")
+            self.assertRegex(
+                validation_job,
+                rf"(?m)^{re.escape(required)}(?:\s+#.*)?$",
+                f"Release validation is missing its bound shared contract: {required}",
+            )
+        for evidence_job, artifact in (
+            (
+                "migration-readiness-evidence",
+                "name: ${{ needs.migration-readiness.outputs.evidence_artifact }}",
+            ),
+            (
+                "release-binary-evidence",
+                "name: ${{ needs.deterministic.outputs.release_binary_artifact }}",
+            ),
+        ):
+            evidence = re.search(
+                rf"(?ms)^  {evidence_job}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)", release
+            )
+            self.assertIsNotNone(evidence, f"Release must define {evidence_job}")
+            assert evidence is not None
+            self.assertIn(artifact, evidence.group(1))
+            self.assertIn(
+                "candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}", evidence.group(1)
+            )
+            self.assertIn('--revision "${GITHUB_SHA}"', evidence.group(1))
+            if evidence_job == "release-binary-evidence":
+                self.assertIn("scripts/release-binaries.py verify-set", evidence.group(1))
+                self.assertIn('--run-id "${GITHUB_RUN_ID}"', evidence.group(1))
         self.assertFalse("gh run list" in release, "Release must not discover evidence from another run")
         self.assertFalse("gh run download" in release, "Release must use the current-run artifact contract")
         self.assertIn(

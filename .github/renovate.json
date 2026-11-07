@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices"],
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#9eb757145e7e078ba8944df525c9884eec87effc",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#9eb757145e7e078ba8944df525c9884eec87effc"
+  ],
   "dependencyDashboard": true,
   "ignorePaths": [
     "**/node_modules/**",
@@ -52,16 +55,6 @@
         "(?:^|\\n)\\s*runs-on:\\s*(?<depName>ubuntu|macos|windows)-(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
       ],
       "datasourceTemplate": "github-runners"
-    },
-    {
-      "customType": "regex",
-      "description": "Track the immutable Strukturpiloten shared-policy commit",
-      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
-      "matchStrings": [
-        "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/\\.github) currentValue=(?<currentValue>main)\\n[ \\t]*ref:\\s*(?<currentDigest>[a-f0-9]{40})"
-      ],
-      "datasourceTemplate": "github-digest",
-      "autoReplaceStringTemplate": "{{{indentation}}}# renovate: datasource=github-digest depName={{{depName}}} currentValue={{{newValue}}}\n{{{indentation}}}ref: {{{newDigest}}}"
     },
     {
       "customType": "regex",
@@ -215,69 +208,6 @@
       ],
       "versioningTemplate": "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
       "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\nreadonly release_emulator_image='{{{depName}}}:{{{newValue}}}@{{{newDigest}}}'"
-    },
-    {
-      "customType": "regex",
-      "description": "Update each canonical uv release-attachment checksum and its release annotation; the pyproject regex owns the execution version.",
-      "managerFilePatterns": ["/^automation/uv-artifacts\\.json$/"],
-      "matchStrings": [
-        "\"filename\"[ \\t]*:[ \\t]*\"(?<depType>uv-(?:x86_64|aarch64)-unknown-linux-gnu\\.tar\\.gz)\"\\s*,\\s*\"currentVersion\"[ \\t]*:[ \\t]*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"[ \\t]*:[ \\t]*\"(?<currentDigest>[a-f0-9]{64})\""
-      ],
-      "depNameTemplate": "astral-sh/uv",
-      "datasourceTemplate": "github-release-attachments"
-    },
-    {
-      "customType": "regex",
-      "description": "Own the uv execution constraint, which pep621 consumes but does not extract as a versioned dependency.",
-      "managerFilePatterns": ["/^(?:automation/)?pyproject\\.toml$/"],
-      "matchStrings": [
-        "\\[tool\\.uv\\][^\\[]*?required-version[ \\t]*=[ \\t]*\"==(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
-      ],
-      "depNameTemplate": "uv",
-      "datasourceTemplate": "pypi",
-      "versioningTemplate": "pep440"
-    },
-    {
-      "customType": "regex",
-      "description": "Update the immutable native Renovate test runtime version and OCI digest atomically.",
-      "managerFilePatterns": ["/^automation/renovate-runtime\\.json$/"],
-      "matchStrings": [
-        "\"image\"[ \\t]*:[ \\t]*\"(?<depName>ghcr\\.io/renovatebot/renovate):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
-      ],
-      "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
-    },
-    {
-      "customType": "regex",
-      "description": "Update each canonical downloaded-tool release tag and architecture checksum atomically; asset filenames are computed from version-independent templates.",
-      "managerFilePatterns": ["/^automation/tool-artifacts\\.json$/"],
-      "matchStrings": [
-        "\"repository\"\\s*:\\s*\"(?<depName>tombi-toml/tombi|mvdan/sh|koalaman/shellcheck|hadolint/hadolint|rhysd/actionlint|lycheeverse/lychee)\"\\s*,\\s*\"architecture\"\\s*:\\s*\"(?<depType>x86_64|aarch64)\"\\s*,\\s*\"filenameTemplate\"\\s*:\\s*\"[^\"\\r\\n]+\"\\s*,\\s*\"memberTemplate\"\\s*:\\s*(?:null|\"[^\"\\r\\n]+\")\\s*,\\s*\"archive\"\\s*:\\s*\"(?:binary|tar\\.gz|tar\\.xz)\"\\s*,\\s*\"currentVersion\"\\s*:\\s*\"(?<currentValue>(?:v|lychee-v)[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{64})\""
-      ],
-      "datasourceTemplate": "github-release-attachments",
-      "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
-    },
-    {
-      "customType": "regex",
-      "depNameTemplate": "Strukturpiloten/boxferry",
-      "datasourceTemplate": "github-digest",
-      "currentValueTemplate": "automation-v1",
-      "description": "Update the consumer adoption manifest at the same immutable shared revision.",
-      "managerFilePatterns": ["/^\\.github/automation\\.json$/"],
-      "matchStrings": [
-        "(?<prefix>\"revision\"[ \\t]*:[ \\t]*\")(?<currentDigest>[a-f0-9]{40})(?<suffix>\")"
-      ]
-    },
-    {
-      "customType": "regex",
-      "depNameTemplate": "Strukturpiloten/boxferry",
-      "datasourceTemplate": "github-digest",
-      "currentValueTemplate": "automation-v1",
-      "description": "Update explicit shared workflow revision inputs and environment pins.",
-      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
-      "matchStrings": [
-        "(?<prefix>(?:^|\\n)[ \\t]*(?:automation_sha|automation-sha|AUTOMATION_SHA):[ \\t]*[\"\\']?)(?<currentDigest>[a-f0-9]{40})(?<suffix>[\"\\']?)"
-      ]
     }
   ],
   "packageRules": [
@@ -285,63 +215,15 @@
       "description": "Keep non-major Dev Container image updates together",
       "matchManagers": ["custom.regex"],
       "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchPackageNames": ["!docker.io/library/node"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
       "groupName": "Dev Container toolchain"
-    },
-    {
-      "description": "Group compatible Rust dependency updates",
-      "matchManagers": ["cargo"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
-      "groupName": "Rust dependencies"
     },
     {
       "description": "Keep ZIP on advisory-fixed releases after the reviewed Rust baseline increase",
       "matchManagers": ["cargo"],
       "matchPackageNames": ["zip"],
       "allowedVersions": ">=9.0.3"
-    },
-    {
-      "description": "Group repository Node development-tool updates",
-      "matchManagers": ["npm"],
-      "matchDepTypes": ["devDependencies"],
-      "groupName": "Node development tools"
-    },
-    {
-      "description": "Pin every GitHub Action to an immutable commit hash",
-      "matchManagers": ["github-actions"],
-      "matchDepTypes": ["action"],
-      "pinDigests": true
-    },
-    {
-      "description": "Group GitHub Actions updates",
-      "matchManagers": ["github-actions"],
-      "matchDepTypes": ["action"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
-      "groupName": "GitHub Actions"
-    },
-    {
-      "description": "Automerge tested non-major dependency updates",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false
-    },
-    {
-      "description": "Automerge green-gated lock-file maintenance",
-      "matchUpdateTypes": ["lockFileMaintenance"],
-      "minimumReleaseAge": "0 days",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false
-    },
-    {
-      "description": "Review GitHub-hosted runner environment upgrades manually",
-      "matchDatasources": ["github-runners"],
-      "groupName": "GitHub-hosted runners",
-      "automerge": false,
-      "prBodyNotes": [
-        "Review the hosted image release notes and verify every workflow's operating-system environment before merging."
-      ]
     },
     {
       "description": "Require explicit security review for the DockerLens application admission pin",
@@ -359,77 +241,14 @@
       ]
     },
     {
-      "description": "Do not delay BoxFerry and Lens releases",
-      "matchManagers": ["cargo"],
-      "matchDatasources": ["crate"],
-      "matchPackageNames": [
-        "boxferry",
-        "boxferry-model",
-        "boxferry-engine",
-        "boxferry-compose",
-        "boxferry-podman",
-        "boxferry-quadlet",
-        "compose-lens",
-        "podman-lens",
-        "quadlet-lens",
-        "docker-lens"
-      ],
-      "minimumReleaseAge": "0 days"
-    },
-    {
-      "description": "Require manual review of Dev Container image and tool updates",
-      "matchManagers": ["custom.regex"],
-      "matchFileNames": [".devcontainer/Dockerfile"],
-      "dependencyDashboardApproval": true,
-      "automerge": false,
-      "prBodyNotes": [
-        "Review all shared workspace consumers, exact versions and image digests, then rebuild and validate the Dev Container before merging."
-      ]
-    },
-    {
       "description": "Require native revalidation of Lens conformance revisions",
       "matchFileNames": ["fixtures/conformance/migration-readiness/tiers.toml"],
       "matchDatasources": ["github-tags"],
       "pinDigests": true,
-      "dependencyDashboardApproval": true,
-      "automerge": false,
       "groupName": "Native Lens conformance",
       "prBodyNotes": [
         "Review the exact release commit and native evidence; update processing or generator target metadata and rerun downstream conformance. Discovery alone does not admit support."
       ]
-    },
-    {
-      "description": "Require explicit revalidation for live application and workload images",
-      "matchDatasources": ["docker"],
-      "matchFileNames": [
-        "fixtures/conformance/*-application/images.tsv",
-        "fixtures/conformance/podman-live/matrix.tsv",
-        "scripts/podman-live-conformance.sh"
-      ],
-      "dependencyDashboardApproval": true,
-      "automerge": false,
-      "groupName": "Live acceptance images",
-      "prBodyNotes": [
-        "Review image provenance, license, platform digest, resource budget, and live behavior before merging."
-      ]
-    },
-    {
-      "description": "Provisionally hold Docker Compose provider proposals pending native qualification",
-      "enabled": false,
-      "prBodyNotes": ["Verify the exact provider release, checksum and downstream compatibility."],
-      "pinDigests": true,
-      "matchDatasources": ["github-release-attachments"],
-      "matchPackageNames": ["docker/compose"],
-      "groupName": "Docker Compose provider",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false,
-      "dependencyDashboardApproval": false
-    },
-    {
-      "description": "Keep Rust toolchain updates visible and separate",
-      "matchManagers": ["rust-toolchain"],
-      "groupName": "Rust toolchain"
     },
     {
       "description": "Group Kubernetes development tool versions and integrity refreshes",
@@ -451,85 +270,67 @@
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
       "matchPackageNames": ["docker.io/tonistiigi/binfmt"],
-      "groupName": "release emulator image",
-      "dependencyDashboardApproval": true,
-      "automerge": false
+      "groupName": "release emulator image"
     },
     {
-      "description": "Bootstrap shared Python package/build tools and their lockfile before immutable preset adoption.",
-      "matchManagers": ["pep621"],
-      "groupName": "Python automation",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false,
-      "dependencyDashboardApproval": false
+      "description": "Keep GitHub-hosted runner upgrades isolated for compatibility checks",
+      "matchDatasources": ["github-runners"],
+      "groupName": "GitHub-hosted runners",
+      "prBodyNotes": [
+        "Review the hosted image release notes and verify every workflow's operating-system environment before merging."
+      ]
     },
     {
-      "description": "Bootstrap the exact Python interpreter owner before immutable preset adoption.",
-      "matchManagers": ["pyenv"],
-      "groupName": "Python interpreter",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false,
-      "dependencyDashboardApproval": false
-    },
-    {
-      "description": "Bootstrap the identical shared uv version/checksum pairing before immutable preset adoption.",
+      "description": "Keep shared Dev Container qualification visible in update notes",
       "matchManagers": ["custom.regex"],
-      "matchDatasources": ["pypi", "github-release-attachments"],
-      "matchPackageNames": ["uv", "astral-sh/uv"],
-      "groupName": "Python automation",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false,
-      "dependencyDashboardApproval": false
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "prBodyNotes": [
+        "Review all shared workspace consumers, exact versions and image digests, then rebuild and validate the Dev Container before merging."
+      ]
     },
     {
-      "description": "Keep native Renovate validation runtime upgrades isolated and automatically merge after native compatibility checks.",
-      "matchManagers": ["custom.regex"],
+      "description": "Keep live workload, matrix and probe images fixed",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/renovatebot/renovate"],
-      "groupName": "Renovate native test runtime",
-      "automerge": true,
-      "dependencyDashboardApproval": false
-    },
-    {
-      "description": "Bootstrap the identical canonical downloaded-tool integrity owner before immutable preset adoption.",
-      "matchManagers": ["custom.regex"],
-      "matchDatasources": ["github-release-attachments"],
-      "matchPackageNames": [
-        "tombi-toml/tombi",
-        "mvdan/sh",
-        "koalaman/shellcheck",
-        "hadolint/hadolint",
-        "rhysd/actionlint",
-        "lycheeverse/lychee"
+      "matchFileNames": [
+        "fixtures/conformance/*-application/images.tsv",
+        "fixtures/conformance/podman-live/matrix.tsv",
+        "scripts/podman-live-conformance.sh"
       ],
-      "groupName": "Canonical downloaded tools",
-      "pinDigests": true,
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false,
-      "dependencyDashboardApproval": false
-    },
-    {
-      "description": "Keep preset, manifest, shared workflow and source checkout revisions in one adoption PR, after ordinary Actions grouping.",
-      "matchManagers": ["github-actions", "custom.regex"],
-      "matchPackageNames": ["Strukturpiloten/boxferry"],
-      "groupName": "Shared BoxFerry automation"
-    },
-    {
-      "description": "The limited Actions-hosted Renovate instance exclusively owns native feature declarations and official whole-graph locks.",
-      "matchManagers": ["devcontainer"],
-      "matchDepTypes": ["feature"],
+      "groupName": "Live acceptance images",
+      "prBodyNotes": [
+        "Keep the existing workload, matrix and probe image versions and digests fixed. Preserve discovery ownership without update proposals or a manual approval route."
+      ],
       "enabled": false
     },
     {
-      "description": "The limited feature updater exclusively owns the exact nested GitHub CLI option; other GitHub CLI packages retain their current owners.",
+      "description": "Keep the Docker Compose provider fixed",
+      "enabled": false,
+      "prBodyNotes": [
+        "Keep the exact provider release and checksum fixed; preserve discovery and integrity verification without update proposals or a manual approval route."
+      ],
+      "pinDigests": true,
+      "matchDatasources": ["github-release-attachments"],
+      "matchPackageNames": ["docker/compose"],
+      "groupName": "Docker Compose provider",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Hold direct Dev Container image and installed-tool definitions until CI qualification under BoxFerry #563; ordinary shared/package/compiler inputs remain automatic.",
       "matchManagers": ["custom.regex"],
-      "matchDatasources": ["github-releases"],
-      "matchPackageNames": ["cli/cli"],
-      "matchFileNames": [".devcontainer/devcontainer.json"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchDatasources": ["docker", "crate"],
+      "matchPackageNames": [
+        "docker.io/library/node",
+        "mcr.microsoft.com/devcontainers/rust",
+        "ghcr.io/astral-sh/uv",
+        "cargo-deny",
+        "cargo-llvm-cov",
+        "cargo-semver-checks",
+        "zizmor"
+      ],
       "enabled": false
     }
   ],

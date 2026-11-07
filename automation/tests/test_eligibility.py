@@ -2118,6 +2118,373 @@ jobs_extra:
             )
         )
 
+    def wait_summary_result(self) -> dict[str, object]:
+        return {
+            "status": "waiting",
+            "name": "ghcr.io/devcontainers/features/github-cli",
+            "version": "1.1.0",
+            "path": ".devcontainer/devcontainer-lock.json",
+            "reason": "72-hour operational observation hold",
+            "retry_at": "2026-11-10T06:42:58.255024Z",
+            "retry_eligible": True,
+        }
+
+    def test_wait_summary_explains_the_returned_operational_hold(self) -> None:
+        result = self.wait_summary_result()
+        receipt = {"status": "waiting", "candidate_sha": HEAD, "results": [result]}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        self.assertIn(f"Dependency eligibility: waiting for `{HEAD}`.", rendered)
+        self.assertIn("Eligibility receipt returned.", rendered)
+        for evidence in (
+            "ghcr.io/devcontainers/features/github-cli",
+            "version `1.1.0`",
+            "72-hour operational observation hold",
+            "recheck after `2026-11-10T06:42:58.255024Z`",
+            "file `.devcontainer/devcontainer-lock.json`",
+        ):
+            self.assertIn(evidence, rendered)
+        self.assertNotIn("wait timed out", rendered)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_shows_safe_failures_without_registry_payloads(self) -> None:
+        results = []
+        for reason in (
+            "registry HTTP status 503",
+            "manifest acquisition: TimeoutError",
+            "registry exception https://user:PRIVATE@registry.invalid/?token=PRIVATE \
+::error::PRIVATE",
+        ):
+            item = self.wait_summary_result()
+            item.update(status="failure", reason=reason)
+            item["metadata_url"] = "https://user:PRIVATE@registry.invalid"
+            item["exception"] = {"Authorization": "Bearer PRIVATE"}
+            results.append(item)
+        rendered = subject.summary({"status": "failure", "candidate_sha": HEAD, "results": results})
+        self.assertIn("Dependency eligibility: failure", rendered)
+        self.assertIn("registry HTTP status 503", rendered)
+        self.assertIn("manifest acquisition failed", rendered)
+        self.assertIn("Details unavailable; inspect the trusted eligibility receipt", rendered)
+        for private in (
+            "PRIVATE",
+            "registry.invalid",
+            "TimeoutError",
+            "::error::",
+            "Authorization",
+        ):
+            self.assertNotIn(private, rendered)
+
+    def test_wait_summary_handles_multiple_outcomes_without_reclassification(self) -> None:
+        results = []
+        for name, status, reason in (
+            ("first", "waiting", "72-hour publication or artifact observation hold"),
+            ("second", "failure", "registry manifest HTTP status 404"),
+            ("third", "pass", "PRIVATE success payload"),
+        ):
+            item = self.wait_summary_result()
+            item.update(name=name, status=status, reason=reason)
+            results.append(item)
+        receipt = {"status": "failure", "candidate_sha": HEAD, "results": results}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        for name, status in (("first", "waiting"), ("second", "failure")):
+            self.assertIn(f"`{name}` version `1.1.0`: {status}", rendered)
+        self.assertNotIn("`third`", rendered)
+        self.assertNotIn("PRIVATE", rendered)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_distinguishes_a_timeout_from_a_returned_empty_receipt(self) -> None:
+        with patch.object(subject, "candidate_receipt", return_value=None):
+            missing = subject.wait_for_candidate(
+                self.api, HEAD, IMPLEMENTATION, timeout=0, expected_base_sha=BASE
+            )
+        rendered = subject.summary(missing)
+        self.assertEqual(missing["status"], "waiting")
+        self.assertTrue(missing["retry_eligible"])
+        self.assertIn(
+            "No trusted exact-candidate receipt was returned before the wait timed out", rendered
+        )
+        self.assertIn("scheduled rechecks retry automatically", rendered)
+        returned = subject.summary({"status": "waiting", "candidate_sha": HEAD, "results": []})
+        self.assertIn("Eligibility receipt returned.", returned)
+        self.assertIn("No dependency result details were returned", returned)
+        self.assertNotIn("wait timed out", returned)
+
+    def test_wait_summary_ignores_malformed_types_without_stringifying_objects(self) -> None:
+        class PrivateValue:
+            def __str__(self) -> str:
+                raise AssertionError("must not stringify private data")
+
+            def __repr__(self) -> str:
+                raise AssertionError("must not represent private data")
+
+        private = PrivateValue()
+        for results in (
+            None,
+            17,
+            {"PRIVATE": private},
+            "PRIVATE",
+            [None, 17, [private]],
+            [{"status": [private], "name": private}],
+        ):
+            rendered = subject.summary(
+                {"status": [private], "candidate_sha": private, "results": results}
+            )
+            self.assertIn("unavailable", rendered)
+            self.assertNotIn("PRIVATE", rendered)
+            self.assertLessEqual(len(rendered.encode()), 4096)
+        result = self.wait_summary_result()
+        for field in ("name", "version", "path", "retry_at", "reason"):
+            result[field] = private
+        rendered = subject.summary(
+            {"status": "waiting", "candidate_sha": HEAD, "results": [result]}
+        )
+        self.assertIn("Details unavailable", rendered)
+
+    def test_wait_summary_omits_controls_markdown_commands_and_credentials(self) -> None:
+        for field in ("name", "version", "path", "retry_at", "reason"):
+            for hostile in (
+                "value\n::error::PRIVATE",
+                "`[PRIVATE](https://registry.invalid)",
+                "\x1b[31mPRIVATE",
+                "\u202ePRIVATE",
+                "https://user:PRIVATE@registry.invalid/?token=PRIVATE",
+                "github_pat_PRIVATE",
+            ):
+                with self.subTest(field=field, hostile=hostile):
+                    result = self.wait_summary_result()
+                    result[field] = hostile
+                    rendered = subject.summary(
+                        {"status": "waiting", "candidate_sha": HEAD, "results": [result]}
+                    )
+                    for forbidden in ("PRIVATE", "::", "https://", "\x1b", "\u202e", "[PRIVATE]"):
+                        self.assertNotIn(forbidden, rendered)
+        for path in (
+            "../private/Cargo.lock",
+            "/home/private/Cargo.lock",
+            "a//Cargo.lock",
+            "a/./Cargo.lock",
+            "a\\Cargo.lock",
+        ):
+            result = self.wait_summary_result()
+            result["path"] = path
+            self.assertNotIn(
+                "file `",
+                subject.summary({"status": "waiting", "candidate_sha": HEAD, "results": [result]}),
+            )
+        for retry in ("2026-02-30T12:00:00Z", "2026-11-10T12:00:00+01:00", "2026-11-10"):
+            result = self.wait_summary_result()
+            result["retry_at"] = retry
+            self.assertNotIn(
+                "recheck after",
+                subject.summary({"status": "waiting", "candidate_sha": HEAD, "results": [result]}),
+            )
+
+    def test_wait_summary_shows_a_sixth_hold_after_five_passing_results(self) -> None:
+        passed = []
+        for index in range(5):
+            result = self.wait_summary_result()
+            result.update(status="pass", name=f"completed-{index}")
+            passed.append(result)
+        held = self.wait_summary_result()
+        receipt = {"status": "waiting", "candidate_sha": HEAD, "results": [*passed, held]}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        self.assertIn("ghcr.io/devcontainers/features/github-cli", rendered)
+        self.assertIn("72-hour operational observation hold", rendered)
+        self.assertIn("2026-11-10T06:42:58.255024Z", rendered)
+        self.assertNotIn("completed-", rendered)
+        self.assertNotIn("results omitted", rendered)
+        self.assertEqual(rendered.count("\n- `"), 1)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_shows_a_later_failure_among_passing_results(self) -> None:
+        results = []
+        for index in range(8):
+            result = self.wait_summary_result()
+            result.update(status="pass", name=f"completed-{index}")
+            results.append(result)
+        held = self.wait_summary_result()
+        held["name"] = "held-dependency"
+        failed = self.wait_summary_result()
+        failed.update(status="failure", name="failed-dependency", reason="registry HTTP status 503")
+        results.insert(5, held)
+        results.append(failed)
+        receipt = {"status": "failure", "candidate_sha": HEAD, "results": results}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        self.assertIn("`held-dependency` version `1.1.0`: waiting", rendered)
+        self.assertIn("`failed-dependency` version `1.1.0`: failure", rendered)
+        self.assertIn("registry HTTP status 503", rendered)
+        self.assertIn("2026-11-10T06:42:58.255024Z", rendered)
+        self.assertNotIn("completed-", rendered)
+        self.assertNotIn("results omitted", rendered)
+        self.assertEqual(rendered.count("\n- `"), 2)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_prioritizes_a_failure_after_five_waiting_results(self) -> None:
+        results = []
+        for index in range(5):
+            held = self.wait_summary_result()
+            held["name"] = f"held-{index}"
+            results.append(held)
+        failed = self.wait_summary_result()
+        failed.update(status="failure", name="blocking-failure", reason="registry HTTP status 503")
+        results.append(failed)
+        receipt = {"status": "failure", "candidate_sha": HEAD, "results": results}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        self.assertIn("`blocking-failure` version `1.1.0`: failure", rendered)
+        self.assertIn("registry HTTP status 503", rendered)
+        positions = [rendered.index("`blocking-failure`")]
+        for index in range(4):
+            self.assertIn(f"`held-{index}`", rendered)
+            positions.append(rendered.index(f"`held-{index}`"))
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("`held-4`", rendered)
+        self.assertIn("1 additional waiting or failed dependency results omitted", rendered)
+        self.assertEqual(rendered.count("\n- `"), 5)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_row_budget_and_omission_count_ignore_passing_results(self) -> None:
+        results = []
+        for index in range(8):
+            passed = self.wait_summary_result()
+            passed.update(status="pass", name=f"completed-{index}")
+            actionable = self.wait_summary_result()
+            actionable["name"] = f"actionable-{index}"
+            if index % 2:
+                actionable.update(status="failure", reason="registry HTTP status 503")
+            results.extend([passed, actionable])
+        extra_pass = self.wait_summary_result()
+        extra_pass.update(status="pass", name="completed-extra")
+        results.extend([extra_pass] * 5)
+        # Malformed records are bounded notices, never blockers ahead of valid outcomes.
+        results.insert(0, {"status": "PRIVATE", "name": "PRIVATE"})
+        receipt = {"status": "failure", "candidate_sha": HEAD, "results": results}
+        original = deepcopy(receipt)
+        rendered = subject.summary(receipt)
+        self.assertEqual(rendered.count("\n- `actionable-"), 5)
+        selected = (1, 3, 5, 7, 0)
+        positions = []
+        for index in selected:
+            self.assertIn(f"`actionable-{index}`", rendered)
+            positions.append(rendered.index(f"`actionable-{index}`"))
+        self.assertEqual(positions, sorted(positions))
+        for index in (2, 4, 6):
+            self.assertNotIn(f"`actionable-{index}`", rendered)
+        self.assertIn("3 additional waiting or failed dependency results omitted", rendered)
+        self.assertNotIn("completed-", rendered)
+        self.assertNotIn("PRIVATE", rendered)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        self.assertEqual(receipt, original)
+
+    def test_wait_summary_bounds_rows_fields_and_reports_the_omitted_count(self) -> None:
+        results = []
+        for index in range(12):
+            result = self.wait_summary_result()
+            result["name"] = f"dep-{index}"
+            results.append(result)
+        rendered = subject.summary({"status": "waiting", "candidate_sha": HEAD, "results": results})
+        self.assertEqual(rendered.count("\n- `dep-"), 5)
+        self.assertIn("7 additional waiting or failed dependency results omitted", rendered)
+        for index in range(5, 12):
+            self.assertNotIn(f"`dep-{index}`", rendered)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        maximum = self.wait_summary_result()
+        maximum.update(name="n" * 96, version="1" + "a" * 63, path="p" * 85 + "/Cargo.lock")
+        rendered = subject.summary(
+            {"status": "waiting", "candidate_sha": HEAD, "results": [maximum] * 5}
+        )
+        self.assertEqual(rendered.count("72-hour operational observation hold"), 5)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+        huge = self.wait_summary_result()
+        for field in ("name", "version", "path", "retry_at", "reason"):
+            huge[field] = "PRIVATE" * 1000
+        rendered = subject.summary(
+            {"status": "waiting", "candidate_sha": "PRIVATE" * 1000, "results": [huge] * 12}
+        )
+        self.assertNotIn("PRIVATE", rendered)
+        self.assertLessEqual(len(rendered.encode()), 4096)
+
+    def test_wait_summary_keeps_wait_exit_codes_and_receipts_unchanged(self) -> None:
+        for status, expected in (("waiting", 1), ("failure", 1), ("pass", 0)):
+            result = self.wait_summary_result()
+            result["status"] = status
+            receipt = {"status": status, "candidate_sha": HEAD, "results": [result]}
+            original = deepcopy(receipt)
+            with (
+                patch.dict("os.environ", {"GH_TOKEN": "test-token"}),
+                patch.object(subject, "GitHub", return_value=self.api),
+                patch.object(subject, "wait_for_candidate", return_value=receipt),
+                patch("builtins.print") as printed,
+            ):
+                code = subject.main(
+                    [
+                        "wait",
+                        "--repository",
+                        REPOSITORY,
+                        "--implementation-revision",
+                        IMPLEMENTATION,
+                        "--candidate-sha",
+                        HEAD,
+                        "--expected-base-sha",
+                        BASE,
+                        "--timeout",
+                        "0",
+                    ]
+                )
+            self.assertEqual(code, expected)
+            self.assertIn(f"Dependency eligibility: {status}", printed.call_args.args[0])
+            self.assertEqual(receipt, original)
+
+    def test_wait_renderer_leaves_aggregate_recovery_and_callback_prose_unchanged(self) -> None:
+        retry = "2026-11-10T06:42:58Z"
+        payload = {
+            "state_source": "trusted-run",
+            "reports": {HEAD: {"pull_request": 7, "status": "waiting", "retry_at": retry}},
+            "recoveries": {
+                "recovery": {
+                    "kind": "pin",
+                    "original_run_id": 17,
+                    "phase": "reserved",
+                    "reason": "verified authority.",
+                }
+            },
+            "deferred_candidates": [
+                {
+                    "pull_request": 8,
+                    "source_head_sha": SOURCE,
+                    "reason": "computing",
+                    "next_action": "hourly schedule.",
+                }
+            ],
+            "no_action_candidates": [
+                {
+                    "pull_request": 9,
+                    "source_head_sha": SOURCE,
+                    "reason": "closed",
+                    "next_action": "retained evidence.",
+                }
+            ],
+            "infrastructure_errors": ["recorded"],
+        }
+        self.assertEqual(
+            subject.summary(payload),
+            (
+                "Dependency eligibility (metadata only)\n\n"
+                "First-seen evidence: trusted-run.\n\n"
+                f"- PR #7, `{HEAD}`: waiting; next automatic recheck after {retry}.\n"
+                "- Older-base pin for CI run 17: reserved. verified authority.\n"
+                f"- Deferred PR #8, source `{SOURCE}`: computing. hourly schedule.\n"
+                f"- No action for PR #9, source `{SOURCE}`: closed. retained evidence.\n"
+                "- Infrastructure: recorded.\n"
+            ),
+        )
+
     def test_waiting_and_policy_failure_are_distinct_from_pass_and_required_ci(self) -> None:
         for result, expected in (
             ("waiting", "pending"),

@@ -362,7 +362,10 @@ fn is_reviewed_shared_bootstrap(reference: &str) -> bool {
     let Some((identity, comment)) = reference.split_once('#') else {
         return false;
     };
-    if comment.trim() != "reviewed bootstrap; no automation release tag exists (ADR 0092)" {
+    if !matches!(
+        comment.trim(),
+        "reviewed bootstrap; no automation release tag exists (ADR 0092)" | "automation-v1 interface v1"
+    ) {
         return false;
     }
     let Some((path, revision)) = identity.trim().rsplit_once('@') else {
@@ -458,6 +461,31 @@ mod tests {
             canonical.replace("no automation release tag exists", "released"),
         ] {
             assert!(!is_reviewed_shared_bootstrap(&changed), "accepted {changed}");
+        }
+    }
+    #[test]
+    fn shared_adoption_bootstrap_keeps_exact_origin_workflow_revision_and_provenance() {
+        let sha = "a".repeat(40);
+        for workflow in ["shared-rust-ci.yml", "shared-release-prepare.yml"] {
+            for comment in [
+                "reviewed bootstrap; no automation release tag exists (ADR 0092)",
+                "automation-v1 interface v1",
+            ] {
+                let canonical = format!("Strukturpiloten/boxferry/.github/workflows/{workflow}@{sha} # {comment}");
+                assert!(is_reviewed_shared_bootstrap(&canonical));
+                for invalid in [
+                    canonical.replace("Strukturpiloten/boxferry", "outside/boxferry"),
+                    canonical.replace(workflow, "unreviewed.yml"),
+                    canonical.replace(&sha, "main"),
+                    canonical.replace(&sha, "v1.0.0"),
+                    canonical.replace(&sha, &"a".repeat(39)),
+                    canonical.replace(&sha, &"A".repeat(40)),
+                    canonical.replace(comment, "arbitrary provenance"),
+                    canonical.replace(&format!(" # {comment}"), ""),
+                ] {
+                    assert!(!is_reviewed_shared_bootstrap(&invalid), "accepted {invalid}");
+                }
+            }
         }
     }
 }

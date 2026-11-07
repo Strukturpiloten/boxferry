@@ -9,6 +9,9 @@ on:
         type: string
         default: published
     outputs:
+      candidate_sha:
+        description: Exact candidate whose complete selected validation succeeded.
+        value: ${{ jobs.pr-gate.outputs.candidate_sha }}
       published_api_candidate_sha:
         description: Exact candidate with published API success across the complete SemVer matrix.
         value: ${{ jobs.semver.outputs.published_api_candidate_sha }}
@@ -36,10 +39,14 @@ env:
 jobs:
   release-binaries:
     name: Build and verify release binaries
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_release_binaries == 'true'
     uses: ./.github/workflows/release-binaries.yml
 
   automation:
     name: Shared automation package
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_automation == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -51,8 +58,7 @@ jobs:
           persist-credentials: false
       - name: Install the canonical locked Python toolchain
         uses: ./_automation/.github/actions/shared-python
-      - &node_toolchain
-        name: Install pinned Node.js toolchain
+      - name: Install pinned Node.js toolchain
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
@@ -68,6 +74,12 @@ jobs:
         run: uv run --locked --project _automation/automation ruff format --check _automation/automation
       - name: Lint Python
         run: uv run --locked --project _automation/automation ruff check _automation/automation
+      - name: Check consumer Python formatting
+        run: uv run --locked --project _automation/automation ruff format --check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py
+      - name: Lint consumer Python
+        run: uv run --locked --project _automation/automation ruff check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py
+      - name: Check consumer Python types
+        run: uv run --locked --project _automation/automation ty check _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py
       - name: Check Python types
         run: uv run --locked --project _automation/automation ty check --project _automation/automation
       - name: Prepare the integrity-pinned native Renovate test runtime
@@ -79,9 +91,24 @@ jobs:
         env:
           BOXFERRY_RENOVATE_PACKAGE: ${{ github.workspace }}/_automation/target/tools/renovate
         run: uv run --locked --project _automation/automation python -m boxferry_ci.test_reporting --repository-root _automation --start-directory _automation/automation/tests
+      - name: Test native shared-reference discovery and atomic updates
+        env:
+          BOXFERRY_RENOVATE_PACKAGE: ${{ github.workspace }}/_automation/target/tools/renovate
+        run: uv run --locked --project _automation/automation python _automation/scripts/test-shared-automation.py NativeRenovateContracts
+
+      - name: Prepare nested dependency-action fixture
+        run: test ! -e dependency-action-fixture && cp -R _automation/automation/tests/fixtures/cargo-deny-action/source dependency-action-fixture
+      - name: Audit nested dependency-action fixture with explicit policy
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: dependency-action-fixture/Cargo.toml
+          command: check
+          arguments: --all-features --config dependency-action-fixture/explicit-policy.toml
 
   canonical-artifact-integrity:
     name: Canonical tool artifact integrity
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_canonical_artifact_integrity == 'true'
     runs-on: ubuntu-24.04
     # The 600-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 15
@@ -103,6 +130,8 @@ jobs:
 
   kubernetes-artifact-integrity:
     name: Kubernetes tool artifact integrity
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_kubernetes_artifact_integrity == 'true'
     runs-on: ubuntu-24.04
     # The 720-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 17
@@ -122,6 +151,8 @@ jobs:
 
   compose-provider-integrity:
     name: Compose provider artifact integrity
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_compose_provider_integrity == 'true'
     runs-on: ubuntu-24.04
     # The 720-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 17
@@ -147,6 +178,11 @@ jobs:
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
+      select_canonical_artifact_integrity: ${{ steps.plan.outputs.select_canonical_artifact_integrity }}
+      select_kubernetes_artifact_integrity: ${{ steps.plan.outputs.select_kubernetes_artifact_integrity }}
+      select_compose_provider_integrity: ${{ steps.plan.outputs.select_compose_provider_integrity }}
+      select_automation: ${{ steps.plan.outputs.select_automation }}
+      select_release_binaries: ${{ steps.plan.outputs.select_release_binaries }}
       select_rust: ${{ steps.plan.outputs.select_rust }}
       select_msrv: ${{ steps.plan.outputs.select_msrv }}
       select_dependencies: ${{ steps.plan.outputs.select_dependencies }}
@@ -161,174 +197,90 @@ jobs:
       - name: Check out exact tested revision and comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out trusted PR base validation policy
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 9eb757145e7e078ba8944df525c9884eec87effc
+          path: _automation
+          persist-credentials: false
+      - name: Check out independently trusted policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           path: .validation-base
           persist-credentials: false
-      - name: Select exact-revision validation plan
+      - name: Install locked shared Python tools
+        uses: ./_automation/.github/actions/shared-python
+      - name: Select validation from trusted policy
         id: plan
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AUTOMATION_SHA: 9eb757145e7e078ba8944df525c9884eec87effc
         run: |
           set -euo pipefail
-          if [[ "${EVENT_NAME}" == 'pull_request' || "${EVENT_NAME}" == 'merge_group' ]]; then
-            if [[ "${EVENT_NAME}" == 'pull_request' && -f .validation-base/scripts/validation-plan.py &&
-                  -f .validation-base/scripts/validation-policy.json ]]; then
-              python3 .validation-base/scripts/validation-plan.py plan \
-                --repository-root "${GITHUB_WORKSPACE}" \
-                --policy-root .validation-base \
-                --event pull_request --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
-                --tested-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
-            else
-              # First rollout: never execute a PR-head classifier without trusted base policy.
-              python3 - <<'PY'
-          import json
-          import os
-          import re
-          import subprocess
-
-          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age".split()
-          base, head, tested = (os.environ[key] for key in ("BASE_SHA", "HEAD_SHA", "GITHUB_SHA"))
-          if any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in (base, head, tested)):
-              raise SystemExit("first-rollout comparison has an invalid SHA")
-          event = os.environ["EVENT_NAME"]
-          if event not in {"pull_request", "merge_group"}:
-              raise SystemExit("unsupported complete-bootstrap event")
-          if event == "merge_group":
-              if head != tested:
-                  raise SystemExit("merge queue head does not match tested candidate")
-              subprocess.run(["git", "merge-base", "--is-ancestor", base, tested], check=True)
-          plan = {"schema": 2, "repository": "Strukturpiloten/boxferry", "event": event,
-                  "base_sha": base, "head_sha": head, "tested_sha": tested, "profile": "full",
-                  "jobs": {job: True for job in jobs}, "reasons": ["conservative complete bootstrap"],
-                  "local_fingerprint": None}
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("plan=" + json.dumps(plan, sort_keys=True, separators=(",", ":")) + "\nprofile=full\n")
-              for job in jobs:
-                  output.write("select_" + job.replace("-", "_") + "=true\n")
-          PY
-            fi
-          else
-            python3 scripts/validation-plan.py plan --event "${EVENT_NAME}" \
-              --tested-sha "${GITHUB_SHA}" --github-output "${GITHUB_OUTPUT}"
-          fi
+          uv run --locked --project _automation/automation python -m boxferry_ci plan \
+              --repository-root "${GITHUB_WORKSPACE}" --config .validation-base/scripts/shared-validation-policy.json \
+              --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+              --tested-sha "${GITHUB_SHA}" --policy-sha "${BASE_SHA}" --automation-sha "${AUTOMATION_SHA}" --github-output "${GITHUB_OUTPUT}"
 
   rust:
     name: Rust quality
     needs: validation-plan
     if: needs.validation-plan.outputs.select_rust == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - &checkout
-        name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install configured Rust toolchain
-        run: rustup show active-toolchain
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check all targets
-        run: cargo ci-check
-      - name: Check facade feature boundaries
-        run: |
-          cargo ci-core
-          cargo ci-compose
-          cargo ci-podman
-          cargo ci-quadlet
-      - name: Check repository policies
-        run: cargo ci-policy
-      - name: Run Clippy
-        run: cargo ci-clippy
-      - name: Run tests
-        run: cargo ci-test
-      - name: Run documentation tests
-        run: cargo ci-doctest
-      - name: Build documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo ci-doc
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/shared-validation-policy.json
+      task: rust-quality
 
   coverage:
     name: Coverage ratchet
     needs: validation-plan
     if: needs.validation-plan.outputs.select_coverage == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - *checkout
-      - name: Install LLVM coverage tools
-        run: rustup component add llvm-tools-preview
-      - name: Install pinned cargo-llvm-cov
-        # renovate: datasource=crate depName=cargo-llvm-cov
-        run: cargo install --locked --version 0.9.0 cargo-llvm-cov
-      - name: Clean coverage artifacts
-        run: cargo llvm-cov clean --locked
-      - name: Measure and enforce coarse coverage ratchet
-        run: >-
-          cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only
-          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/shared-validation-policy.json
+      task: coverage
 
   msrv:
     name: MSRV
     needs: validation-plan
     if: needs.validation-plan.outputs.select_msrv == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - *checkout
-      - name: Read the workspace MSRV
-        id: metadata
-        shell: bash
-        run: |
-          msrv="$(
-            cargo metadata --locked --no-deps --format-version 1 |
-              jq -er '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("workspace packages must declare one common rust-version") end'
-          )"
-          printf 'msrv=%s\n' "$msrv" >> "$GITHUB_OUTPUT"
-      - name: Install minimum supported Rust
-        env:
-          RUST_MSRV: ${{ steps.metadata.outputs.msrv }}
-        run: rustup toolchain install "${RUST_MSRV}" --profile minimal --no-self-update
-      - name: Check all targets with the MSRV
-        env:
-          RUST_MSRV: ${{ steps.metadata.outputs.msrv }}
-        run: cargo "+${RUST_MSRV}" ci-check
-      - name: Check repository policies with the MSRV
-        env:
-          RUST_MSRV: ${{ steps.metadata.outputs.msrv }}
-        run: cargo "+${RUST_MSRV}" ci-policy
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/shared-validation-policy.json
+      task: msrv
 
   dependencies:
     name: Dependency and license policy
     needs: validation-plan
     if: needs.validation-plan.outputs.select_dependencies == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - *checkout
-      - name: Audit dependencies, licenses, bans, and sources
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          arguments: --all-features
-      - name: Prepare nested dependency-action fixture
-        run: cp -R automation/tests/fixtures/cargo-deny-action/source source
-      - name: Audit nested dependency-action fixture with explicit policy
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          manifest-path: source/Cargo.toml
-          command: check
-          arguments: --all-features --config source/explicit-policy.toml
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-dependencies.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/shared-validation-policy.json
 
   documentation:
     name: Repository files and documentation
@@ -337,8 +289,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - *checkout
-      - *node_toolchain
+      - &checkout
+        name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out immutable shared documentation tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 9eb757145e7e078ba8944df525c9884eec87effc
+          path: _automation
+          persist-credentials: false
+      - name: Install selected locked shared Python tools
+        uses: ./_automation/.github/actions/shared-python
+      - name: Install selected canonical shared Node toolchain
+        uses: ./_automation/.github/actions/shared-node
+        with:
+          automation-sha: 9eb757145e7e078ba8944df525c9884eec87effc
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install locked Node file-quality tools
         run: |
           npm ci --ignore-scripts
@@ -350,14 +321,16 @@ jobs:
         run: bash scripts/check-files.sh --check
       - name: Test validation-plan regressions
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
+      - name: Test shared automation adoption
+        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-shared-automation.py --structural
       - name: Test release binary archive contracts
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-release-binaries.py
       - name: Test release emulator extraction
         run: bash scripts/test-release-emulator.sh
       - name: Test application probe contracts
-        run: bash scripts/test-application-probes.sh
+        run: uv run --locked --project automation bash scripts/test-application-probes.sh
       - name: Test executable documentation without duplicating the full Rust suite
-        if: fromJSON(needs.validation-plan.outputs.plan).profile == 'executable-docs'
+        if: contains(fromJSON(needs.validation-plan.outputs.plan).profiles, 'executable-docs')
         run: cargo test --locked --package boxferry --all-features --test documentation_examples
       - name: Check local documentation links without network access
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
@@ -389,38 +362,49 @@ jobs:
 
   semver-release-type:
     name: SemVer release type
+    permissions:
+      contents: read
+      pull-requests: read
     needs: validation-plan
     if: needs.validation-plan.outputs.select_semver_release_type == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       release_type: ${{ steps.classify.outputs.release_type }}
     steps:
       - *checkout
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 9eb757145e7e078ba8944df525c9884eec87effc
+          path: _automation
+          persist-credentials: false
+      - name: Install locked shared Python tools
+        uses: ./_automation/.github/actions/shared-python
       - name: Classify an intentional public break
         id: classify
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           SEMVER_CHANGE_SUBJECT: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ github.token }}
           QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          GH_TOKEN: ${{ github.token }}
+          AUTOMATION_SHA: 9eb757145e7e078ba8944df525c9884eec87effc
         run: |
           set -euo pipefail
 
           case "${EVENT_NAME}" in
             pull_request) subject="${SEMVER_CHANGE_SUBJECT}" ;;
-            push | workflow_dispatch) subject="$(git log -1 --format=%s)" ;;
             merge_group)
-              PYTHONPATH=automation/src python3 -m boxferry_ci.release classify-queue \
-                --repository-root . --candidate-sha "${GITHUB_SHA}" --automation-sha "${GITHUB_SHA}" \
+              uv run --locked --project _automation/automation python -m boxferry_ci.release classify-queue \
+                --repository-root . --candidate-sha "${GITHUB_SHA}" --automation-sha "${AUTOMATION_SHA}" \
                 --queue-base-sha "${QUEUE_BASE_SHA}" --default-branch "${DEFAULT_BRANCH}"
               exit 0
               ;;
+            push | workflow_dispatch) subject="$(git log -1 --format=%s)" ;;
             *)
               printf 'Unsupported CI event for SemVer classification: %s\n' "${EVENT_NAME}" >&2
               exit 1
@@ -439,8 +423,6 @@ jobs:
     name: SemVer (${{ matrix.package }})
     needs: [validation-plan, semver-release-type]
     if: needs.validation-plan.outputs.select_semver == 'true'
-    permissions:
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -451,12 +433,13 @@ jobs:
           - boxferry-podman
           - boxferry-quadlet
           - boxferry
-    uses: ./.github/workflows/shared-rust-semver.yml
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
     with:
       candidate_sha: ${{ github.sha }}
-      automation_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
       policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-      config_path: scripts/validation-policy.json
+      config_path: scripts/shared-validation-policy.json
       package: ${{ matrix.package }}
       api_purpose: ${{ inputs.api_purpose || 'development' }}
       release_type: ${{ inputs.api_purpose != 'published' && needs.semver-release-type.outputs.release_type || '' }}
@@ -502,59 +485,31 @@ jobs:
           retention-days: 7
 
   lockfile-release-age:
-    name: Lockfile release age
+    name: Dependency eligibility
     needs: validation-plan
     if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Preserve the aggregate result outside pull requests
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        run: echo 'Lockfile release-age comparisons run for PR and merge queue candidates.'
-      - name: Check out the exact pull-request candidate and base history
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-          persist-credentials: false
-      - name: Check out the shared lockfile policy
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Strukturpiloten/.github
-          # renovate: datasource=github-digest depName=Strukturpiloten/.github currentValue=main
-          ref: e362e4564f8e3c1d9d113242e3bf34011f2d7cd7
-          path: .github/strukturpiloten-shared
-          persist-credentials: false
-      - name: Reject newly introduced dependencies younger than three days
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-        run: |
-          set -euo pipefail
-          for revision in "${BASE_SHA}" "${HEAD_SHA}"; do
-            [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
-          done
-          if [[ "${GITHUB_EVENT_NAME}" == merge_group ]]; then
-            test "${HEAD_SHA}" = "${GITHUB_SHA}"
-            git merge-base --is-ancestor "${BASE_SHA}" "${HEAD_SHA}"
-          fi
-          python3 .github/strukturpiloten-shared/scripts/lockfile_release_age.py \
-            --repository-root "${GITHUB_WORKSPACE}" \
-            --base "${BASE_SHA}" --head "${HEAD_SHA}" --minimum-age-hours 72
+    permissions:
+      contents: read
+      actions: read
+      statuses: read
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+
   pr-gate:
     name: Required CI
     if: always()
     needs:
       [
-        release-binaries,
-        automation,
+        validation-plan,
         canonical-artifact-integrity,
         kubernetes-artifact-integrity,
         compose-provider-integrity,
-        validation-plan,
+        automation,
+        release-binaries,
         rust,
         msrv,
         dependencies,
@@ -567,87 +522,57 @@ jobs:
         lockfile-release-age,
       ]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_sha: ${{ steps.result.outputs.candidate_sha }}
     steps:
-      - name: Check out candidate aggregate verifier
+      - name: Check out exact tested revision and comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Check out trusted PR base aggregate verifier
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+      - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 9eb757145e7e078ba8944df525c9884eec87effc
+          path: _automation
+          persist-credentials: false
+      - name: Check out independently trusted policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           path: .validation-base
           persist-credentials: false
+      - name: Install locked shared Python tools
+        uses: ./_automation/.github/actions/shared-python
       - name: Require every selected job to succeed and every skip to be planned
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AUTOMATION_SHA: 9eb757145e7e078ba8944df525c9884eec87effc
           PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          NEEDS_JSON=$(python3 - <<'BINARY_NEEDS_PY'
-          import json
-          import os
-          def unique_object(pairs):
-              result = {}
-              for key, value in pairs:
-                  if key in result:
-                      raise ValueError("duplicate needs key")
-                  result[key] = value
-              return result
-          needs = json.loads(os.environ["NEEDS_JSON"], object_pairs_hook=unique_object)
-          if not isinstance(needs, dict):
-              raise SystemExit("needs must be an object")
-          for required in ("release-binaries", "automation", "canonical-artifact-integrity", "kubernetes-artifact-integrity", "compose-provider-integrity"):
-              prerequisite = needs.get(required)
-              if not isinstance(prerequisite, dict) or prerequisite.get("result") != "success":
-                  raise SystemExit(f"{required} must succeed")
-              del needs[required]
-          print(json.dumps(needs, separators=(",", ":")))
-          BINARY_NEEDS_PY
-          )
-          export NEEDS_JSON
-          if [[ "${EVENT_NAME}" == 'merge_group' || ( "${EVENT_NAME}" == 'pull_request' &&
-                ( ! -f .validation-base/scripts/validation-plan.py ||
-                  ! -f .validation-base/scripts/validation-policy.json ) ) ]]; then
-            # Bootstrap has no trusted verifier. Require the literal complete plan and all jobs.
-            python3 - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
-          import json
-          import os
-
-          jobs = "rust msrv dependencies documentation release-metadata semver-release-type semver coverage migration-readiness lockfile-release-age".split()
-          plan = json.loads(os.environ["PLAN_JSON"])
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          if (set(plan) != {"schema", "repository", "event", "base_sha", "head_sha", "tested_sha",
-                            "profile", "jobs", "reasons", "local_fingerprint"}
-                  or plan["schema"] != 2 or plan["repository"] != "Strukturpiloten/boxferry"
-                  or plan["event"] != os.environ["EVENT_NAME"] or plan["profile"] != "full"
-                  or plan["base_sha"] != os.environ["BASE_SHA"]
-                  or plan["head_sha"] != os.environ["HEAD_SHA"]
-            or (plan["event"] == "merge_group" and plan["head_sha"] != plan["tested_sha"])
-                  or plan["tested_sha"] != os.environ["GITHUB_SHA"]
-                  or plan["jobs"] != {job: True for job in jobs}
-                  or set(needs) != {"validation-plan", *jobs}):
-              raise SystemExit("first-rollout complete validation contract is missing or inconsistent")
-          for job in ("validation-plan", *jobs):
-              if needs[job].get("result") != "success":
-                  raise SystemExit(f"first-rollout required job {job} did not succeed")
-          print("First-rollout complete validation: every required job succeeded")
-          PY
-          else
-            verifier=scripts/validation-plan.py
-            policy_root=.
-            if [[ "${EVENT_NAME}" == 'pull_request' ]]; then
-              verifier=.validation-base/scripts/validation-plan.py
-              policy_root=.validation-base
-            fi
-            python3 "${verifier}" gate --policy-root "${policy_root}" \
+          uv run --locked --project _automation/automation python -m boxferry_ci gate \
+              --repository-root "${GITHUB_WORKSPACE}" --config .validation-base/scripts/shared-validation-policy.json \
               --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
-              --tested-sha "${GITHUB_SHA}" \
-              --plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON}" |
-              tee -a "${GITHUB_STEP_SUMMARY}"
+              --tested-sha "${GITHUB_SHA}" --policy-sha "${BASE_SHA}" --automation-sha "${AUTOMATION_SHA}" --plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON}"
+      - name: Bind successful candidate
+        id: result
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          API_PURPOSE: ${{ inputs.api_purpose || 'development' }}
+          PUBLISHED_API_CANDIDATE: ${{ needs.semver.outputs.published_api_candidate_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${API_PURPOSE}" == published && "${PUBLISHED_API_CANDIDATE}" != "${CANDIDATE_SHA}" ]]; then
+            echo 'Release requires exact-candidate published API evidence; development success is insufficient.' >&2
+            exit 1
           fi
+          printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"

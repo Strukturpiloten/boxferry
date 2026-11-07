@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -383,10 +384,19 @@ class CargoTools(unittest.TestCase):
             .split("  semver:\n", 1)[1]
             .split("  migration-readiness:", 1)[0]
         )
-        self.assertIn("uses: ./.github/workflows/shared-rust-semver.yml", ci)
+        manifest = json.loads((root / ".github/automation.json").read_text())
+        self.assertEqual(manifest["repository"], "Strukturpiloten/boxferry")
+        self.assertRegex(manifest["revision"], r"^[a-f0-9]{40}$")
+        self.assertIn(
+            "uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@"
+            + manifest["revision"],
+            ci,
+        )
+        self.assertNotIn("uses: ./.github/workflows/shared-rust-semver.yml", ci)
         for token in (
             "candidate_sha: ${{ github.sha }}",
-            "automation_sha: ${{ github.sha }}",
+            f"automation_sha: {manifest['revision']}",
+            "config_path: scripts/shared-validation-policy.json",
             "policy_sha: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha || github.sha }}",
             "api_purpose: ${{ inputs.api_purpose || 'development' }}",

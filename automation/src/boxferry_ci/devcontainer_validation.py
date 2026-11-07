@@ -1206,6 +1206,7 @@ def validate_binding(candidate: str, policy: str, event: str, payload: Mapping[s
 def _verify_origin(root: Path, repository: str, commands: Commands) -> None:
     origin = commands.git(root, "remote", "get-url", "origin").strip()
     if origin not in {
+        f"https://github.com/Strukturpiloten/{repository}",
         f"https://github.com/Strukturpiloten/{repository}.git",
         f"git@github.com:Strukturpiloten/{repository}.git",
     }:

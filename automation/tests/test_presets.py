@@ -2656,7 +2656,7 @@ validationWiring: (() => {
 
     @staticmethod
     def _shared_route_command(command: str) -> str:
-        mode = "plan" if command == "plan" else "gate --devcontainer-validation"
+        mode = "plan" if command == "plan" else "gate"
         suffix = (
             '--github-output "${GITHUB_OUTPUT}"'
             if command == "plan"
@@ -2752,6 +2752,7 @@ validationWiring: (() => {
             self.assertTrue(call["run"].startswith("set -euo pipefail\n"))
             normalized = " ".join(call["run"].replace("\\\n", " ").split())
             self.assertEqual(normalized, " ".join(self._shared_route_command(command).split()))
+            self.assertNotIn("--devcontainer-validation", normalized)
             if command == "plan":
                 self.assertEqual(call["id"], "plan")
             else:
@@ -2988,8 +2989,8 @@ validationWiring: (() => {
         check(controlled, local, discovered)
         selection_evidence = self._trusted_shared_selection_cases()
         selection_evidence["supported_routes"] = [
-            "current unconditional legacy",
-            "exact trusted shared schema-3",
+            "current adopted trusted shared schema-3",
+            "authored exact trusted shared schema-3",
         ]
         for mutation in (
             "missing dependency",
@@ -3001,6 +3002,7 @@ validationWiring: (() => {
             "wrong policy argument",
             "wrong policy identity",
             "wrong plan binding",
+            "inactive image gate",
             "wrong candidate package",
             "plan step condition",
             "plan step continue-on-error",
@@ -3044,7 +3046,11 @@ validationWiring: (() => {
                     job["steps"][0]["with"]["ref"] = "main"
                 else:
                     call = job["steps"][-1]
-                    if mutation == "wrong plan binding":
+                    if mutation == "inactive image gate":
+                        call["run"] = call["run"].replace(
+                            "boxferry_ci gate ", "boxferry_ci gate --devcontainer-validation "
+                        )
+                    elif mutation == "wrong plan binding":
                         call["env"]["PLAN_JSON"] = "${{ needs.untrusted.outputs.plan }}"
                     elif mutation == "wrong policy identity":
                         call["run"] = call["run"].replace(
@@ -3081,11 +3087,23 @@ validationWiring: (() => {
                     with self.assertRaises(AssertionError):
                         check(changed, local, discovered)
         changed = copy.deepcopy(wiring)
-        for step in changed["required"]["steps"]:
-            if "BINARY_NEEDS_PY" in step.get("run", ""):
-                step["run"] = step["run"].replace(
-                    'prerequisite.get("result") != "success"', "False"
-                )
+        if "if" in changed["automation"]:
+            call = next(
+                step
+                for step in changed["required"]["steps"]
+                if "python -m boxferry_ci gate" in step.get("run", "")
+            )
+            self.assertEqual(call["env"]["NEEDS_JSON"], "${{ toJSON(needs) }}")
+            call["env"]["NEEDS_JSON"] = "{}"
+        else:
+            step = next(
+                step
+                for step in changed["required"]["steps"]
+                if "BINARY_NEEDS_PY" in step.get("run", "")
+            )
+            original = step["run"]
+            step["run"] = original.replace('prerequisite.get("result") != "success"', "False")
+            self.assertNotEqual(step["run"], original)
         with self.assertRaises(AssertionError):
             check(changed, local, discovered)
         with self.assertRaises(AssertionError):

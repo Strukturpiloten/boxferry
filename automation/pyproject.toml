@@ -14,7 +14,8 @@ boxferry-ci = "boxferry_ci.__main__:main"
 
 [dependency-groups]
 # The builder is also resolved here so its transitive artifacts have lockfile hashes.
-dev = ["hatchling==1.33.0", "ruff==0.17.3", "ty==0.0.95"]
+# Rust privacy tests enter this project for the Paperless YAML assertions.
+dev = ["hatchling==1.33.0", "PyYAML==6.0.3", "ruff==0.17.3", "ty==0.0.95"]
 
 [tool.uv]
 required-version = "==0.13.6"

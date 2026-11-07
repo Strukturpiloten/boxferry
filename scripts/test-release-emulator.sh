@@ -238,8 +238,9 @@ class RenovateTests(unittest.TestCase):
             self.assertEqual(updated.count(":"+tag+"@sha256:"+"b"*64),1)
         rules=[rule for rule in config["packageRules"] if rule.get("matchPackageNames") == ["docker.io/tonistiigi/binfmt"]]
         self.assertEqual(len(rules),1)
-        self.assertIs(rules[0]["automerge"],False)
-        self.assertIs(rules[0]["dependencyDashboardApproval"],True)
+        self.assertEqual(rules[0]["matchManagers"],["custom.regex"])
+        self.assertEqual(rules[0]["matchDatasources"],["docker"])
+        self.assertEqual(rules[0]["groupName"],"release emulator image")
 
 unittest.main()
 PY

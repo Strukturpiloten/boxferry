@@ -21,31 +21,39 @@
     assert.equal(matches.length, 1, name);
     return matches[0];
   };
-  const productionAction = step(ci.jobs.dependencies, auditName).uses;
+  const productionAction = step(shared.jobs.check, auditName).uses;
   assert.match(productionAction, /^EmbarkStudios\/cargo-deny-action@[a-f0-9]{40}$/);
 
   function validate(candidateShared, candidateCi) {
-    const job = candidateCi.jobs.dependencies;
+    const job = candidateCi.jobs.automation;
     assert.equal(job.needs, "validation-plan");
-    assert.equal(job.if, "needs.validation-plan.outputs.select_dependencies == 'true'");
-    assert.equal(job["timeout-minutes"], 15);
+    assert.equal(job.if, "needs.validation-plan.outputs.select_automation == 'true'");
+    assert.equal(job["timeout-minutes"], 10);
+    const checkout = step(job, "Check out the exact shared package candidate");
+    assert.equal(checkout.with.ref, "${{ github.sha }}");
+    assert.equal(checkout.with.path, "_automation");
+    assert.equal(checkout.with["persist-credentials"], false);
     const preparation = step(job, prepareName);
     assert.equal(
       preparation.run,
-      "cp -R automation/tests/fixtures/cargo-deny-action/source source",
+      "test ! -e dependency-action-fixture && cp -R _automation/automation/tests/fixtures/cargo-deny-action/source dependency-action-fixture",
     );
     assert.equal(preparation.if, undefined);
     assert.equal(preparation["continue-on-error"], undefined);
     assert.ok(job.steps.indexOf(preparation) < job.steps.indexOf(step(job, fixtureName)));
-    for (const [audit, config] of [
-      [step(candidateShared.jobs.check, auditName), "source/deny.toml"],
-      [step(job, fixtureName), "source/explicit-policy.toml"],
+    for (const [audit, manifest, config] of [
+      [step(candidateShared.jobs.check, auditName), "source/Cargo.toml", "source/deny.toml"],
+      [
+        step(job, fixtureName),
+        "dependency-action-fixture/Cargo.toml",
+        "dependency-action-fixture/explicit-policy.toml",
+      ],
     ]) {
       assert.equal(audit.uses, productionAction);
       assert.equal(audit.if, undefined);
       assert.equal(audit["continue-on-error"], undefined);
       assert.deepEqual(audit.with, {
-        "manifest-path": "source/Cargo.toml",
+        "manifest-path": manifest,
         command: "check",
         arguments: `--all-features --config ${config}`,
       });
@@ -71,22 +79,35 @@
       audit.with["command-arguments"] = "--config source/deny.toml";
     },
     (_, c) => {
-      step(c.jobs.dependencies, fixtureName).with.arguments = "--all-features";
+      step(c.jobs.automation, fixtureName).with.arguments = "--all-features";
     },
     (_, c) => {
-      step(c.jobs.dependencies, fixtureName).with["manifest-path"] = "Cargo.toml";
+      step(c.jobs.automation, fixtureName).with["manifest-path"] = "Cargo.toml";
     },
     (_, c) => {
-      step(c.jobs.dependencies, fixtureName).with["command-arguments"] = "licenses";
+      step(c.jobs.automation, fixtureName).with["command-arguments"] = "licenses";
     },
     (_, c) => {
-      step(c.jobs.dependencies, fixtureName).uses = actionName + "@" + "a".repeat(40);
+      step(c.jobs.automation, fixtureName).uses = actionName + "@" + "a".repeat(40);
     },
     (_, c) => {
-      step(c.jobs.dependencies, fixtureName).if = "false";
+      step(c.jobs.automation, fixtureName).if = "false";
     },
     (_, c) => {
-      step(c.jobs.dependencies, prepareName)["continue-on-error"] = true;
+      step(c.jobs.automation, prepareName)["continue-on-error"] = true;
+    },
+    (_, c) => {
+      c.jobs.automation.if = "false";
+    },
+    (_, c) => {
+      step(c.jobs.automation, prepareName).run =
+        "cp -R _automation/automation/tests/fixtures/cargo-deny-action/source _automation";
+    },
+    (_, c) => {
+      step(c.jobs.automation, "Check out the exact shared package candidate").with.ref = "main";
+    },
+    (_, c) => {
+      step(c.jobs.automation, fixtureName).with.command = "check licenses";
     },
   ]) {
     const proposedShared = structuredClone(shared),
@@ -102,7 +123,7 @@
   for (const [index, file] of paths.entries()) {
     const extracted = await extractPackageFile(contents[index], file, {});
     const pins = extracted.deps.filter((dep) => dep.depName === actionName);
-    assert.equal(pins.length, index === 0 ? 1 : 2, file);
+    assert.equal(pins.length, 1, file);
     for (const pin of pins) {
       assert.equal(pin.currentDigest || pin.currentValue, productionAction.split("@")[1]);
     }
@@ -119,7 +140,7 @@
     }
   }
   console.log(
-    "Nested dependency Action parity, seven failure controls and unique native pin ownership passed.",
+    "Nested dependency Action parity, eleven failure controls and unique native pin ownership passed.",
   );
 })().catch((error) => {
   console.error(error);

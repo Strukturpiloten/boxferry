@@ -4,8 +4,6 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/boxferry,type=bind",
-  "workspaceFolder": "/workspaces/boxferry",
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,
   "features": {
@@ -20,13 +18,7 @@
   },
   "mounts": [
     "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
-    "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
-    "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
-    "source=${localWorkspaceFolder}/../docker-lens,target=/workspaces/boxferry/.boxferry-workspace/docker-lens,type=bind",
-    "source=${localWorkspaceFolder}/../kubernetes-lens,target=/workspaces/boxferry/.boxferry-workspace/kubernetes-lens,type=bind",
-    "source=${localWorkspaceFolder}/../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens,type=bind",
-    "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
-    "source=${localWorkspaceFolder}/../boxferry-website,target=/workspaces/boxferry/.boxferry-workspace/boxferry-website,type=bind"
+    "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume"
   ],
   "postCreateCommand": "bash .devcontainer/verify-tools.sh",
   "waitFor": "postCreateCommand",

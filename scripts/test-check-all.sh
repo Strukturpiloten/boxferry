@@ -106,11 +106,49 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/44\]' "${test_root}/default.output")" == 44 ]]
-grep --fixed-strings --quiet -- '[44/44] Check development API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 44 steps.' ]]
-assert_contains default "bash scripts/test-application-probes.sh"
-assert_contains check "bash scripts/test-application-probes.sh"
+expected_ordinary_sequence=""
+for ((ordinary_step = 1; ordinary_step <= 45; ordinary_step++)); do
+  printf -v ordinary_prefix '[%02d/45]' "${ordinary_step}"
+  expected_ordinary_sequence+="${ordinary_prefix}"$'\n'
+done
+for mode in default fix check; do
+  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/45\]' "${test_root}/${mode}.output")" == 45 ]]
+  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/45\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
+  grep --fixed-strings --quiet -- '[45/45] Check development API compatibility' "${test_root}/${mode}.output"
+  [[ "$(tail -n 1 "${test_root}/${mode}.commands")" == *"python -m boxferry_ci.api_baselines run "* ]]
+  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 45 steps.' ]]
+done
+# Every YAML-dependent application test uses the declared candidate environment.
+for mode in default check; do
+  for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
+    command="uv run --locked --project automation bash scripts/${script}"
+    assert_contains "${mode}" "${command}"
+    [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
+  done
+done
+# Fail the targeted UV invocation after earlier UV steps have succeeded.
+for mode in default check; do
+  for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
+    case "${script}" in
+      test-application-probes.sh) expected_step=18 ;;
+      test-observability-application.sh) expected_step=20 ;;
+      test-supabase-application.sh) expected_step=21 ;;
+    esac
+    label="application-env-${mode}-${expected_step}"
+    command="uv run --locked --project automation bash scripts/${script}"
+    status=0
+    if [[ "${mode}" == default ]]; then
+      CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation bash scripts/${script}" \
+        run_gate "${label}" || status=$?
+    else
+      CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation bash scripts/${script}" \
+        run_gate "${label}" --check || status=$?
+    fi
+    [[ "${status}" == 17 ]]
+    [[ "$(tail -n 1 "${test_root}/${label}.commands")" == "${command}" ]]
+    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/45\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
+  done
+done
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
 assert_contains check "python3 scripts/test-reviewed-application-catalogue.py"
 for mode in default fix check; do
@@ -223,6 +261,13 @@ for failed_script in scripts/test-release-binaries.py scripts/test-release-emula
     [[ "$(tail -n 1 "${test_root}/binary_failure.commands")" == *" ${failed_script}" ]]
     [[ "$(grep --fixed-strings --count -- 'BoxFerry local validation passed' "${test_root}/binary_failure.output" || true)" == 0 ]]
   done
+done
+
+for mode in default fix check; do
+  if grep -Fq -- 'scripts/shared-ci.py devcontainer-local' "${test_root}/${mode}.commands"; then
+    printf 'Ordinary validation must not build a Dev Container.\n' >&2
+    exit 1
+  fi
 done
 
 # A failed check must stop the gate and preserve its exit status in either mode.

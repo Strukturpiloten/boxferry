@@ -2412,13 +2412,154 @@ def wait_for_candidate(
         time.sleep(min(10, remaining))
 
 
+_SUMMARY_RESULT_LIMIT = 5
+_SUMMARY_BYTE_LIMIT = 4096
+
+
+def _summary_field(value: object, pattern: str, limit: int = 96) -> str | None:
+    """Permit bounded identifiers, never URLs, formatting or credential-like fields."""
+    if not isinstance(value, str) or len(value) > limit:
+        return None
+    if re.fullmatch(pattern, value) is None or re.search(
+        r"(?i)(?:gh[pousr]_|github_pat_|(?:password|secret|token|authorization|bearer)[=:_-])",
+        value,
+    ):
+        return None
+    return value
+
+
+def _summary_retry(value: object) -> str | None:
+    if (
+        not isinstance(value, str)
+        or len(value) > 40
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+            r"(?:\.[0-9]{1,6})?(?:Z|\+00:00)",
+            value,
+        )
+        is None
+    ):
+        return None
+    try:
+        return (
+            datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat().replace("+00:00", "Z")
+        )
+    except ValueError:
+        return None
+
+
+def _summary_reason(value: object) -> str:
+    # Result reasons may contain raw registry exceptions. Only these semantic
+    # messages and bounded status codes are suitable for human-facing output.
+    if isinstance(value, str) and len(value) <= 160:
+        if value in {
+            "72-hour operational observation hold",
+            "72-hour publication or artifact observation hold",
+            "first-seen state capacity exhausted",
+            "shared first-seen state capacity exhausted",
+            "metadata exceeds its byte bound",
+            "shared metadata byte budget exhausted",
+            "shared dependency metadata request budget exhausted",
+        } or re.fullmatch(r"registry(?: manifest)? HTTP status [1-5][0-9]{2}", value):
+            return value
+        acquisition = re.fullmatch(
+            r"(metadata acquisition|manifest acquisition|feature graph metadata acquisition)"
+            r": [A-Za-z_][A-Za-z0-9_]{0,79}",
+            value,
+        )
+        if acquisition is not None:
+            return acquisition.group(1) + " failed"
+    return "Details unavailable; inspect the trusted eligibility receipt"
+
+
+def _wait_summary(payload: dict[str, object]) -> str:
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in {"pass", "waiting", "failure"}:
+        status = "unavailable"
+    candidate = _summary_field(payload.get("candidate_sha"), r"[0-9a-f]{40}", 40)
+    header = f"Dependency eligibility: {status} for `{candidate or 'unavailable'}`."
+    lines = [header]
+    if "results" not in payload:
+        if status == "waiting":
+            lines.extend(
+                [
+                    "No trusted exact-candidate receipt was returned before the wait timed out.",
+                    "Service events and scheduled rechecks retry automatically.",
+                ]
+            )
+        elif "reason" in payload:
+            lines.append(_summary_reason(payload["reason"]) + ".")
+    else:
+        lines.append("Eligibility receipt returned.")
+        results = payload["results"]
+        if not isinstance(results, list):
+            lines.append("Dependency result details unavailable.")
+        elif not results:
+            lines.append("No dependency result details were returned.")
+        else:
+            failed_results = []
+            waiting_results = []
+            actionable_count = 0
+            unavailable = False
+            for result in results:
+                if not isinstance(result, dict) or result.get("status") not in (
+                    "pass",
+                    "waiting",
+                    "failure",
+                ):
+                    unavailable = True
+                    continue
+                if result["status"] == "pass":
+                    continue
+                actionable_count += 1
+                bucket = failed_results if result["status"] == "failure" else waiting_results
+                if len(bucket) < _SUMMARY_RESULT_LIMIT:
+                    bucket.append(result)
+            actionable = (failed_results + waiting_results)[:_SUMMARY_RESULT_LIMIT]
+            for result in actionable:
+                name = _summary_field(
+                    result.get("name"),
+                    r"(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9][A-Za-z0-9._/-]*",
+                )
+                version = _summary_field(
+                    result.get("version"), r"(?:v?[0-9][A-Za-z0-9._+-]*|[a-f0-9]{40})", 64
+                )
+                identity = f"`{name}`" if name else "dependency (identity unavailable)"
+                if version:
+                    identity += f" version `{version}`"
+                details = [f"{identity}: {result['status']}"]
+                if result["status"] != "pass":
+                    details.append(_summary_reason(result.get("reason")))
+                    retry = _summary_retry(result.get("retry_at"))
+                    if retry:
+                        details.append(f"recheck after `{retry}`")
+                path = _summary_field(result.get("path"), r"[A-Za-z0-9._/-]+")
+                if (
+                    path
+                    and not path.startswith("/")
+                    and all(part not in {"", ".", ".."} for part in path.split("/"))
+                ):
+                    details.append(f"file `{path}`")
+                lines.append("- " + "; ".join(details) + ".")
+            if unavailable:
+                lines.append("Dependency result details unavailable.")
+            elif not actionable:
+                lines.append("No waiting or failed dependency results were returned.")
+            omitted = actionable_count - len(actionable)
+            if omitted > 0:
+                lines.append(
+                    f"- {omitted} additional waiting or failed dependency results omitted."
+                )
+    rendered = "\n".join(lines) + "\n"
+    if len(rendered.encode("utf-8")) > _SUMMARY_BYTE_LIMIT:
+        return header + "\nDependency results omitted because the display limit was exceeded.\n"
+    return rendered
+
+
 def summary(payload: dict[str, Any]) -> str:
     """Concise operational evidence, with age holds distinct from failures."""
     if "reports" not in payload:
-        return (
-            f"Dependency eligibility: {payload.get('status')} "
-            f"for `{payload.get('candidate_sha')}`. {payload.get('reason', '')}\n"
-        )
+        return _wait_summary(payload)
     lines = [
         "Dependency eligibility (metadata only)",
         "",

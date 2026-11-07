@@ -1,9 +1,5 @@
 # Development environment
 
-The single-clone default below is pending [BoxFerry #554](https://github.com/Strukturpiloten/boxferry/issues/554).
-Until then, this checkout's legacy configuration requires all six sibling checkouts beside `boxferry`.
-Use your existing Podman storage; the retired private-store controls are not required.
-
 Clone BoxFerry and use VS Code's **Dev Containers: Reopen in Container** with
 its Dev Containers extension configured for your existing Podman connection,
 preferably rootless. Use **Dev Containers: Rebuild Container** after changing
@@ -57,9 +53,10 @@ bash .devcontainer/verify-tools.sh
 ## Dev Container feature updates
 
 The [canonical locked generator](../automation/devcontainer/) uses
-`npm ci --ignore-scripts`. Hosted proposals remain held: each consumer needs explicit
-seed/adoption and successful native image/tool qualification before automatic activation.
-See [ADR 0094](decisions/0094-official-devcontainer-feature-updates.md).
+`npm ci --ignore-scripts`. Feature proposals remain held under
+[#563](https://github.com/Strukturpiloten/boxferry/issues/563) until CI image/tool,
+VS Code reopen/rebuild and restricted-App/ordinary-CI qualification succeeds.
+Ordinary shared-tooling adoption enables no image updater or schedule.
 
 ## Local verification
 
@@ -73,8 +70,8 @@ For cleanup without tests:
 The matching VS Code task performs no validation. Clippy defaults to two jobs;
 `BOXFERRY_LINT_JOBS=1` reduces contention. `--check` avoids source formatting.
 
-`python3 scripts/validation-plan.py run-local` selects development feedback;
-`plan --event local` previews it. Known impacts select their union; policy, classifier,
+`python3 scripts/shared-ci.py run-local` selects development feedback;
+`python3 scripts/shared-ci.py plan --event local` previews it. Known impacts select their union; policy, classifier,
 unknown and unsafe changes remain complete. [Rollout #549](https://github.com/Strukturpiloten/boxferry/issues/549)
 still requires per-repository acceptance. Focused feedback never replaces:
 
@@ -100,8 +97,7 @@ Image/updater activation still requires actual per-owner native image evidence,
 VS Code reopen/rebuild acceptance and restricted-App/ordinary-CI qualification under
 [#563](https://github.com/Strukturpiloten/boxferry/issues/563). Source admission is
 not that evidence. [#578](https://github.com/Strukturpiloten/boxferry/issues/578)
-supersedes the earlier local private-store/PID controls. Historical failed stores
-remain untouched; any housekeeping needs separate exact ownership review.
+supersedes the earlier local private-store/PID controls. Historical failed stores remain untouched.
 
 ## Issue-to-PR contribution workflow
 

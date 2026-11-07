@@ -38,6 +38,9 @@ command_name="${0##*/}"
 if [[ "${command_name}" == "${FORMAT_LINT_TEST_FAIL:-}" ]]; then
   exit 17
 fi
+if [[ "${command_name}" == uv && "$*" == "${FORMAT_LINT_TEST_FAIL_UV_ARGS:-}" ]]; then
+  exit 17
+fi
 if [[ "${command_name}" == git && "${1:-}" == ls-files ]]; then
   printf 'README.md\0'
 fi
@@ -81,10 +84,16 @@ grep --fixed-strings --quiet 'uv run --locked --project automation ruff format a
 grep --fixed-strings --quiet 'uv run --locked --project automation ruff format --check automation [jobs=unset]' "${test_root}/check.commands"
 grep --fixed-strings --quiet 'uv run --locked --project automation ruff check automation [jobs=unset]' "${test_root}/default.commands"
 grep --fixed-strings --quiet 'uv run --locked --project automation ty check --project automation [jobs=unset]' "${test_root}/default.commands"
-grep --extended-regexp --quiet '^\[10/10\] PASS Run Clippy without executing tests \([0-9]+s\)$' \
+grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py [jobs=unset]' "${test_root}/default.commands"
+grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py [jobs=unset]' "${test_root}/check.commands"
+for label in default check; do
+  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py [jobs=unset]' "${test_root}/${label}.commands"
+  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py [jobs=unset]' "${test_root}/${label}.commands"
+done
+grep --extended-regexp --quiet '^\[13/13\] PASS Run Clippy without executing tests \([0-9]+s\)$' \
   "${test_root}/default.output"
 grep --extended-regexp --quiet \
-  '^BoxFerry format/lint passed all 10 steps in [0-9]+s; no tests were executed\.$' \
+  '^BoxFerry format/lint passed all 13 steps in [0-9]+s; no tests were executed\.$' \
   "${test_root}/default.output"
 
 export BOXFERRY_LINT_JOBS=1
@@ -118,7 +127,7 @@ status=0
 run_quality failure --check || status=$?
 [[ "${status}" == 17 ]]
 [[ "$(tail -n 1 "${test_root}/failure.commands")" == actionlint* ]]
-grep --fixed-strings --quiet '[08/10] FAIL Lint GitHub Actions syntax after' \
+grep --fixed-strings --quiet '[11/13] FAIL Lint GitHub Actions syntax after' \
   "${test_root}/failure.output"
 unset FORMAT_LINT_TEST_FAIL
 
@@ -130,6 +139,24 @@ for tool in python3 uv; do
   [[ "$(tail -n 1 "${test_root}/python_failure.commands")" == "${tool}"* ]]
 done
 unset FORMAT_LINT_TEST_FAIL
+
+for test_mode in --check --fix; do
+  format_arguments="run --locked --project automation ruff format"
+  if [[ "${test_mode}" == --check ]]; then
+    format_arguments+=" --check"
+  fi
+  format_arguments+=" --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py"
+  for consumer_arguments in "${format_arguments}" \
+    'run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py' \
+    'run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py'; do
+    export FORMAT_LINT_TEST_FAIL_UV_ARGS="${consumer_arguments}"
+    status=0
+    run_quality consumer_failure "${test_mode}" || status=$?
+    [[ "${status}" == 17 ]]
+    [[ "$(tail -n 1 "${test_root}/consumer_failure.commands")" == "uv ${consumer_arguments} [jobs=unset]" ]]
+  done
+done
+unset FORMAT_LINT_TEST_FAIL_UV_ARGS
 
 if grep --extended-regexp --quiet '(ci-test|cargo test|test-[^ ]*\.sh|migration-readiness|llvm-cov|ci-policy|ci-doc|semver|podman-live|unittest|pytest)' "${test_root}/default.commands" "${test_root}/check.commands"; then
   printf 'Format/lint command unexpectedly dispatched a test or complete-gate command.\n' >&2

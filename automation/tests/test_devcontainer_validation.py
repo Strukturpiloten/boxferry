@@ -206,6 +206,11 @@ class ProducerTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.config = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())
+        # Qualification consumes the validator's normalized result, while the held source
+        # remains the unchanged VS Code configuration without an explicit workspace target.
+        self.normalized_config = validation.validate_configuration(
+            self.write_config(self.config), "boxferry"
+        )
 
     def write_config(self, config: dict[str, Any]) -> Path:
         root = self.root / "config"
@@ -214,6 +219,66 @@ class ProducerTests(unittest.TestCase):
         (root / validation.LOCK).write_text('{"features":{}}')
         (root / ".devcontainer/verify-tools.sh").write_text("exit 0\n")
         return root
+
+    def test_source_origin_accepts_exact_scoped_checkout_spellings(self) -> None:
+        commands = FakeCommands(self.root)
+        for repository in ("boxferry", "compose-lens", "podman-lens", "quadlet-lens"):
+            for origin in (
+                f"https://github.com/Strukturpiloten/{repository}.git",
+                f"https://github.com/Strukturpiloten/{repository}",
+                f"git@github.com:Strukturpiloten/{repository}.git",
+            ):
+                with (
+                    self.subTest(repository=repository, origin=origin),
+                    patch.object(commands, "git", return_value=origin + "\n") as git,
+                ):
+                    validation._verify_origin(self.root, repository, commands)
+                    git.assert_called_once_with(self.root, "remote", "get-url", "origin")
+
+    def test_source_origin_rejects_changed_identity_or_url_components(self) -> None:
+        commands = FakeCommands(self.root)
+        for repository in ("boxferry", "compose-lens", "podman-lens", "quadlet-lens"):
+            other = "podman-lens" if repository == "boxferry" else "boxferry"
+            encoded = f"%{ord(repository[0]):02x}{repository[1:]}"
+            for suffix in ("", ".git"):
+                path = f"Strukturpiloten/{repository}{suffix}"
+                origin = f"https://github.com/{path}"
+                for invalid in (
+                    f"https://github.com/Strukturpiloten/{other}{suffix}",
+                    f"https://github.com/other/{repository}{suffix}",
+                    f"https://github.com/strukturpiloten/{repository}{suffix}",
+                    f"https://github.com/Strukturpiloten-extra/{repository}{suffix}",
+                    f"https://github.com/{path}-extra",
+                    f"https://github.com/Strukturpiloten/{encoded}{suffix}",
+                    f"https://github.com/Strukturpiloten/./{repository}{suffix}",
+                    f"https://github.com/Strukturpiloten/../{repository}{suffix}",
+                    f"https://github.com//{path}",
+                    f"https://github.com.example/{path}",
+                    f"https://GITHUB.COM/{path}",
+                    f"https://github.com:443/{path}",
+                    f"https://user@github.com/{path}",
+                    f"https://user:authored-password@github.com/{path}",
+                    f"http://github.com/{path}",
+                    f"ssh://git@github.com/{path}",
+                    origin + "/",
+                    origin + "/extra",
+                    origin + "?query=authored",
+                    origin + "#fragment",
+                    origin + "\nhttps://github.com/other/repository",
+                    f"git@github.com:Strukturpiloten/{repository}",
+                    f"git@github.com:other/{repository}.git",
+                    f"git@github.com:Strukturpiloten/{other}.git",
+                    f"https://github.com/Strukturpiloten/{repository}.git.git",
+                    "",
+                    f"/local/{repository}",
+                ):
+                    with (
+                        self.subTest(repository=repository, origin=invalid),
+                        patch.object(commands, "git", return_value=invalid + "\n") as git,
+                    ):
+                        with self.assertRaisesRegex(validation.ValidationError, "source origin"):
+                            validation._verify_origin(self.root, repository, commands)
+                        git.assert_called_once_with(self.root, "remote", "get-url", "origin")
 
     def test_source_resolution_reads_only_six_scoped_public_defaults_once(self) -> None:
         calls: list[str] = []
@@ -275,7 +340,16 @@ class ProducerTests(unittest.TestCase):
 
     def test_supported_config_and_hooks_mount_or_host_environment_refusal(self) -> None:
         root = self.write_config(self.config)
-        self.assertEqual(validation.validate_configuration(root, "boxferry"), self.config)
+        held = (root / validation.CONFIG).read_bytes()
+        commands = validation.Commands(self.root / "normalization-evidence")
+        with patch.object(commands, "git", return_value=validation.CONFIG + "\0"):
+            fingerprint = validation.fingerprint(root, commands)
+            self.assertEqual(
+                validation.validate_configuration(root, "boxferry"), self.normalized_config
+            )
+            self.assertEqual(validation.fingerprint(root, commands), fingerprint)
+        self.assertEqual((root / validation.CONFIG).read_bytes(), held)
+        self.assertEqual(json.loads(held), self.config)
         for key, value in (
             ("initializeCommand", "touch host"),
             ("runArgs", ["--privileged"]),
@@ -288,6 +362,27 @@ class ProducerTests(unittest.TestCase):
                 self.write_config({**self.config, key: value})
                 with self.assertRaises(ValueError):
                     validation.validate_configuration(root, "boxferry")
+
+    def test_workspace_defaults_do_not_mask_partial_or_foreign_explicit_targets(self) -> None:
+        self.assertNotIn("workspaceFolder", self.config)
+        self.assertNotIn("workspaceMount", self.config)
+        folder = "/workspaces/boxferry"
+        mount = "source=${localWorkspaceFolder},target=/workspaces/boxferry,type=bind"
+        for override in (
+            {"workspaceFolder": folder},
+            {"workspaceMount": mount},
+            {"workspaceFolder": "/workspaces/foreign", "workspaceMount": mount},
+            {"workspaceFolder": folder, "workspaceMount": mount.replace("boxferry", "foreign")},
+        ):
+            with self.subTest(override=override):
+                root = self.write_config({**self.config, **override})
+                held = (root / validation.CONFIG).read_bytes()
+                with self.assertRaisesRegex(ValueError, "workspace differs"):
+                    validation.validate_configuration(root, "boxferry")
+                self.assertEqual((root / validation.CONFIG).read_bytes(), held)
+        explicit = {**self.config, "workspaceFolder": folder, "workspaceMount": mount}
+        root = self.write_config(explicit)
+        self.assertEqual(validation.validate_configuration(root, "boxferry"), explicit)
 
     def test_single_clone_defaults_preserve_independent_seven_repository_ci_probe(self) -> None:
         self.config.pop("workspaceFolder", None)
@@ -1035,7 +1130,12 @@ class ProducerTests(unittest.TestCase):
                 ("_verify_origin", lambda *_args: None),
                 ("fingerprint", actual_fingerprint if mutate_source else lambda *_args: INPUT),
                 ("_checkout", checkout),
-                ("validate_configuration", lambda *_args: self.config),
+                # Retain the real validator's normalized workspace and apply only the
+                # individual test's deliberate runtime-probe overrides.
+                (
+                    "validate_configuration",
+                    lambda *_args: {**self.normalized_config, **self.config},
+                ),
                 ("canonical_versions", lambda *_args: versions),
                 ("_cli", lambda *_args: (Path("/trusted/cli.js"), "0.89.0")),
             ):

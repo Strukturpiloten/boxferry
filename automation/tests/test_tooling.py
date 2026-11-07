@@ -1215,6 +1215,21 @@ class NativeRenovateTests(unittest.TestCase):
       base + "workers/repository/update/branch/auto-replace.js",
     );
     const { applyPackageRules } = require(base + "util/package-rules/index.js");
+    const memory = require(base + "util/cache/memory/index.js");
+    memory.init();
+    // Resolve the actual inherited rules through the pinned SDK without network access.
+    // These fixture bytes are the same canonical preset inputs under test, not defaults.
+    for (const reference of rootConfig.extends || []) {
+      if (!reference.startsWith("github>Strukturpiloten/boxferry//renovate-presets/")) continue;
+      const pattern =
+        /^github>Strukturpiloten\/boxferry\/\/renovate-presets\/(common|rust)#([a-f0-9]{40})$/;
+      const match = pattern.exec(reference);
+      assert.ok(match, "inherited first-party presets must retain immutable scoped references");
+      memory.set("preset:" + reference,
+        JSON.parse(fs.readFileSync(root + "/renovate-presets/" + match[1] + ".json")));
+    }
+    const { resolveConfigPresets } = require(base + "config/presets/index.js");
+    const { config: resolvedRoot } = await resolveConfigPresets(rootConfig);
     const { get: versioning } = require(base + "modules/versioning/index.js");
     const { GithubReleaseAttachmentsDatasource } = require(
       base + "modules/datasource/github-release-attachments/index.js",
@@ -1352,11 +1367,15 @@ class NativeRenovateTests(unittest.TestCase):
       assert.equal(policy.automerge, true);
       assert.equal(policy.dependencyDashboardApproval, false);
       assert.equal(policy.minimumReleaseAge, "3 days");
-      const localPolicy = await applyPackageRules({ ...rootConfig, ...dep, manager: "regex",
+      const localPolicy = await applyPackageRules({ ...resolvedRoot, ...dep, manager: "regex",
         packageName:dep.depName, updateType:"major" });
       assert.equal(localPolicy.automerge, true);
       assert.equal(localPolicy.dependencyDashboardApproval, false);
       assert.equal(localPolicy.groupName, "Canonical downloaded tools");
+      assert.equal(localPolicy.pinDigests, true);
+      assert.equal(localPolicy.minimumReleaseAge, "3 days");
+      assert.equal(localPolicy.minimumReleaseAgeBehaviour, "timestamp-required");
+      assert.equal(localPolicy.internalChecksFilter, "strict");
     }
     assert.equal(JSON.parse(content).assets.length, 12);
     console.log(

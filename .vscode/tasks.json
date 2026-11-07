@@ -12,28 +12,28 @@
       "label": "BoxFerry: Plan changed validation",
       "type": "process",
       "command": "python3",
-      "args": ["${workspaceFolder}/scripts/validation-plan.py", "plan", "--event", "local"],
+      "args": ["${workspaceFolder}/scripts/shared-ci.py", "plan", "--event", "local"],
       "problemMatcher": []
     },
     {
       "label": "BoxFerry: Validate changed files",
       "type": "process",
       "command": "python3",
-      "args": ["${workspaceFolder}/scripts/validation-plan.py", "run-local"],
+      "args": ["${workspaceFolder}/scripts/shared-ci.py", "run-local"],
       "problemMatcher": "$rustc"
     },
     {
       "label": "BoxFerry: Validate public prose only",
       "type": "process",
       "command": "python3",
-      "args": ["${workspaceFolder}/scripts/validation-plan.py", "run-local", "--docs-only"],
+      "args": ["${workspaceFolder}/scripts/shared-ci.py", "run-local", "--docs-only"],
       "problemMatcher": []
     },
     {
       "label": "BoxFerry: Validate full (check-only)",
       "type": "process",
       "command": "python3",
-      "args": ["${workspaceFolder}/scripts/validation-plan.py", "run-local", "--full"],
+      "args": ["${workspaceFolder}/scripts/shared-ci.py", "run-local", "--full"],
       "problemMatcher": "$rustc"
     },
     {
