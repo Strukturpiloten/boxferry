@@ -81,6 +81,20 @@ class EligibilityError(ValueError):
     """Unavailable or inconsistent authoritative eligibility evidence."""
 
 
+class QueueTargetMoved(EligibilityError):
+    """A proven pre-evaluation target movement, never a candidate/eligibility result."""
+
+    def __init__(self, before: str, after: str, binding: Candidate) -> None:
+        super().__init__(
+            "queue target branch moved before candidate evaluation; next event rechecks"
+        )
+        self.before = revision(before)
+        self.after = revision(after)
+        self.binding = binding
+        if self.before == self.after or binding.scope != "merge_group":
+            raise EligibilityError("queue movement has no distinct authenticated target binding")
+
+
 # These are log-only fields, never candidate reports, persisted state or authority.
 _RESOLUTION_ENUMS = {
     "event_action": frozenset({"requested", "completed"}),
@@ -630,6 +644,35 @@ def validate_state(
             ):
                 raise EligibilityError("trusted noncandidate metadata is malformed")
             revision(item.get("source_head_sha"))
+            if "queue_movement" in item:
+                movement = item["queue_movement"]
+                if (
+                    metadata_key != "deferred_candidates"
+                    or not isinstance(movement, dict)
+                    or set(movement)
+                    != {
+                        "kind",
+                        "stage",
+                        "target_branch",
+                        "before_sha",
+                        "after_sha",
+                        "tested_sha",
+                        "source_run_attempt",
+                    }
+                    or movement.get("kind") != "queue-target-moved"
+                    or movement.get("stage") != "queue-current"
+                    or not isinstance(movement.get("target_branch"), str)
+                    or not 1 <= len(movement["target_branch"]) <= 512
+                    or movement["target_branch"].startswith("/")
+                    or any(char in movement["target_branch"] for char in "\r\n\0")
+                    or type(movement.get("source_run_attempt")) is not int
+                    or movement["source_run_attempt"] < 1
+                ):
+                    raise EligibilityError("trusted queue movement metadata is malformed")
+                for key in ("before_sha", "after_sha", "tested_sha"):
+                    revision(movement[key])
+                if movement["before_sha"] == movement["after_sha"]:
+                    raise EligibilityError("trusted queue movement has no changed target")
     cursor = value.get("scan_cursor", 0)
     if type(cursor) is not int or cursor < 0:
         raise EligibilityError("trusted scheduled scan cursor is malformed")
@@ -1155,18 +1198,47 @@ def _current_queue_candidate(
             raise EligibilityError(
                 "current queue PR source/author/title changed during verification"
             )
-    if target_revision(api, default_branch) != base:
-        raise EligibilityError("queue target branch moved during verification; next event rechecks")
+    first_target = target_revision(api, default_branch)
     if require_single_entry_queue(api, default_branch) != rules:
         raise EligibilityError("queue protection changed during verification")
     if _queue_entries(api, default_branch) != nodes:
         raise EligibilityError("queue composition changed during verification")
-    if target_revision(api, default_branch) != base or time.monotonic() >= api.deadline:
-        raise EligibilityError("queue target moved or proof expired; next event rechecks")
+    if time.monotonic() >= api.deadline:
+        raise EligibilityError("queue proof expired during verification; next event rechecks")
+    final_target = target_revision(api, default_branch)
+    if time.monotonic() >= api.deadline:
+        raise EligibilityError("queue proof expired during verification; next event rechecks")
     number, (source, actor_login, actor_type, title) = matched[0]
-    return Candidate(
+    binding = Candidate(
         base, head, number, source, actor_login, actor_type, "merge_group", title, default_branch
     )
+    if first_target != base or final_target != base:
+        # A target observation never bypasses the other closed-read checks.
+        # Recheck them after movement too: combined source/protection/composition
+        # changes and exhausted proof stay infrastructure failures.
+        for identity_number, identity in identities:
+            if (
+                _queue_pr_identity(
+                    api,
+                    identity_number,
+                    default_branch,
+                    allow_conflicted=identity[0] not in matches,
+                )
+                != identity
+            ):
+                raise EligibilityError(
+                    "current queue source changed while verifying target movement"
+                )
+        if require_single_entry_queue(api, default_branch) != rules:
+            raise EligibilityError("queue protection changed during verification")
+        if _queue_entries(api, default_branch) != nodes:
+            raise EligibilityError("queue composition changed during verification")
+        if time.monotonic() >= api.deadline:
+            raise EligibilityError("queue proof expired during verification; next event rechecks")
+        raise QueueTargetMoved(
+            base, final_target if final_target != base else first_target, binding
+        )
+    return binding
 
 
 def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
@@ -1992,6 +2064,45 @@ def service(
                         _resolution_guard("source-head-stale", pr_source_sha=candidate.source_head)
                         raise EligibilityError("candidate CI run is stale relative to the live PR")
                     candidates.append(candidate)
+            except QueueTargetMoved as moved:
+                binding = moved.binding
+                if (
+                    source.get("event") != "merge_group"
+                    or type(source.get("id")) is not int
+                    or source.get("id") != source_id
+                    or type(source.get("run_attempt")) is not int
+                    or source["run_attempt"] < 1
+                    or event.get("action") not in {"requested", "completed"}
+                    or binding.scope != "merge_group"
+                    or binding.head != head
+                    or binding.queue_target != default_branch
+                    or binding.base != moved.before
+                ):
+                    raise EligibilityError(
+                        "queue movement lacks this exact trusted source callback"
+                    ) from moved
+                deferred.append(
+                    {
+                        "pull_request": binding.number,
+                        "source_run_id": source_id,
+                        "source_head_sha": binding.source_head,
+                        "reason": str(moved),
+                        "next_action": (
+                            "The completed CI callback or existing hourly schedule will re-resolve "
+                            "the live queue; no candidate was evaluated "
+                            "and no action was requested."
+                        ),
+                        "queue_movement": {
+                            "kind": "queue-target-moved",
+                            "stage": "queue-current",
+                            "target_branch": default_branch,
+                            "before_sha": moved.before,
+                            "after_sha": moved.after,
+                            "tested_sha": head,
+                            "source_run_attempt": source["run_attempt"],
+                        },
+                    }
+                )
             except CandidateComputationPending as pending:
                 if source.get("event") != "merge_group" and head not in {
                     pending.source_head,

@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "provenance": {
+    "source": "Sanitized public GitHub service observations; no oracle source copied",
+    "repository": "Strukturpiloten/compose-lens",
+    "run_url": "https://github.com/Strukturpiloten/compose-lens/actions/runs/42326283108",
+    "license": "Repository-owned metadata fixture, MPL-2.0",
+    "redistribution": "Allowed; selected nonsecret identities/counts only, no raw logs/bodies/environment",
+    "source_log_sha256": "5a99b4253e672875ed6f5eb4fb491a62de81f79131e32c3d2da29870dc98887c",
+    "run_metadata_sha256": "35fda16d4bbb2695eb4d0230c80d37adc5a3d1d82d61a79a64d1f2575439b04c",
+    "artifact_response_sha256": "244563f989470892c537c9a4622920af0d228ee4528f7d00c64a06d6cd95856c"
+  },
+  "observed": {
+    "service_run_id": 42326283108,
+    "service_created_at": "2026-11-07T01:51:41Z",
+    "service_event": "workflow_run",
+    "service_head_sha": "4b0b3591185c5f8613470ea08a81773ed5b1700a",
+    "service_status": "completed",
+    "service_conclusion": "failure",
+    "implementation_revision": "9eb757145e7e078ba8944df525c9884eec87effc",
+    "source_run_id": 42325879046,
+    "source_run_attempt": 1,
+    "source_event": "merge_group",
+    "tested_sha": "8a03c38264ecc80e05f2bb26c5317e1f10f813c4",
+    "base_sha": "4b0b3591185c5f8613470ea08a81773ed5b1700a",
+    "queue_count": 1,
+    "built_count": 1,
+    "exact_count": 1,
+    "stage": "queue-current",
+    "guard": "initial-resolution-error",
+    "terminal_artifact_count": 0
+  },
+  "not_observed": [
+    "Replacement target revision",
+    "PR number/head/author/title and queue/object proof contents at the failed read",
+    "Healthy predecessor checkpoint, effect floor and later stable run"
+  ],
+  "replay_boundary": "Tests add explicitly synthetic facts to replay this shape. They do not retroactively authenticate/close the actual failed9eb run, erase its fence or claim runtime recovery."
+}
