@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-11-07T02:14:30.758257+00:00",
+  "source": "GitHub REST API observed default-branch refs; exact immutable Git trees and regular manifest/selected-policy blobs; successful push-CI run and complete job metadata at each recorded adopted main.",
+  "review_decision": "approve_exact_actual_main_policy_hashes_for_seed_registry_only",
+  "review_issue": "https://github.com/Strukturpiloten/boxferry/issues/616",
+  "producer_base": "9eb757145e7e078ba8944df525c9884eec87effc",
+  "historical_approval": "../approval.json remains byte-identical; this record adds no BoxFerry approval.",
+  "limits": [
+    "Only these exact independently reviewable owner/policy-byte pairs; unknown, partial, malformed, candidate and future draft policies have no fallback.",
+    "No consumer image/updater activation, current candidate receipt, native qualification, App action, software publication or #613 sequencing change.",
+    "Captured first-party Lens policy/manifest metadata is inert fixture evidence; no tool/oracle source acquired or executed."
+  ],
+  "policies": [
+    {
+      "repository": "Strukturpiloten/compose-lens",
+      "head": "8a03c38264ecc80e05f2bb26c5317e1f10f813c4",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "post-adoption-20261107/compose-lens-policy.json.txt",
+      "policy_blob": "c95c4618dbda3d26d266c1a7931c5a8f4712f794",
+      "policy_mode": "100644",
+      "policy_sha256": "7957938d108af2e6799befc95b19d12d32d1bc37f97d0bc1118e6d8889d36c73",
+      "policy_bytes": 3247,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "msrv",
+        "dependencies",
+        "api",
+        "documentation",
+        "coverage",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": [
+          "rust",
+          "msrv",
+          "dependencies",
+          "api",
+          "documentation",
+          "coverage",
+          "lockfile-release-age"
+        ]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "post-adoption-20261107/compose-lens-automation.json.txt",
+      "manifest_blob": "f345712ab852ff113987f02a4c2c4b26d3034809",
+      "manifest_mode": "100644",
+      "automation_revision": "9eb757145e7e078ba8944df525c9884eec87effc",
+      "rejected_future_draft_sha256": null,
+      "actual_main_observed_at": "2026-11-07T02:04:46.269928+00:00",
+      "main_ci": {
+        "run_id": 42326309518,
+        "head_sha": "8a03c38264ecc80e05f2bb26c5317e1f10f813c4",
+        "event": "push",
+        "conclusion": "success",
+        "job_count": 9,
+        "all_jobs_success": true,
+        "url": "https://github.com/Strukturpiloten/compose-lens/actions/runs/42326309518"
+      }
+    },
+    {
+      "repository": "Strukturpiloten/podman-lens",
+      "head": "ad2468a5d50d01911e855a5cc6346667abad36e0",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "post-adoption-20261107/podman-lens-policy.json.txt",
+      "policy_blob": "f2be3dffe8ca40e5369a0eac831d04e8d17389fb",
+      "policy_mode": "100644",
+      "policy_sha256": "0e80da07f01f66e5963c423769d0b9d6ecf92fb131437a76b2828c84c979462e",
+      "policy_bytes": 4444,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "coverage",
+        "msrv",
+        "dependencies",
+        "api-release-type",
+        "api",
+        "documentation",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": ["documentation", "lockfile-release-age"]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "post-adoption-20261107/podman-lens-automation.json.txt",
+      "manifest_blob": "267627ad254759bec6b2cf07b1a118aa9567ff33",
+      "manifest_mode": "100644",
+      "automation_revision": "41d7f8b868351621c4e60fbeedd9fce5955f7897",
+      "rejected_future_draft_sha256": null,
+      "actual_main_observed_at": "2026-11-07T02:04:46.537175+00:00",
+      "main_ci": {
+        "run_id": 42305725111,
+        "head_sha": "ad2468a5d50d01911e855a5cc6346667abad36e0",
+        "event": "push",
+        "conclusion": "success",
+        "job_count": 10,
+        "all_jobs_success": true,
+        "url": "https://github.com/Strukturpiloten/podman-lens/actions/runs/42305725111"
+      }
+    },
+    {
+      "repository": "Strukturpiloten/quadlet-lens",
+      "head": "51322f3b08cef7fe47af987f74bdf48d83dfcc73",
+      "policy_path": "scripts/validation-policy.json",
+      "policy_fixture": "post-adoption-20261107/quadlet-lens-policy.json.txt",
+      "policy_blob": "746fecbd9a5797c363f5dbb3d122241e66b3c243",
+      "policy_mode": "100644",
+      "policy_sha256": "d4a88fb53131ebbea02578d532d14ed8e1c5581efc162a30a9f61c7cc522ee90",
+      "policy_bytes": 3170,
+      "schema": 2,
+      "jobs": [
+        "rust",
+        "coverage",
+        "msrv",
+        "dependencies",
+        "api",
+        "documentation",
+        "lockfile-release-age"
+      ],
+      "profile_jobs": {
+        "prose": ["documentation", "lockfile-release-age"],
+        "executable-docs": [
+          "rust",
+          "coverage",
+          "msrv",
+          "dependencies",
+          "api",
+          "documentation",
+          "lockfile-release-age"
+        ]
+      },
+      "manifest_path": ".github/automation.json",
+      "manifest_fixture": "post-adoption-20261107/quadlet-lens-automation.json.txt",
+      "manifest_blob": "f345712ab852ff113987f02a4c2c4b26d3034809",
+      "manifest_mode": "100644",
+      "automation_revision": "9eb757145e7e078ba8944df525c9884eec87effc",
+      "rejected_future_draft_sha256": null,
+      "actual_main_observed_at": "2026-11-07T02:04:46.358232+00:00",
+      "main_ci": {
+        "run_id": 42326173713,
+        "head_sha": "51322f3b08cef7fe47af987f74bdf48d83dfcc73",
+        "event": "push",
+        "conclusion": "success",
+        "job_count": 9,
+        "all_jobs_success": true,
+        "url": "https://github.com/Strukturpiloten/quadlet-lens/actions/runs/42326173713"
+      }
+    }
+  ]
+}

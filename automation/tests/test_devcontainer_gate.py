@@ -124,7 +124,12 @@ class GateFixture(unittest.TestCase):
 class DevcontainerGate(GateFixture):
     def test_synthetic_policy_is_unapproved_by_the_four_owner_registry(self) -> None:
         self.assertEqual(set(seed.APPROVED_SEED_POLICIES), set(OWNERS))
-        self.assertTrue(all(len(hashes) == 1 for hashes in seed.APPROVED_SEED_POLICIES.values()))
+        self.assertTrue(
+            all(
+                isinstance(hashes, frozenset) and hashes
+                for hashes in seed.APPROVED_SEED_POLICIES.values()
+            )
+        )
         with self.assertRaisesRegex(ContractError, "unapproved pre-seed"):
             self.check()
 
@@ -466,7 +471,12 @@ class ActualMainPolicySeeds(GateFixture):
         super().setUp()
         self.fixtures = Path(__file__).parent / "fixtures/devcontainer_seed"
         self.evidence = json.loads((self.fixtures / "approval.json").read_text())
-        self.records = self.evidence["policies"]
+        self.adopted_evidence = json.loads(
+            (self.fixtures / "post-adoption-20261107/approval.json").read_text()
+        )
+        self.historical_records = self.evidence["policies"]
+        self.adopted_records = self.adopted_evidence["policies"]
+        self.records = self.historical_records + self.adopted_records
 
     def actual(self, record: dict[str, Any]) -> None:
         self.config.write_bytes((self.fixtures / record["policy_fixture"]).read_bytes())
@@ -517,19 +527,47 @@ class ActualMainPolicySeeds(GateFixture):
             "Strukturpiloten/podman-lens": "3783b3faf85741b88f571e8bb4fa055a461a3cb8",
             "Strukturpiloten/quadlet-lens": "e9cae624fc87e0c205a367a47be83ea63f1aa6e6",
         }
+        adopted_heads = {
+            "Strukturpiloten/compose-lens": "8a03c38264ecc80e05f2bb26c5317e1f10f813c4",
+            "Strukturpiloten/podman-lens": "ad2468a5d50d01911e855a5cc6346667abad36e0",
+            "Strukturpiloten/quadlet-lens": "51322f3b08cef7fe47af987f74bdf48d83dfcc73",
+        }
         self.assertEqual(self.evidence["schema"], 1)
+        self.assertEqual(self.adopted_evidence["schema"], 1)
+        for evidence in (self.evidence, self.adopted_evidence):
+            self.assertEqual(
+                evidence["review_decision"],
+                "approve_exact_actual_main_policy_hashes_for_seed_registry_only",
+            )
         self.assertEqual(
-            self.evidence["review_decision"],
-            "approve_exact_actual_main_policy_hashes_for_seed_registry_only",
+            self.adopted_evidence["review_issue"],
+            "https://github.com/Strukturpiloten/boxferry/issues/616",
         )
+        self.assertEqual(len(self.historical_records), len(heads))
+        self.assertEqual(len(self.adopted_records), len(adopted_heads))
+        self.assertEqual(
+            {record["repository"]: record["head"] for record in self.historical_records}, heads
+        )
+        self.assertEqual(
+            {record["repository"]: record["head"] for record in self.adopted_records}, adopted_heads
+        )
+        approved_heads = set(heads.items()) | set(adopted_heads.items())
+        self.assertEqual(len(approved_heads), len(self.records))
         self.assertEqual({record["repository"] for record in self.records}, set(heads))
+        recorded_approvals: dict[str, set[str]] = {}
+        for record in self.records:
+            recorded_approvals.setdefault(record["repository"], set()).add(record["policy_sha256"])
         self.assertEqual(
             dict(seed.APPROVED_SEED_POLICIES),
-            {record["repository"]: frozenset({record["policy_sha256"]}) for record in self.records},
+            {owner: frozenset(hashes) for owner, hashes in recorded_approvals.items()},
+        )
+        self.assertEqual(
+            seed.APPROVED_SEED_POLICIES["Strukturpiloten/boxferry"],
+            frozenset({self.historical_records[0]["policy_sha256"]}),
         )
         for record in self.records:
-            with self.subTest(repository=record["repository"]):
-                self.assertEqual(record["head"], heads[record["repository"]])
+            with self.subTest(repository=record["repository"], head=record["head"]):
+                self.assertIn((record["repository"], record["head"]), approved_heads)
                 raw = (self.fixtures / record["policy_fixture"]).read_bytes()
                 self.assertEqual(len(raw), record["policy_bytes"])
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), record["policy_sha256"])
@@ -550,6 +588,13 @@ class ActualMainPolicySeeds(GateFixture):
                     self.policy.profile_jobs,
                     {name: tuple(jobs) for name, jobs in record["profile_jobs"].items()},
                 )
+                if record in self.adopted_records:
+                    evidence = record["main_ci"]
+                    self.assertEqual(evidence["head_sha"], record["head"])
+                    self.assertEqual(evidence["event"], "push")
+                    self.assertEqual(evidence["conclusion"], "success")
+                    self.assertIs(evidence["all_jobs_success"], True)
+                    self.assertGreater(evidence["job_count"], 0)
 
     def test_actual_pr_queue_unions_and_full_events_keep_every_original_result(self) -> None:
         for record in self.records:
@@ -647,6 +692,39 @@ class ActualMainPolicySeeds(GateFixture):
                         verify_devcontainer_gate(
                             plan, changed, self.policy, comparison, expected_plan=plan
                         )
+
+    def test_actual_approvals_reject_unknown_malformed_and_partial_policy_bytes(self) -> None:
+        for record in self.records:
+            self.actual(record)
+            original = self.config.read_bytes()
+            trusted = self.policy
+            seed.require_devcontainer_policy(trusted, seed=True)
+            for kind, raw in (
+                ("empty", b""),
+                ("malformed", b'{"schema":'),
+                ("partial", json.dumps({"schema": record["schema"]}).encode()),
+                ("unknown", json.dumps({**json.loads(original), "unapproved": True}).encode()),
+            ):
+                with self.subTest(repository=record["repository"], head=record["head"], kind=kind):
+                    self.assertNotEqual(raw, original)
+                    self.assertNotIn(
+                        hashlib.sha256(raw).hexdigest(),
+                        seed.APPROVED_SEED_POLICIES[record["repository"]],
+                    )
+                    self.config.write_bytes(raw)
+                    with self.assertRaisesRegex(ContractError, "unapproved pre-seed"):
+                        seed.require_devcontainer_policy(trusted, seed=True)
+
+    def test_actual_approved_bytes_cannot_authorize_partial_policy_object(self) -> None:
+        for record in self.records:
+            with self.subTest(repository=record["repository"], head=record["head"]):
+                self.actual(record)
+                partial = replace(self.policy, jobs=self.policy.jobs[:-1])
+                self.assertNotEqual(partial, self.policy)
+                with self.assertRaisesRegex(
+                    ContractError, "differs from its approved policy bytes"
+                ):
+                    seed.require_devcontainer_policy(partial, seed=True)
 
 
 if __name__ == "__main__":

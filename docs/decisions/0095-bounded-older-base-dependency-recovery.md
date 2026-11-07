@@ -105,6 +105,17 @@ behavior. The separate limited DevContainer updater retains its explicit
 behind-base policy. The 72-hour hold, complete first-party Lens exemption,
 fixed qualification targets and release approvals remain in force.
 
+## Authenticated pre-effect queue movement
+
+A valid target ref moving during initial merge-group resolution can close as an explicit
+no-action deferral only after the independent tree and unique source binding, unchanged
+source/author/title, protections and queue composition are reread within the proof deadline.
+The terminal checkpoint preserves inherited first-seen data, finite ledgers, scan cursor and
+complete frontier, including existing fences and pending attempts. It contains no candidate
+report and sends no status, retry or handoff. Malformed, expired, unknown, combined-movement
+and post-effect failures retain their strict paths. Existing failed same-authority history is
+never retroactively accepted or cleared; later stable events use the normal checkpoint protocol.
+
 ## Evidence and activation
 
 Focused tests cover wrong/missing base receipts, legacy argv, ordered parents,
