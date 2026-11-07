@@ -15,9 +15,9 @@ readonly kind_amd64_release="v0.33.0" kind_amd64_checksum="aee6151561422756b764a
 # renovate: datasource=github-release-attachments depName=kubernetes-sigs/kind depType=kind-linux-arm64
 readonly kind_arm64_release="v0.33.0" kind_arm64_checksum="20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
-readonly kubectl_version="1.37.0"
+readonly kubectl_version="1.37.2"
 # renovate: datasource=github-releases depName=helm/helm
-readonly helm_version="4.3.0"
+readonly helm_version="4.3.1"
 # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize
 readonly kustomize_version="5.8.3"
 
