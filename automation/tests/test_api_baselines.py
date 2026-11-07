@@ -1039,7 +1039,20 @@ class PolicyCases(unittest.TestCase):
         self.assertIn('"${PUBLISHED_API_CANDIDATE}" != "${GITHUB_SHA}"', release)
         guard = release[release.index("  release-validation:") : release.index("  publish:")]
         self.assertNotIn("validation_only", guard)
-        self.assertIn("needs.deterministic.outputs.published_api_candidate_sha", guard)
+        aggregate = guard.split("  release-prepare:", 1)[0]
+        manifest = json.loads((root / ".github/automation.json").read_text())
+        self.assertRegex(manifest["revision"], r"^[a-f0-9]{40}$")
+        self.assertIn(
+            "uses: Strukturpiloten/boxferry/.github/workflows/shared-release-validation.yml@"
+            + manifest["revision"],
+            aggregate,
+        )
+        self.assertIn(f"automation_sha: {manifest['revision']}", aggregate)
+        self.assertIn("needs_json: ${{ toJSON(needs) }}", aggregate)
+        self.assertIn("config_path: scripts/shared-release-policy.json", aggregate)
+        self.assertIn("needs.release-validation.outputs.published_api_candidate_sha", guard)
+        self.assertIn("needs.release-validation.outputs.candidate_sha", guard)
+        self.assertNotIn("published_api_candidate_sha: ${{ github.sha }}", guard)
 
 
 if __name__ == "__main__":

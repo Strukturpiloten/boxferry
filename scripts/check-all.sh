@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=44
+readonly total_steps=45
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -209,6 +209,7 @@ run_step "Test shared automation contracts" \
 run_step "Verify candidate Compose provider artifact integrity" \
   uv run --locked --project automation python -m boxferry_ci.compose_provider \
   --repository-root "${repository_root}" --verify-working-tree
+run_step "Test shared automation adoption" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-shared-automation.py --with-native-renovate
 run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
 run_step "Verify Kubernetes tool installer integrity" \
   uv run --locked --project automation python \
@@ -219,10 +220,10 @@ run_step "Test release emulator extraction" bash scripts/test-release-emulator.s
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test Podman live outer storage ownership" bash scripts/test-podman-live-outer-storage.sh
-run_step "Test application probe contracts" bash scripts/test-application-probes.sh
+run_step "Test application probe contracts" uv run --locked --project automation bash scripts/test-application-probes.sh
 run_step "Test observability Grafana network topology" bash scripts/test-observability-grafana-network.sh
-run_step "Test observability application contracts" bash scripts/test-observability-application.sh
-run_step "Test Supabase application timeout boundary" bash scripts/test-supabase-application.sh
+run_step "Test observability application contracts" uv run --locked --project automation bash scripts/test-observability-application.sh
+run_step "Test Supabase application timeout boundary" uv run --locked --project automation bash scripts/test-supabase-application.sh
 run_step "Test migration-readiness contracts" python3 scripts/test-migration-readiness.py
 run_step "Test reviewed application catalogue admission" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-reviewed-application-catalogue.py
 run_step "Run offline migration-readiness tier" python3 scripts/migration-readiness.py run \

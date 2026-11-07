@@ -74,12 +74,10 @@ if ! grep -q '^llvm-tools-' <<< "${installed_components}"; then
   exit 1
 fi
 
-for repository in compose-lens docker-lens kubernetes-lens podman-lens quadlet-lens boxferry-website; do
-  repository_path="/workspaces/boxferry/.boxferry-workspace/${repository}"
-  if [[ ! -d "${repository_path}/.git" ]]; then
-    printf 'BoxFerry Dev Container is missing sibling repository: %s\n' "${repository_path}" >&2
-    exit 1
-  fi
-done
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [[ "$(git -C "${repository_root}" rev-parse --show-toplevel 2> /dev/null)" != "${repository_root}" ]]; then
+  printf 'BoxFerry Dev Container requires its own Git checkout: %s\n' "${repository_root}" >&2
+  exit 1
+fi
 
 printf 'BoxFerry Dev Container tooling is ready.\n'

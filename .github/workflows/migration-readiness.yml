@@ -14,6 +14,9 @@ on:
         default: ""
         type: string
     outputs:
+      candidate_sha:
+        description: Exact candidate with successful complete aggregate readiness evidence.
+        value: ${{ jobs.collect.outputs.candidate_sha }}
       evidence_artifact:
         description: Exact complete aggregate artifact produced by this reusable invocation.
         value: ${{ jobs.collect.outputs.artifact }}
@@ -359,6 +362,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       artifact: ${{ steps.artifact.outputs.name }}
+      candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}
     env:
       BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}
       COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}
@@ -409,3 +413,8 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 30
+      - name: Bind successful complete readiness candidate
+        id: candidate
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"

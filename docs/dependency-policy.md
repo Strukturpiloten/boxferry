@@ -20,11 +20,11 @@ Canonical manifests, lockfiles, workflows and installers own dependency versions
 - Use explicit compatible Cargo requirements, not wildcards; use crates.io unless an ADR says otherwise.
 - Enable only understood, necessary default features. Record architectural, representation and
   public-API dependencies in an ADR.
-- Commit the lock file and use locked resolution in CI.
+- Commit lockfiles; CI uses locked resolution.
 
 `deny.toml` permits Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Other licenses require review and
 understood obligations. Exceptions must be narrow, versioned and explained beside configuration;
-CI alone never justifies one. This is project intent, not legal advice.
+CI alone never justifies one. Project intent, not legal advice.
 
 ## Architectural dependencies
 
@@ -40,40 +40,45 @@ CI alone never justifies one. This is project intent, not legal advice.
   Retain transitive lock resolutions and full MSRV and dependency gates; claim no new native compatibility.
 - ComposeLens and QuadletLens own their native document semantics.
 
-Review manifests and ADRs for exact constraints.
+Exact constraints: manifests and ADRs.
 
 ## Automation
 
-Every operational pin has one Renovate owner. Native managers cover Cargo, npm, Rust toolchains,
-Dev Container features, Actions and supported literal hosted runner selectors. Custom managers
-retain annotated runner matrices and legacy runner ownership pending shared adoption, alongside
-downloaded tools, image version/digest pairs, Compose providers and selected application images.
-Reserved hosted runner labels are unquoted, unanchored scalars; dynamic matrices and self-hosted runners remain distinct.
+Each operational pin has one Renovate owner. Native managers cover Cargo, npm, Rust toolchains,
+Dev Container features, Actions and supported literal hosted runners. Custom managers retain
+annotated matrices and legacy runner ownership pending shared adoption, downloaded tools,
+image version/digest pairs, Compose providers and selected application images. Reserved hosted
+labels remain unquoted, unanchored scalars; dynamic matrices and self-hosted runners stay distinct.
 Workflows use `scripts/lib/compose-provider.sh`. Fixtures, historical observations, compatibility
 targets and invalid fixture registries are not update candidates; curated `images.tsv` catalogues
 retain ownership.
 
 ### Rollout of shared dependency automation
 
-[Issue #549](https://github.com/Strukturpiloten/boxferry/issues/549) coordinates the move to shared
-BoxFerry Renovate presets and validation. The intended policy automatically merges dependency and
-tool updates after compatibility, integrity and required checks pass, without manual PR review.
-Python tools have explicit versions and Renovate ownership; repositories retain tests and local rules.
+[Issue #549](https://github.com/Strukturpiloten/boxferry/issues/549) coordinates shared BoxFerry
+Renovate presets and validation. Policy automatically merges dependency/tool updates after
+compatibility, integrity and required checks pass, without manual PR review. Python versions
+and Renovate ownership remain explicit; repositories retain tests and local rules.
 
-For PRs and merge queue candidates, third-party versions, including newly introduced transitive
-lockfile versions, wait at least 72 hours. A verified first-party published-package update is exempt
-as a whole, including attributable young transitive lockfile changes. Only age is exempt: checksums,
-lockfile integrity, audits, compatibility and required checks still apply. Provider and image updates
-also need applicable provenance, license, resource-budget and native-behavior evidence. Without
-reliable publication times, use a supported, trusted first-seen delay; malformed or future times fail.
-Main, manual and release validation retain complete integrity and compatibility checks without
-restarting admission waiting.
+PRs and merge queues enforce 72 hours for third-party versions, including new transitive
+lockfile versions. Verified first-party published-package updates waive age for the whole
+closure, including attributable young transitive lockfile versions. Checksums, lockfile integrity,
+audits, compatibility and required checks remain mandatory. Provider/image updates also need
+applicable provenance, license, resource-budget and native-behavior evidence. Unreliable publication
+times require a supported, trusted first-seen delay; malformed or future times fail. Main, manual
+and release validation retain complete integrity/compatibility without restarting admission waiting.
 
-This is the target, not completed rollout. Until adoption, each repository's actual Renovate
-configuration and required age check remain authoritative. BoxFerry's existing lockfile check exempts
-first-party crate versions, not their third-party transitive updates. Some runner, image and tool
-proposals still need manual approval. Release preparation does not authorize publication; releases
-and deployments retain maintainer approval.
+Rollout remains incomplete. Adopt immutable common and Rust presets, manifest, workflow references,
+explicit implementation inputs and annotated checkout refs together. Native GitHub Actions own
+reusable references; shared regex managers own other declarations once. The trusted dependency
+service validates complete first-party closures before waiving whole-update age; missing metadata
+blocks admission. Fixed workload, runtime matrix, probe images and Compose provider remain
+outside proposals. Privileged Docker admission/custody pins retain separate explicit security review.
+Direct Dev Container image, feature and image-only tool proposals remain disabled pending
+CI qualification under #563, without a Dashboard or manual-approval route. Ordinary shared
+source, package and compiler inputs retain automatic ownership when Dockerfiles copy them;
+this does not qualify the resulting image closure. Release preparation grants no publication
+or deployment authority.
 
 ### Runtime evidence and pin changes
 
@@ -102,21 +107,20 @@ a Dashboard or PR approval route.
 
 ### Kubernetes development tools
 
-Renovate owns kind's paired per-architecture tags and digests and kubectl, Helm and Kustomize
-versions. These four packages share one auto-merge rule without Dashboard approval. Trusted
-`kubernetes-tool-checksum-refresh.yml` runs on schedule and after CI. It reads bounded official
-checksum metadata, streams both architecture artifacts to SHA-256 without storing them, validates
-the Renovate PR and exact installer-only diff, and updates only that PR's exact head with a
-metadata-only commit. Candidate content and artifacts are never executed. Required integrity reads
-the installer from the exact tested Git commit; the complete local gate verifies the explicitly
-selected working tree.
+Renovate owns kind's paired per-architecture tags/digests and kubectl, Helm and Kustomize
+versions. All four share one automatic merge rule without Dashboard approval. Trusted
+`kubernetes-tool-checksum-refresh.yml` runs on schedule and CI: bounded official checksum
+metadata, both architecture artifacts streamed for SHA-256 without storage, validated
+Renovate PR and exact installer-only diff, then a metadata-only commit to that PR's exact head.
+Candidate content and artifacts never execute. Required integrity reads the exact tested Git
+installer; the complete local gate checks the explicitly selected working tree.
 
-The installer records kind and Kustomize release-asset checksums, kubectl's `dl.k8s.io` checksum,
+The installer records kind/Kustomize release-asset checksums, kubectl's `dl.k8s.io` checksum
 and Helm's `get.helm.sh` checksum. Other tooling ownership remains.
 
 ### API baseline policy ownership
 
 [ADR 0096](decisions/0096-development-and-published-api-baselines.md) changes no pin values.
-The reused SemVer Action and added evidence-upload occurrence retain native GitHub Actions
-extraction, grouping and approvals. Existing Cargo/compiler and consumer automation-pin
-owners remain authoritative; no custom manager or version inventory is added.
+SemVer and evidence-upload Actions retain native extraction, grouping and approvals.
+Existing Cargo/compiler and consumer automation-pin owners remain authoritative;
+add no custom manager or version inventory.

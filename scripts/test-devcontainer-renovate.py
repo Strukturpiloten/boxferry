@@ -4,25 +4,27 @@
 from __future__ import annotations
 
 import copy
-from collections import Counter
 import fnmatch
 import hashlib
 import io
 import json
 import os
 import re
+import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE_PATH = ".devcontainer/Dockerfile"
 EXPECTED_PINS = {
     ("docker", "docker.io/library/node"),
-    ("docker", "ghcr.io/astral-sh/uv"),
     ("docker", "mcr.microsoft.com/devcontainers/rust"),
+    ("docker", "ghcr.io/astral-sh/uv"),
     ("crate", "cargo-deny"),
     ("crate", "cargo-llvm-cov"),
     ("crate", "cargo-semver-checks"),
@@ -80,11 +82,17 @@ def effective_policy(configuration: dict, dependency: dict) -> dict:
         selectors = {key for key in rule if key.startswith("match")}
         if selectors - dependency.keys():
             raise ValueError("policy regression must cover every production selector")
-        if any(
-            dependency[key] is None
-            or not any(fnmatch.fnmatchcase(dependency[key], pattern) for pattern in rule[key])
-            for key in selectors
-        ):
+
+        def matches(value: str | None, patterns: list[str]) -> bool:
+            if value is None:
+                return False
+            excluded = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
+            included = [pattern for pattern in patterns if not pattern.startswith("!")]
+            return not any(fnmatch.fnmatchcase(value, pattern) for pattern in excluded) and (
+                not included or any(fnmatch.fnmatchcase(value, pattern) for pattern in included)
+            )
+
+        if any(not matches(dependency[key], rule[key]) for key in selectors):
             continue
         policy.update({key: value for key, value in rule.items() if key not in selectors})
     return policy
@@ -104,16 +112,32 @@ def pin_policy(configuration: dict, match: re.Match, update_type: str) -> dict:
     )
 
 
+def inherited_configuration(local: dict) -> dict:
+    common = json.loads((ROOT / "renovate-presets/common.json").read_text())
+    rust = json.loads((ROOT / "renovate-presets/rust.json").read_text())
+    common["packageRules"] += rust["packageRules"] + local["packageRules"]
+    common["customManagers"] += local["customManagers"]
+    common.update(
+        {
+            key: value
+            for key, value in local.items()
+            if key not in {"packageRules", "customManagers"}
+        }
+    )
+    return common
+
+
 class DevContainerRenovateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.configuration = json.loads(
             (ROOT / ".github/renovate.json").read_text(encoding="utf-8")
         )
+        self.configuration = inherited_configuration(self.configuration)
         self.dockerfile = (ROOT / DOCKERFILE_PATH).read_text(encoding="utf-8")
 
     def test_all_seven_operational_pins_have_one_real_extraction_owner(self) -> None:
         pins = validate_ownership(self.configuration, self.dockerfile)
-        self.assertEqual(len(pins), 7)
+        self.assertEqual(len(pins), len(EXPECTED_PINS))
         self.assertTrue(all(match["currentValue"] for _, match in pins))
 
     def test_missing_tool_marker_cannot_silently_drop_a_dependency(self) -> None:
@@ -203,8 +227,7 @@ class DevContainerRenovateTests(unittest.TestCase):
         rules = [
             rule
             for rule in self.configuration["packageRules"]
-            if rule.get("description")
-            == "Keep non-major Dev Container image updates together"
+            if rule.get("description") == "Keep non-major Dev Container image updates together"
         ]
         self.assertEqual(len(rules), 1)
         self.assertEqual(rules[0]["matchManagers"], ["custom.regex"])
@@ -216,32 +239,27 @@ class DevContainerRenovateTests(unittest.TestCase):
         self.assertEqual(self.configuration["minimumReleaseAge"], "3 days")
         self.assertNotIn("scripts/install-kubernetes-tools.sh", rules[0]["matchFileNames"])
 
-    def test_all_seven_pins_require_effective_manual_review_after_generic_rules(self) -> None:
+    def test_all_seven_image_context_pins_are_held_without_manual_approval(self) -> None:
         for _, match in validate_ownership(self.configuration, self.dockerfile):
             for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
                 with self.subTest(dependency=match["depName"], update=update_type):
                     policy = pin_policy(self.configuration, match, update_type)
-                    self.assertIs(policy["automerge"], False)
-                    self.assertIs(policy["dependencyDashboardApproval"], True)
+                    self.assertIs(policy["automerge"], True)
+                    self.assertIs(policy["dependencyDashboardApproval"], False)
                     self.assertEqual(policy["minimumReleaseAge"], "3 days")
                     if update_type != "major":
-                        self.assertEqual(policy["groupName"], "Dev Container toolchain")
+                        expected = (
+                            "Shared BoxFerry automation"
+                            if match["depName"] == "docker.io/library/node"
+                            else "Dev Container toolchain"
+                        )
+                        self.assertEqual(policy["groupName"], expected)
 
-    def test_missing_or_misordered_manual_rule_exposes_generic_automerge(self) -> None:
-        manual = next(
-            rule
-            for rule in self.configuration["packageRules"]
-            if rule.get("description")
-            == "Require manual review of Dev Container image and tool updates"
-        )
-        for place_first in (False, True):
-            changed = copy.deepcopy(self.configuration)
-            changed["packageRules"].remove(manual)
-            if place_first:
-                changed["packageRules"].insert(0, copy.deepcopy(manual))
-            for _, match in validate_ownership(changed, self.dockerfile):
-                with self.subTest(dependency=match["depName"], misplaced=place_first):
-                    self.assertIs(pin_policy(changed, match, "patch")["automerge"], True)
+    def test_unwanted_manual_override_is_observable(self) -> None:
+        changed = copy.deepcopy(self.configuration)
+        changed["packageRules"].append({"matchFileNames": [DOCKERFILE_PATH], "automerge": False})
+        for _, match in validate_ownership(changed, self.dockerfile):
+            self.assertIs(pin_policy(changed, match, "patch")["automerge"], False)
 
     def test_manual_dockerfile_review_does_not_capture_normal_cargo_dependencies(self) -> None:
         policy = effective_policy(
@@ -384,6 +402,7 @@ class KubernetesToolRenovateTests(unittest.TestCase):
         self.configuration = json.loads(
             (ROOT / ".github/renovate.json").read_text(encoding="utf-8")
         )
+        self.configuration = inherited_configuration(self.configuration)
 
     def validate(self, configuration: dict, source: str) -> list[tuple[dict, re.Match]]:
         pins = extracted_pins(configuration, source, self.path)
@@ -442,10 +461,7 @@ class KubernetesToolRenovateTests(unittest.TestCase):
                 datasource = match.groupdict().get("datasource") or manager.get(
                     "datasourceTemplate"
                 )
-                marker = (
-                    f"# renovate: datasource={datasource} "
-                    f'depName={match["depName"]}'
-                )
+                marker = f"# renovate: datasource={datasource} depName={match['depName']}"
                 with self.assertRaises(ValueError):
                     self.validate(self.configuration, self.source.replace(marker, "", 1))
                 duplicate = copy.deepcopy(self.configuration)
@@ -486,14 +502,13 @@ class KubernetesToolRenovateTests(unittest.TestCase):
                     self.assertEqual(policy["minimumReleaseAge"], "3 days")
                     self.assertEqual(policy["groupName"], "Kubernetes development tools")
 
+
 class KubernetesInstallerTests(unittest.TestCase):
     def exercise(self, machine: str, failure: str = "", system: str = "Linux") -> None:
         source = (ROOT / "scripts/install-kubernetes-tools.sh").read_text(encoding="utf-8")
         versions = dict(re.findall(r'readonly (\w+)_version="([^"]+)"', source))
         kind_tags = dict(
-            re.findall(
-                r'(?m)^readonly kind_(amd64|arm64)_release="(v[0-9.]+)"', source
-            )
+            re.findall(r'(?m)^readonly kind_(amd64|arm64)_release="(v[0-9.]+)"', source)
         )
         self.assertEqual(set(versions), {"kubectl", "helm", "kustomize"})
         self.assertEqual(set(kind_tags), {"amd64", "arm64"})
@@ -503,15 +518,12 @@ class KubernetesInstallerTests(unittest.TestCase):
             shim = root / "shim"
             shim.mkdir()
             assets = {}
-            binaries = {
-                tool: f"#!/bin/sh\necho {tool}\n".encode()
-                for tool in ("kind", *versions)
-            }
+            binaries = {tool: f"#!/bin/sh\necho {tool}\n".encode() for tool in ("kind", *versions)}
             urls = {
-                "kind": f'https://github.com/kubernetes-sigs/kind/releases/download/{kind_tags[architecture]}/kind-linux-{architecture}',
-                "kubectl": f'https://dl.k8s.io/release/v{versions["kubectl"]}/bin/linux/{architecture}/kubectl',
-                "helm": f'https://get.helm.sh/helm-v{versions["helm"]}-linux-{architecture}.tar.gz',
-                "kustomize": f'https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v{versions["kustomize"]}/kustomize_v{versions["kustomize"]}_linux_{architecture}.tar.gz',
+                "kind": f"https://github.com/kubernetes-sigs/kind/releases/download/{kind_tags[architecture]}/kind-linux-{architecture}",
+                "kubectl": f"https://dl.k8s.io/release/v{versions['kubectl']}/bin/linux/{architecture}/kubectl",
+                "helm": f"https://get.helm.sh/helm-v{versions['helm']}-linux-{architecture}.tar.gz",
+                "kustomize": f"https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v{versions['kustomize']}/kustomize_v{versions['kustomize']}_linux_{architecture}.tar.gz",
             }
             for tool, payload in binaries.items():
                 asset = root / f"{tool}.asset"
@@ -547,7 +559,8 @@ class KubernetesInstallerTests(unittest.TestCase):
             installer = root / "install.sh"
             installer.write_text(source, encoding="utf-8")
             (shim / "uname").write_text(
-                '#!/bin/sh\ncase "$1" in -s) echo "$TEST_SYSTEM";; -m) echo "$TEST_MACHINE";; esac\n',
+                '#!/bin/sh\ncase "$1" in -s) echo "$TEST_SYSTEM";; '
+                '-m) echo "$TEST_MACHINE";; esac\n',
                 encoding="utf-8",
             )
             (shim / "curl").write_text(
@@ -555,7 +568,8 @@ class KubernetesInstallerTests(unittest.TestCase):
                 "import json, os, shutil, sys\n"
                 "from pathlib import Path\n"
                 "with open(os.environ['TEST_LOG'], 'a') as log: log.write(sys.argv[-1] + '\\n')\n"
-                "if os.environ['TEST_FAILURE'] == 'download' and 'get.helm.sh' in sys.argv[-1]: sys.exit(22)\n"
+                "if os.environ['TEST_FAILURE'] == 'download' and 'get.helm.sh' in sys.argv[-1]:\n"
+                " sys.exit(22)\n"
                 "assets = json.loads(os.environ['TEST_ASSETS'])\n"
                 "shutil.copyfile(assets[sys.argv[-1]], sys.argv[sys.argv.index('--output') + 1])\n",
                 encoding="utf-8",
@@ -608,6 +622,120 @@ class KubernetesInstallerTests(unittest.TestCase):
     def test_unsupported_platforms_fail_before_download(self) -> None:
         self.exercise("s390x")
         self.exercise("x86_64", system="Darwin")
+
+
+class SingleCloneLifecycleTests(unittest.TestCase):
+    def test_default_config_uses_vscode_mount_and_only_existing_volumes(self) -> None:
+        config = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())
+        self.assertNotIn("workspaceMount", config)
+        self.assertNotIn("workspaceFolder", config)
+        self.assertEqual(
+            config["mounts"],
+            [
+                "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
+                "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
+            ],
+        )
+        self.assertEqual(config["postCreateCommand"], "bash .devcontainer/verify-tools.sh")
+
+    def exercise(self, case: str) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+        with tempfile.TemporaryDirectory(prefix="boxferry single clone ") as temporary:
+            fixture = Path(temporary)
+            binary = fixture / "bin"
+            binary.mkdir()
+            log = fixture / "calls.jsonl"
+            cargo = fixture / "cargo"
+            github = fixture / "gh"
+            cargo.mkdir()
+            github.mkdir(mode=0o755)
+            tools = (
+                "actionlint cargo cargo-clippy cargo-deny cargo-llvm-cov cargo-semver-checks "
+                "curl gh git hadolint helm jq kind kubectl kustomize lychee markdownlint-cli2 "
+                "node npm prettier rustc rustfmt rustup shellcheck shfmt "
+                "tombi uv zizmor sudo podman"
+            ).split()
+            program = (
+                f"#!{sys.executable}\n"
+                "import json, os, subprocess, sys\n"
+                "from pathlib import Path\n"
+                "name = Path(sys.argv[0]).name\n"
+                "args = sys.argv[1:]\n"
+                "with open(os.environ['TOOL_CALLS'], 'a') as stream:\n"
+                "    stream.write(json.dumps([name, *args]) + '\\n')\n"
+                "if name in ('sudo', 'podman'):\n"
+                "    raise SystemExit(99)\n"
+                "if name == 'git':\n"
+                "    if args == ['--version']:\n"
+                "        raise SystemExit(subprocess.run(['/usr/bin/git', *args]).returncode)\n"
+                "    if args != ['-C', os.environ['EXPECTED_CHECKOUT'], "
+                "'rev-parse', '--show-toplevel']:\n"
+                "        raise SystemExit(98)\n"
+                "    if os.environ['LIFECYCLE_CASE'] == 'wrong-root':\n"
+                "        print(Path(os.environ['EXPECTED_CHECKOUT']).parent)\n"
+                "        raise SystemExit(0)\n"
+                "    raise SystemExit(subprocess.run(['/usr/bin/git', *args]).returncode)\n"
+                "if name == 'rustup' and args == ['component', 'list', '--installed']:\n"
+                "    print('clippy-x86_64-unknown-linux-gnu')\n"
+                "    if os.environ['LIFECYCLE_CASE'] != 'missing-llvm':\n"
+                "        print('llvm-tools-preview-x86_64-unknown-linux-gnu')\n"
+                "elif name == 'rustup' and args == ['show', 'active-toolchain']:\n"
+                "    print('1.98.1-x86_64-unknown-linux-gnu')\n"
+                "else:\n"
+                "    print('fixture client version')\n"
+            )
+            for name in tools:
+                tool = binary / name
+                tool.write_text(program)
+                tool.chmod(0o755)
+            script = ROOT / ".devcontainer/verify-tools.sh"
+            checkout = ROOT.resolve()
+            if case == "missing-checkout":
+                checkout = fixture / "not-a-checkout"
+                script = checkout / ".devcontainer/verify-tools.sh"
+                script.parent.mkdir(parents=True)
+                script.write_bytes((ROOT / ".devcontainer/verify-tools.sh").read_bytes())
+            environment = {
+                **os.environ,
+                "PATH": str(binary) + ":/usr/bin:/bin",
+                "CARGO_HOME": str(cargo),
+                "GH_CONFIG_DIR": str(github),
+                "TOOL_CALLS": str(log),
+                "EXPECTED_CHECKOUT": str(checkout),
+                "LIFECYCLE_CASE": case,
+            }
+            environment.pop("GIT_DIR", None)
+            environment.pop("GIT_WORK_TREE", None)
+            completed = subprocess.run(
+                ["bash", str(script)],
+                cwd=fixture,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertFalse(any(call[0] in {"sudo", "podman"} for call in calls))
+            self.assertEqual(stat.S_IMODE(github.stat().st_mode), 0o700)
+            return completed, calls
+
+    def test_own_worktree_passes_without_sibling_clones_or_runtime_commands(self) -> None:
+        completed, calls = self.exercise("valid")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(["git", "-C", str(ROOT.resolve()), "rev-parse", "--show-toplevel"], calls)
+        self.assertIn("tooling is ready", completed.stdout)
+
+    def test_missing_or_misbound_own_checkout_fails(self) -> None:
+        for case in ("missing-checkout", "wrong-root"):
+            with self.subTest(case=case):
+                completed, _calls = self.exercise(case)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("requires its own Git checkout", completed.stderr)
+
+    def test_existing_missing_component_failure_is_retained(self) -> None:
+        completed, _calls = self.exercise("missing-llvm")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("missing Rust component: llvm-tools-preview", completed.stderr)
 
 
 if __name__ == "__main__":

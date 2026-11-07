@@ -12,9 +12,9 @@ Run the complete deterministic gate before every pull request:
 
 ## Test layers and independent scenarios
 
-Unit tests protect model invariants, mappings, diagnostics and redaction; adapter tests protect
+Unit tests protect model invariants, mappings, diagnostics and redaction; adapters protect
 native/neutral contracts. Golden, CLI, documentation and opt-in conformance tests cover artifacts,
-commands, safety and reviewed external tools. Test positive, failure, unsupported, privacy and
+commands, safety and reviewed tools. Cover positive, failure, unsupported, privacy and
 version-boundary cases. See [fast offline CLI testing](public/development/testing/index.md#fast-offline-cli-feedback).
 
 The [scenario contract](../fixtures/README.md#migration-scenario-contracts) independently checks
@@ -58,21 +58,20 @@ Fixtures include all resource kinds, pods and standalone containers, isolated an
 volumes and bind mounts, dependencies, protected metadata, incomplete resources, ambiguous
 references, malformed observations, and redaction.
 
-The normal deterministic gate needs no live Podman service or historical Podman container image.
+The deterministic gate needs no live Podman service or historical image.
 
 ### Live Podman conformance
 
 [`scripts/podman-live-conformance.sh`](../scripts/podman-live-conformance.sh) is the
 single inner live harness. It starts only digest-pinned nested images from
 [`fixtures/conformance/podman-live/matrix.tsv`](../fixtures/conformance/podman-live/matrix.tsv).
-It never mounts the host Podman socket or repository checkout into a target. Each verified
+Targets never receive the host Podman socket or repository checkout. Each verified
 cell reports reviewed and observed versions, API and package revisions, distribution,
-architecture, root mode, lane, transport, and resource-coverage level. Artifacts are removed
-after success unless `--retain-artifacts` is selected.
+architecture, root mode, lane, transport, and resource-coverage level. Success removes artifacts unless `--retain-artifacts` is selected.
 
 See [ADR 0057](decisions/0057-run-owned-podman-live-storage.md) for run-owned storage cleanup.
 
-The runner creates production-shaped test applications with stopped and running containers,
+Production-shaped applications include stopped and running containers,
 health states, pods, standalone services, aliases, volumes, bind and tmpfs mounts, labels,
 environment evidence, runtime policy, and conditional secrets. It exercises every selector
 and exporter plus glob rejection, socket discovery, reimports, deterministic output, strict
@@ -80,7 +79,7 @@ loss policy, and redaction. Exact run labels and identities bound cleanup. Gener
 run only in the disposable apply/reacquire target; BoxFerry itself remains non-executing.
 
 The 48-cell complete matrix currently has 43 full cells and five reviewed UBI/openSUSE
-rootless limitations. Those five images combine file capabilities and setuid bits on
+rootless limitations. Those images combine file capabilities and setuid bits on
 `newuidmap` and `newgidmap`, causing second-namespace `uid_map` setup to fail. The runner
 verifies `helper-privilege-collision` and claims no resource coverage for those cells. The
 [live-catalogue contract](../fixtures/conformance/podman-live/) keeps revalidation separate. Remove
@@ -117,9 +116,9 @@ The separate `forgejo-application` profile runs reviewed `podman-arch-rootful` a
 Compose. Compose provisions the boundary peer as a separate project on the external edge, keeping
 selector ownership independent. It proves private-repository creation, HTTP push/clone, SSH clone/push, database
 non-publication, selector isolation, report redaction, and both named volumes after container
-recreation. Rootless alone receives the no-firewall drop-in; the reviewed Arch rootful target
-retains stock Netavark configuration and includes `nft`, so both published ports are exercised. The reviewed upstream-source rootful target is excluded because its missing `nft` makes real
-DNAT impossible. Expected cold duration is below 12 minutes.
+recreation. Only rootless receives the no-firewall drop-in. Arch rootful retains stock Netavark and `nft`,
+so both published ports are exercised. The reviewed upstream-source rootful target is excluded because its missing `nft` makes real
+DNAT impossible. Expected cold duration: below 12 minutes.
 
 ```console
 cargo build --locked --package boxferry --bin boxferry --features podman
@@ -154,27 +153,27 @@ cargo build --locked --package boxferry --bin boxferry --features podman
 BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile full-container --engine podman
 ```
 
-Resume a transiently interrupted complete run at the first unproved cell:
+Resume transiently interrupted runs at the first unproved cell:
 
 ```console
 BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile full-container --matrix-start-at podman-alpine-3.24-rootful --engine podman
 ```
 
-Every profile prints its plan and timestamped start/pass/fail events with elapsed time.
+Profiles print plans and timestamped start/pass/fail events with elapsed time.
 Named deadlines bound setup, runtime/BoxFerry calls and cleanup. Host-verified image
 digests and transferred archives avoid nested registry access.
 
 Manual `workflow_dispatch` runs the same smoke profile or all 48 container cells. The current
-complete profile totals 1,322 checks; there is deliberately no nightly schedule.
+complete profile totals 1,322 checks, without a nightly schedule.
 
 ## Gate contents
 
 `./scripts/format-lint.sh --fix` formats and lints without tests. `./scripts/check-all.sh` also tests
 every Cargo target and feature boundary, checks Rust 1.98.1, audits dependencies, builds Rustdoc,
 checks coverage floors and local links, and validates publishable packages.
-Changelog validation is a dedicated job required by the aggregate gate.
+Changelog validation: dedicated job required by the aggregate gate.
 
-Coverage is a regression ratchet, not proof of semantic correctness.
+Coverage ratchets regressions; it does not prove semantics.
 
 ## Release binary evidence
 
@@ -183,3 +182,13 @@ checksums for the exact six-target revision and run. Before packaging, each bina
 capability and Compose → Quadlet → Compose smoke tests. Four 64-bit targets run natively; two
 32-bit Linux targets use direct QEMU user-mode emulation. This does not prove native kernel,
 systemd or runtime behavior. Hosted success establishes candidate evidence; see [release guidance](releasing.md).
+
+## Shared caller regression boundaries
+
+`scripts/test-shared-automation.py --structural` checks independently expected task selection,
+trusted-policy failures, all fifteen ordinary policy jobs, development/published API
+separation and protected release consumption. The dedicated `NativeRenovateContracts`
+lane retains the integrity-pinned native parser requirement. `scripts/test-check-all.sh`
+checks command dispatch and failure propagation with inert stubs. Ordinary validation
+contains no Dev Container image-build or private-store qualification step; image and
+updater qualification stay separate under #563.

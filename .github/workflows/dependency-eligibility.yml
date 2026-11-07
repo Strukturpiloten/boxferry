@@ -11,16 +11,18 @@ permissions:
   contents: read
   pull-requests: read
   statuses: write
+# Reviewed immutable bootstrap infrastructure; no automation release exists yet (ADR 0092).
 jobs:
   eligibility:
+    name: Trusted dependency metadata
+    if: >-
+      github.event_name == 'schedule' || (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'merge_group'))
     permissions:
       actions: write
       checks: read
       contents: read
       pull-requests: write
       statuses: write
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'merge_group'))
-    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
-    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@322024da130587ba14ea9f7eb499e5f41a07e43d # reviewed bootstrap; no automation release tag exists (ADR 0092)
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
     with:
-      automation-sha: 322024da130587ba14ea9f7eb499e5f41a07e43d
+      automation-sha: 9eb757145e7e078ba8944df525c9884eec87effc

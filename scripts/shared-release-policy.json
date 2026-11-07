@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "repository": "Strukturpiloten/boxferry",
+  "packages": [
+    "boxferry-model",
+    "boxferry-engine",
+    "boxferry-compose",
+    "boxferry-podman",
+    "boxferry-quadlet",
+    "boxferry"
+  ],
+  "required_jobs": [
+    "deterministic",
+    "release-metadata",
+    "migration-readiness",
+    "migration-readiness-evidence",
+    "release-binary-evidence"
+  ],
+  "publication_enabled": true,
+  "bootstrap_version": "0.1.1"
+}

@@ -371,7 +371,7 @@ class NodeSetupTests(unittest.TestCase):
             for value in (
                 "path: _automation",
                 "actions/shared-python",
-                "&node_toolchain",
+                "Install pinned Node.js toolchain",
                 "Validate candidate shared Node composite",
                 "Check Python formatting",
             )

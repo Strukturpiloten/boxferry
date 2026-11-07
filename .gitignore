@@ -489,3 +489,7 @@ temp*/
 .boxferry-workspace/
 .codegraph/
 .lycheecache
+
+# Root-only auxiliary checkouts created by CI.
+/_automation/
+/.validation-base/

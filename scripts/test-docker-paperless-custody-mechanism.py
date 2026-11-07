@@ -216,7 +216,9 @@ class TrackedMainAuthority(unittest.TestCase):
             elif stat.S_ISREG(observed.st_mode):
                 shutil.copy2(source, target)
             else:
-                raise ValueError("fixture snapshot source must be a regular file or symlink")
+                raise ValueError(
+                    f"fixture snapshot source must be a regular file or symlink: {name!r}"
+                )
             copied.add(name)
         final_deleted = frozenset(name for name in cls.git(
             source_root, "ls-files", "--deleted", "-z"
@@ -248,6 +250,68 @@ class TrackedMainAuthority(unittest.TestCase):
         self.revision = self.commit()
         snapshot_tracked = frozenset(name for name in self.git(self.main, "ls-files", "--cached", "-z").split("\0") if name)
         self.assertEqual(snapshot_tracked, self.tracked)
+
+    def test_snapshot_excludes_only_known_root_ci_checkouts(self) -> None:
+        source = self.base / "ci-layout-source"
+        destination = self.base / "ci-layout-snapshot"
+        source.mkdir()
+        destination.mkdir()
+        self.git(source, "init", "--quiet")
+        (source / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+        (source / "tracked.txt").write_bytes(b"tracked source\n")
+        self.git(source, "add", "--all")
+        self.git(source, "commit", "--quiet", "--no-gpg-sign", "-m", "initial source")
+
+        def checkout(name: str) -> Path:
+            path = source / name
+            path.mkdir()
+            self.git(path, "init", "--quiet")
+            (path / "payload.txt").write_bytes(b"auxiliary checkout payload\n")
+            self.git(path, "add", "payload.txt")
+            self.git(path, "commit", "--quiet", "--no-gpg-sign", "-m", "CI checkout")
+            return path
+
+        for name in ("_automation", ".validation-base"):
+            checkout(name)
+            # CI creates nested repositories, not parent-index gitlinks.
+            self.assertEqual(self.git(source, "ls-files", "--stage", "--", name), "")
+            ordinary = source / "nested" / name / "ordinary.txt"
+            ordinary.parent.mkdir(parents=True)
+            ordinary.write_bytes(b"ordinary nested source\n")
+        (source / "new.txt").write_bytes(b"new working source\n")
+        (source / "working-link").symlink_to("missing-target")
+        copied = self.snapshot_source(source, destination)
+        self.assertEqual(copied, {
+            ".gitignore", "tracked.txt", "new.txt", "working-link",
+            "nested/_automation/ordinary.txt", "nested/.validation-base/ordinary.txt",
+        })
+        for name in ("_automation", ".validation-base"):
+            self.assertFalse((destination / name).exists())
+            self.assertEqual(
+                (destination / "nested" / name / "ordinary.txt").read_bytes(),
+                b"ordinary nested source\n",
+            )
+        self.assertEqual((destination / "new.txt").read_bytes(), b"new working source\n")
+        self.assertTrue((destination / "working-link").is_symlink())
+        self.assertEqual(os.readlink(destination / "working-link"), "missing-target")
+
+        unknown = checkout("unknown-checkout")
+        rejected = self.base / "unknown-checkout-snapshot"
+        rejected.mkdir()
+        with self.assertRaisesRegex(ValueError, r"'unknown-checkout/'"):
+            self.snapshot_source(source, rejected)
+        shutil.rmtree(unknown)
+
+        # Git does not enumerate an untracked FIFO; replace an indexed regular file.
+        unsupported = source / "unsupported.pipe"
+        unsupported.write_bytes(b"original regular source\n")
+        self.git(source, "add", "--", "unsupported.pipe")
+        unsupported.unlink()
+        os.mkfifo(unsupported)
+        rejected = self.base / "unsupported-snapshot"
+        rejected.mkdir()
+        with self.assertRaisesRegex(ValueError, r"'unsupported\.pipe'"):
+            self.snapshot_source(source, rejected)
 
     def test_snapshot_tracks_working_bytes_and_nonignored_new_files(self):
         source, destination = self.base / "source", self.base / "snapshot"

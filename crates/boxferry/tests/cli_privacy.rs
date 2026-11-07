@@ -11,7 +11,7 @@ use std::{
     fmt::Write as _,
     fs,
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -40,6 +40,23 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+// Shared CI has its own tooling environment; application assertions need this
+// candidate's locked test prerequisites without host Python import paths.
+fn application_assertion_bash(repository: &Path) -> Command {
+    let mut command = Command::new("uv");
+    command
+        .args(["run", "--locked", "--project"])
+        .arg(repository.join("automation"))
+        .arg("bash")
+        .env_remove("VIRTUAL_ENV")
+        .env_remove("UV_PROJECT_ENVIRONMENT")
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env("PYTHONNOUSERSITE", "1")
+        .env("PYTHONSAFEPATH", "1");
+    command
 }
 
 fn assert_report_without_value(output: &[u8], value: &str, name: &str) -> Result<(), Box<dyn Error>> {
@@ -263,7 +280,7 @@ fn paperless_withheld_broker_assertion_matches_real_compose_omission_and_quadlet
         }
         let report = scratch.0.join(format!("{target}.report.json"));
         fs::write(&report, &output.stdout)?;
-        let result = Command::new("bash")
+        let result = application_assertion_bash(&repository)
             .args([
                 "-c",
                 "source \"$1\"; paperless_assert_withheld_broker_command \"$2\" \"$3\" \"$4\" fixture",
@@ -404,7 +421,7 @@ fn paperless_podman_health_findings_coexist_with_export_omission_evidence() -> R
             }
             let report_path = scratch.0.join(format!("{health_kind}-{target}.report.json"));
             fs::write(&report_path, &output.stdout)?;
-            let result = Command::new("bash")
+            let result = application_assertion_bash(&repository)
                 .args([
                     "-c",
                     "source \"$1\"; paperless_assert_withheld_broker_command \"$2\" \"$3\" \"$4\" paperless-captured",

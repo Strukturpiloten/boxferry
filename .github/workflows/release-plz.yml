@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - ".cargo/**"
-      - ".github/scripts/publish-crate.sh"
+      - "scripts/shared-release-policy.json"
       - ".github/workflows/release-plz.yml"
       - ".github/workflows/release.yml"
       - "Cargo.lock"
@@ -28,52 +28,18 @@ jobs:
   prepare-release-pr:
     name: Prepare release pull request
     if: github.repository == 'Strukturpiloten/boxferry'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
     permissions:
       contents: read
-    concurrency:
-      group: release-plz-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Create release-plz GitHub App token
-        id: app-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
-          owner: ${{ github.repository_owner }}
-          permission-contents: write
-          permission-pull-requests: write
-          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
-          repositories: ${{ github.event.repository.name }}
-
-      - name: Explain GitHub App token setup failure
-        if: steps.app-token.outcome == 'failure'
-        shell: bash
-        run: |
-          {
-            echo "GitHub could not create the release-plz App installation token."
-            echo "Set the RELEASE_PLZ_APP_CLIENT_ID organization Actions variable to the App client ID."
-            echo "Grant the App Contents and Pull requests read/write repository permissions."
-            echo "Then approve the updated permissions for the App installation on this repository."
-          } >&2
-          exit 1
-
-      - name: Create or update release pull request
-        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
-        with:
-          command: release-pr
-          # renovate: datasource=crate depName=release-plz
-          version: "0.4.0"
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-prepare.yml@9eb757145e7e078ba8944df525c9884eec87effc # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 9eb757145e7e078ba8944df525c9884eec87effc
+      policy_sha: ${{ github.sha }}
+      config_path: scripts/shared-validation-policy.json
+      app_client_id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+    secrets:
+      app_private_key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
 
   dispatch-release:
     name: Dispatch protected release after release-plz merge
