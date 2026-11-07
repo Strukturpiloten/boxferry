@@ -1,0 +1,127 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#5b4deb3fa2e06a0eea1643bbbdecec34e18b1281"
+  ],
+  "enabledManagers": [
+    "cargo",
+    "github-actions",
+    "rust-toolchain",
+    "custom.regex",
+    "pep621",
+    "pyenv"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/fixtures/**",
+    "**/tests/**",
+    "docs/evidence/**",
+    "**/.shared-tools/**",
+    "**/.validation-base/**",
+    "docs/compatibility/**",
+    "schemas/capabilities/**",
+    "**/_automation/**",
+    "**/_policy/**",
+    "**/.ci-tools/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": [
+        "Update the immutable official Renovate operational-test image as one version/digest pair"
+      ],
+      "managerFilePatterns": ["/^scripts/renovate-tool\\.json$/"],
+      "matchStrings": [
+        "\"image\":\\s*\"(?<depName>ghcr\\.io/renovatebot/renovate):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "\"image\": \"{{{depName}}}:{{{newValue}}}@{{{newDigest}}}\""
+    },
+    {
+      "customType": "regex",
+      "description": [
+        "One owned rootful-kind Fedora CoreOS QEMU base image; exact operational path only"
+      ],
+      "managerFilePatterns": ["/^scripts/kind-vm-image\\.json$/"],
+      "matchStrings": [
+        "^\\s*\\{\\s*\"schema\":\\s*\"kubernetes-lens-owned-vm-image-v1\",\\s*\"release\":\\s*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)\",\\s*\"archive_sha256\":\\s*\"(?<currentDigest>[a-f0-9]{64})\"\\s*\\}\\s*$"
+      ],
+      "depNameTemplate": "fedora-coreos-qemu-x86_64-stable",
+      "datasourceTemplate": "custom.fcos-qemu-x86_64-stable",
+      "versioningTemplate": "regex:^(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)\\.(?<build>[0-9]+)$",
+      "autoReplaceStringTemplate": "{\n  \"schema\": \"kubernetes-lens-owned-vm-image-v1\",\n  \"release\": \"{{{newValue}}}\",\n  \"archive_sha256\": \"{{{newDigest}}}\"\n}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": ["Keep hosted runner environment changes"],
+      "matchDatasources": ["github-runners"],
+      "groupName": "GitHub-hosted runners"
+    },
+    {
+      "description": [
+        "Node runtime comes from the reviewed shared inventory, not a second local version pin"
+      ],
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["uses-with"],
+      "matchPackageNames": ["actions/node-versions"],
+      "enabled": false
+    },
+    {
+      "description": [
+        "Keep operational tool-image tag/digest and actual-engine evidence with automated compatibility and integrity checks"
+      ],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/renovatebot/renovate"],
+      "groupName": "Operational test tools",
+      "pinDigests": true
+    },
+    {
+      "description": [
+        "Keep bundled native timezone data with automated compatibility and integrity checks; recognition is versioned evidence"
+      ],
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["jiff-tzdb"],
+      "groupName": "Native timezone data"
+    },
+    {
+      "description": [
+        "Keep native binary codec integrity and padding semantics with automated compatibility and integrity checks"
+      ],
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["base64"],
+      "groupName": "Native binary codecs"
+    },
+    {
+      "description": [
+        "Keep supervised renderer isolation, descriptor and digest dependencies with automated compatibility and integrity checks"
+      ],
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["nix", "rustix", "command-fds", "close_fds", "sha2"],
+      "groupName": "Supervised renderer dependencies"
+    },
+    {
+      "description": [
+        "Keep the qualified FCOS VM as the fixed conformance target for this overhaul; ADR0101 qualification and exact image coupling remain unchanged."
+      ],
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["custom.fcos-qemu-x86_64-stable"],
+      "matchPackageNames": ["fedora-coreos-qemu-x86_64-stable"],
+      "groupName": "Owned kind VM image",
+      "matchFileNames": ["scripts/kind-vm-image.json"],
+      "enabled": false
+    }
+  ],
+  "customDatasources": {
+    "fcos-qemu-x86_64-stable": {
+      "defaultRegistryUrlTemplate": "https://builds.coreos.fedoraproject.org/streams/stable.json",
+      "format": "json",
+      "transformTemplates": [
+        "($a := architectures.x86_64.artifacts.qemu; $d := $a.formats.\"qcow2.xz\".disk; {\"releases\": stream = \"stable\" and $type($a.release) = \"string\" and $type($d.sha256) = \"string\" and $exists($match($a.release, /^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$/)) and $exists($match($d.sha256, /^[a-f0-9]{64}$/)) ? [{\"version\": $a.release, \"digest\": $d.sha256}] : []})"
+      ]
+    }
+  }
+}

@@ -1504,6 +1504,10 @@ def expected_ci_upgrade(trusted: bytes, before: str, after: str) -> bytes | None
         r"Strukturpiloten/boxferry/\.github/workflows/shared-[a-z0-9-]+\.yml@" + before + r"\Z"
     )
     local_action = re.compile(r"\./_automation/\.github/actions/shared-source\Z")
+    local_step_actions = {
+        "./_automation/.github/actions/shared-node",
+        "./_automation/.github/actions/shared-crate-publish",
+    }
     checkout = re.compile(r"actions/checkout@[0-9a-f]{40}\Z")
     annotation = re.compile(
         r"(?P<indent> *)# renovate: datasource=github-digest "
@@ -1580,7 +1584,13 @@ def expected_ci_upgrade(trusted: bytes, before: str, after: str) -> bytes | None
                 owner = parent.owner
                 if key in {"automation_sha", "automation-sha"}:
                     replace = bool(
-                        shared.fullmatch(owner.uses) or local_action.fullmatch(owner.uses)
+                        shared.fullmatch(owner.uses)
+                        or local_action.fullmatch(owner.uses)
+                        or (
+                            key == "automation-sha"
+                            and owner.kind == "step"
+                            and owner.uses in local_step_actions
+                        )
                     )
                 elif key == "ref" and parent.repository and checkout.fullmatch(owner.uses):
                     marker = annotation.fullmatch(lines[index - 1]) if index else None

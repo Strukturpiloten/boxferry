@@ -1,0 +1,409 @@
+---
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation_only:
+        description: Validate the exact candidate without tags, releases, attestations, or publication.
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  provider-config-conformance:
+    name: Validate observed provider configuration evidence
+    if: github.repository == 'Strukturpiloten/compose-lens'
+    uses: ./.github/workflows/provider-conformance.yml
+    permissions:
+      contents: read
+    with:
+      candidate_sha: ${{ github.sha }}
+
+  deterministic-validation:
+    name: Validate release candidate
+    if: github.repository == 'Strukturpiloten/compose-lens'
+    uses: ./.github/workflows/ci.yml
+    with:
+      api_purpose: published
+    permissions:
+      actions: read
+      contents: read
+      statuses: read
+
+  release-metadata-validation:
+    name: Validate release metadata
+    if: github.repository == 'Strukturpiloten/compose-lens'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require the default branch and valid release metadata
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          bash scripts/check-release-metadata.sh --release
+
+      - name: Expose exact validated candidate
+        id: candidate
+        run: printf 'sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+  release-gate:
+    name: Release validation gate
+    if: always()
+    needs:
+      - provider-config-conformance
+      - deterministic-validation
+      - release-metadata-validation
+    permissions:
+      contents: read
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-validation.yml@1cf96f5a667d96e66c119753cf7814e22e0dee7e # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+      policy_sha: ${{ github.sha }}
+      config_path: scripts/release-policy.json
+      needs_json: ${{ toJSON(needs) }}
+  crate-preparation:
+    name: Validate shared publication inventory without publishing
+    needs: release-gate
+    if: github.repository == 'Strukturpiloten/compose-lens' && needs.release-gate.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          path: _automation
+          persist-credentials: false
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Validate exact-gated crate inventory without credentials or registry access
+        uses: ./_automation/.github/actions/shared-crate-publish
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          release-config: ${{ github.workspace }}/source/scripts/release-policy.json
+          package: compose-lens
+          validation-sha: ${{ needs.release-gate.outputs.candidate_sha }}
+          validation-result: ${{ needs.release-gate.result }}
+          validation-only: "true"
+
+  release:
+    name: Publish ComposeLens
+    if: >-
+      github.repository == 'Strukturpiloten/compose-lens' &&
+      inputs.validation_only != true &&
+      needs.release-gate.result == 'success' &&
+      needs.crate-preparation.result == 'success'
+    needs: [release-gate, crate-preparation]
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_GITHUB_API_VERSION: "2026-03-10"
+    permissions:
+      artifact-metadata: write # Record artifact attestations for the packaged crate.
+      attestations: write # Sign the packaged crate's provenance attestation.
+      contents: write # Create the release tag and GitHub release.
+      id-token: write # Authenticate attestations and crates.io trusted publishing.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          path: _automation
+          persist-credentials: false
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Install configured Rust toolchain
+        working-directory: source
+        run: rustup show active-toolchain
+
+      - name: Derive and validate release metadata
+        id: metadata
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
+            exit 1
+          fi
+
+          version="$(
+            cargo metadata --locked --no-deps --format-version 1 |
+              jq -er '.packages[] | select(.name == "compose-lens") | .version'
+          )"
+          tag="v${version}"
+          notes="${RUNNER_TEMP}/compose-lens-release-notes-${version}.md"
+          crate="target/package/compose-lens-${version}.crate"
+
+          if ! bash scripts/extract-release-notes.sh "${version}" > "${notes}"; then
+            echo "CHANGELOG.md does not contain usable release notes for ${version}." >&2
+            exit 1
+          fi
+
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'tag=%s\n' "${tag}"
+            printf 'notes=%s\n' "${notes}"
+            printf 'crate=%s\n' "${crate}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build release package and checksum
+        shell: bash
+        env:
+          CRATE: ${{ steps.metadata.outputs.crate }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          cargo ci-package
+          sha256sum "${CRATE}" > "${CRATE}.sha256"
+
+      - name: Attest release package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ github.workspace }}/source/${{ steps.metadata.outputs.crate }}
+
+      - name: Create or verify annotated release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            tagged_commit="$(git rev-list -n 1 "${TAG}")"
+            if [[ "${tagged_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "${TAG} already points to ${tagged_commit}, not ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          else
+            tag_object_sha="$(
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                -f tag="${TAG}" \
+                -f message="ComposeLens ${TAG}" \
+                -f object="${GITHUB_SHA}" \
+                -f type=commit \
+                --jq '.sha'
+            )"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${tag_object_sha}"
+          fi
+
+      - name: Create or replace draft GitHub release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.metadata.outputs.notes }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          release_name="ComposeLens ${VERSION}"
+          releases="$(
+            gh api --paginate \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq --slurp '[.[][]]'
+          )"
+          published_count="$(
+            jq --raw-output --arg tag "${TAG}" \
+              '[.[] | select(.draft == false and .tag_name == $tag)] | length' \
+              <<< "${releases}"
+          )"
+          if [[ "${published_count}" != "0" ]]; then
+            echo "${TAG} is already associated with a published GitHub release." >&2
+            exit 1
+          fi
+
+          drafts="$(
+            jq --arg name "${release_name}" --arg tag "${TAG}" \
+              '[.[] |
+                select(
+                  .draft == true and
+                  (.tag_name == $tag or .name == $name)
+                )
+              ]' \
+              <<< "${releases}"
+          )"
+          draft_count="$(jq --raw-output 'length' <<< "${drafts}")"
+
+          case "${draft_count}" in
+            0)
+              ;;
+            1)
+              previous_release_id="$(jq --exit-status --raw-output '.[0].id' <<< "${drafts}")"
+              gh api --method DELETE \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                "repos/${GITHUB_REPOSITORY}/releases/${previous_release_id}"
+              ;;
+            *)
+              echo "Found ${draft_count} possible workflow drafts for ${TAG}; refusing to choose one." >&2
+              exit 1
+              ;;
+          esac
+
+          release="$(
+            jq --null-input \
+              --rawfile body "${NOTES}" \
+              --arg name "${release_name}" \
+              --arg tag "${TAG}" \
+              --arg target "${GITHUB_SHA}" \
+              '{
+                tag_name: $tag,
+                target_commitish: $target,
+                name: $name,
+                body: $body,
+                draft: true,
+                prerelease: false
+              }' |
+              gh api --method POST \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                "repos/${GITHUB_REPOSITORY}/releases" \
+                --input -
+          )"
+          release_id="$(jq --exit-status --raw-output '.id' <<< "${release}")"
+          upload_url="$(
+            jq --exit-status --raw-output \
+              '.upload_url | sub("\\{\\?name,label\\}$"; "")' \
+              <<< "${release}"
+          )"
+          expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets"
+          if [[ "${upload_url}" != "${expected_upload_url}" ]]; then
+            echo "GitHub returned an unexpected release asset upload URL." >&2
+            exit 1
+          fi
+
+          printf 'release_id=%s\n' "${release_id}" >> "${GITHUB_OUTPUT}"
+          printf 'upload_url=%s\n' "${upload_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload draft GitHub release assets
+        shell: bash
+        env:
+          CRATE: ${{ steps.metadata.outputs.crate }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          UPLOAD_URL: ${{ steps.release.outputs.upload_url }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          upload_asset() {
+            local asset_path="$1"
+            local content_type="$2"
+            local asset_name="${asset_path##*/}"
+            local response
+
+            test -f "${asset_path}"
+            if [[ ! "${asset_name}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "Unsafe release asset name: ${asset_name}" >&2
+              return 1
+            fi
+
+            response="$(
+              curl --proto '=https' \
+                --tlsv1.2 \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --connect-timeout 10 \
+                --max-time 120 \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                --header "Content-Type: ${content_type}" \
+                --data-binary "@${asset_path}" \
+                "${UPLOAD_URL}?name=${asset_name}"
+            )"
+            jq --exit-status --arg name "${asset_name}" \
+              '.name == $name and .state == "uploaded" and (.id | type == "number")' \
+              <<< "${response}" >/dev/null
+          }
+
+          expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets"
+          if [[ "${UPLOAD_URL}" != "${expected_upload_url}" ]]; then
+            echo "Release asset upload URL does not match the created release." >&2
+            exit 1
+          fi
+
+          upload_asset "${CRATE}" "application/gzip"
+          upload_asset "${CRATE}.sha256" "text/plain"
+
+      - name: Publish exact approved crate through shared mechanics
+        uses: ./_automation/.github/actions/shared-crate-publish
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          release-config: ${{ github.workspace }}/source/scripts/release-policy.json
+          package: compose-lens
+          validation-sha: ${{ needs.release-gate.outputs.candidate_sha }}
+          validation-result: ${{ needs.release-gate.result }}
+          validation-only: ${{ inputs.validation_only }}
+      - name: Publish immutable GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          jq --null-input '{draft: false, make_latest: "true"}' |
+            gh api --method PATCH \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              --input - \
+              --jq 'if .draft == false then .html_url
+                    else error("GitHub release remained a draft") end'

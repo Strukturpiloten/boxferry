@@ -1,0 +1,208 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+
+jobs:
+  validation-plan:
+    name: Validation plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      profile: ${{ steps.plan.outputs.profile }}
+      select_quality: ${{ steps.plan.outputs.select_quality }}
+      select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          path: _automation
+          persist-credentials: false
+      - name: Hold the exact candidate and trusted base policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          config-path: scripts/validation-policy.json
+      - name: Install canonical locked Python tooling
+        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+      - name: Plan from independently trusted policy
+        id: plan
+        env:
+          CONFIG: ${{ steps.source.outputs.config }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci plan \
+            --repository-root source --config "${CONFIG}" \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" \
+            --github-output "${GITHUB_OUTPUT}" --summary "${GITHUB_STEP_SUMMARY}"
+
+  quality:
+    name: Format, lint, test, and build
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_quality == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          path: _automation
+          persist-credentials: false
+      - name: Hold the exact candidate and trusted base policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          config-path: scripts/validation-policy.json
+      - name: Install canonical locked Python tooling
+        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+      - name: Install pinned Node.js toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.0
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Install checksum-pinned native file-quality tools
+        env:
+          PROFILE: ${{ needs.validation-plan.outputs.profile }}
+        run: |
+          set -euo pipefail
+          tool_dir="${RUNNER_TEMP}/boxferry-website-tools"
+          if [[ "${PROFILE}" == full ]]; then
+            bash source/scripts/install-file-tools.sh "${tool_dir}"
+          else
+            bash source/scripts/install-file-tools.sh "${tool_dir}" --lychee-only
+          fi
+          printf '%s\n' "${tool_dir}" >> "${GITHUB_PATH}"
+      - name: Run the independently selected website tasks
+        env:
+          CONFIG: ${{ steps.source.outputs.config }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          BOXFERRY_WEBSITE_FORMAT_MODE: check
+          BOXFERRY_WEBSITE_SOURCE_MODE: locked
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci run-local \
+            --repository-root source --config "${CONFIG}" \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" \
+            --report-json "${RUNNER_TEMP}/website-validation.json" \
+            --summary "${GITHUB_STEP_SUMMARY}"
+      - name: Retain structured website validation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: website-validation-${{ github.sha }}
+          path: ${{ runner.temp }}/website-validation.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  lockfile-release-age:
+    name: Dependency eligibility
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'
+    permissions:
+      contents: read
+      actions: read
+      statuses: read
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@b191fb5ffe32fe84d9cb0c851562044b0f0cc59b # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+
+  pr-gate:
+    name: Required CI
+    if: always()
+    needs: [validation-plan, quality, lockfile-release-age]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          path: _automation
+          persist-credentials: false
+      - name: Hold the exact candidate and trusted base policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          config-path: scripts/validation-policy.json
+      - name: Install canonical locked Python tooling
+        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.
+      - name: Require exact-candidate planned outcomes
+        env:
+          CONFIG: ${{ steps.source.outputs.config }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: b191fb5ffe32fe84d9cb0c851562044b0f0cc59b
+          PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci gate \
+            --repository-root source --config "${CONFIG}" \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" \
+            --plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON}" \
+            --summary "${GITHUB_STEP_SUMMARY}"
+
+  publish-site:
+    name: Publish validated website
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.pr-gate.result == 'success'
+    needs: [pr-gate]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy.yml # zizmor: ignore[self-repository] -- Same-commit reusable workflow; pinned actionlint 1.7.12 lacks $/ support.
+    secrets:
+      BOXFERRY_RSYNC_SSH_PRIVATE_KEY: ${{ secrets.BOXFERRY_RSYNC_SSH_PRIVATE_KEY }}
+      BOXFERRY_VERSION_UPDATER_SSH_PRIVATE_KEY: ${{ secrets.BOXFERRY_VERSION_UPDATER_SSH_PRIVATE_KEY }}
+    with:
+      operation: deploy
+      revision: ${{ github.sha }}
+      automatic: true

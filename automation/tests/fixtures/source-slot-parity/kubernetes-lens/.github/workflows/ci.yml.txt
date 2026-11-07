@@ -1,0 +1,266 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      api_purpose:
+        description: Explicit API baseline purpose; release validation requires published.
+        type: string
+        default: published
+    outputs:
+      candidate_sha:
+        description: Exact candidate whose complete selected checks succeeded.
+        value: ${{ jobs.pr-gate.outputs.candidate_sha }}
+      published_api_candidate_sha:
+        description: Exact candidate with successful published-purpose API validation.
+        value: ${{ jobs.pr-gate.outputs.published_api_candidate_sha }}
+
+permissions:
+  contents: read
+  actions: read
+  statuses: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validation-plan:
+    name: Validation plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      profile: ${{ steps.plan.outputs.profile }}
+      select_rust: ${{ steps.plan.outputs.select_rust }}
+      select_msrv: ${{ steps.plan.outputs.select_msrv }}
+      select_dependencies: ${{ steps.plan.outputs.select_dependencies }}
+      select_documentation: ${{ steps.plan.outputs.select_documentation }}
+      select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}
+    steps:
+      - name: Check out exact tested candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out trusted policy revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: _policy
+          persist-credentials: false
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+          path: _automation
+          persist-credentials: false
+      - name: Verify immutable implementation identity
+        env:
+          AUTOMATION_SHA: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+        run: test "$(git -C _automation rev-parse HEAD)" = "${AUTOMATION_SHA}"
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Select exact candidate checks from trusted base policy
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci plan \
+            --repository-root . --config _policy/scripts/validation-policy.json \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+  rust:
+    name: Rust quality
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_rust == 'true'
+    uses: ./.github/workflows/shared-rust-api.yml
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      api_purpose: ${{ inputs.api_purpose || 'development' }}
+  msrv:
+    name: Minimum supported Rust
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_msrv == 'true'
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@5b4deb3fa2e06a0eea1643bbbdecec34e18b1281 # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/validation-policy.json
+      task: msrv
+
+  dependencies:
+    name: Dependency and license policy
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_dependencies == 'true'
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-dependencies.yml@5b4deb3fa2e06a0eea1643bbbdecec34e18b1281 # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+      config_path: scripts/validation-policy.json
+
+  documentation:
+    name: Repository files and documentation
+    runs-on: ubuntu-24.04
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_documentation == 'true'
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact tested repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out trusted documentation policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: _policy
+          persist-credentials: false
+      - name: Check out canonical shared development tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+          path: _automation
+          persist-credentials: false
+      - name: Read Node runtime from the sole shared version inventory
+        id: shared-node
+        run: |
+          version="$(sed -n 's/^FROM docker.io\/library\/node:\([0-9.]*\)-bookworm-slim@sha256:.*/\1/p' _automation/.devcontainer/Dockerfile)"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+      - name: Install the shared pinned Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.shared-node.outputs.version }}
+      - name: Provision only repository-check tools from the shared immutable inventory
+        run: bash scripts/setup-ci-tools.sh _automation
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Check Python formatting
+        run: uv run --locked --project _automation/automation ruff format --check .
+      - name: Lint Python automation
+        run: uv run --locked --project _automation/automation ruff check .
+      - name: Type-check Python automation
+        run: uv run --locked --project _automation/automation ty check
+      - name: Extract the immutable official Renovate runtime with its actual RE2 engine
+        if: needs.validation-plan.outputs.profile != 'prose'
+        run: bash scripts/install-renovate-tool.sh
+      - name: Run selected documentation checks from trusted policy
+        env:
+          TASK: ${{ needs.validation-plan.outputs.profile == 'prose' && 'documentation-prose' || 'documentation' }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          uv run --locked --project _automation/automation python -m boxferry_ci run \
+            --repository-root . --config _policy/scripts/validation-policy.json \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" --task "${TASK}" \
+            --report-json .ci-tools/reports/documentation.json --summary "${GITHUB_STEP_SUMMARY}"
+
+  lockfile-release-age:
+    name: Dependency eligibility
+    needs: validation-plan
+    if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@5b4deb3fa2e06a0eea1643bbbdecec34e18b1281 # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+
+  pr-gate:
+    name: Required CI
+    if: always()
+    needs: [validation-plan, rust, msrv, dependencies, documentation, lockfile-release-age]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate_sha: ${{ steps.gate.outputs.candidate_sha }}
+      published_api_candidate_sha: ${{ steps.gate.outputs.published_api_candidate_sha }}
+    steps:
+      - name: Check out exact tested candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out trusted policy revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: _policy
+          persist-credentials: false
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+          path: _automation
+          persist-credentials: false
+      - name: Verify immutable implementation identity
+        env:
+          AUTOMATION_SHA: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+        run: test "$(git -C _automation rev-parse HEAD)" = "${AUTOMATION_SHA}"
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Require every selected check and only planned skips
+        id: gate
+        env:
+          PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          API_PURPOSE: ${{ inputs.api_purpose || 'development' }}
+          PUBLISHED_API_CANDIDATE_SHA: ${{ needs.rust.outputs.published_api_candidate_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          AUTOMATION_SHA: 5b4deb3fa2e06a0eea1643bbbdecec34e18b1281
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci gate \
+            --repository-root . --config _policy/scripts/validation-policy.json \
+            --event "${EVENT_NAME}" --base-sha "${BASE_SHA}" --head-sha "${HEAD_SHA}" \
+            --tested-sha "${GITHUB_SHA}" --policy-sha "${POLICY_SHA}" \
+            --automation-sha "${AUTOMATION_SHA}" \
+            --plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON}"
+          case "${API_PURPOSE}" in
+            published)
+              test "${PUBLISHED_API_CANDIDATE_SHA}" = "${GITHUB_SHA}"
+              printf 'published_api_candidate_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+              ;;
+            development) ;;
+            *) exit 1 ;;
+          esac
+          printf 'candidate_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"

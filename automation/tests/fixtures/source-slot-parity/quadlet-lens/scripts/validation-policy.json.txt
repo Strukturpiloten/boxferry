@@ -1,0 +1,118 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/quadlet-lens",
+  "jobs": [
+    "rust",
+    "coverage",
+    "msrv",
+    "dependencies",
+    "api",
+    "documentation",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["documentation", "lockfile-release-age"],
+    "executable-docs": [
+      "rust",
+      "coverage",
+      "msrv",
+      "dependencies",
+      "api",
+      "documentation",
+      "lockfile-release-age"
+    ]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": [],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": [],
+  "documentation_examples_manifest": null,
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [["bash", "scripts/check-all.sh", "--check"]],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  },
+  "tasks": {
+    "rust-quality": {
+      "commands": [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "ci-check"],
+        ["cargo", "ci-application"],
+        ["cargo", "ci-policy"],
+        ["cargo", "ci-clippy"],
+        ["cargo", "ci-test"],
+        ["cargo", "ci-doctest"],
+        ["cargo", "ci-doc"],
+        ["cargo", "ci-package"]
+      ],
+      "timeout_seconds": 1800
+    },
+    "coverage": {
+      "commands": [
+        ["cargo", "llvm-cov", "clean", "--locked"],
+        [
+          "cargo",
+          "llvm-cov",
+          "--locked",
+          "--no-clean",
+          "--workspace",
+          "--all-features",
+          "--all-targets",
+          "--summary-only",
+          "--fail-under-regions",
+          "91",
+          "--fail-under-functions",
+          "92",
+          "--fail-under-lines",
+          "92"
+        ]
+      ],
+      "timeout_seconds": 1800
+    },
+    "release-metadata": {
+      "commands": [["bash", "scripts/check-release-metadata.sh", "--development"]]
+    },
+    "release-metadata-strict": {
+      "commands": [["bash", "scripts/check-release-metadata.sh", "--release"]]
+    },
+    "python-quality": {
+      "commands": [
+        ["ruff", "check", "--config", "pyproject.toml", "scripts"],
+        ["ruff", "format", "--check", "--config", "pyproject.toml", "scripts"],
+        ["ty", "check", "--project", ".", "scripts"],
+        ["python3", "scripts/test-automation-contract.py"],
+        ["python3", "scripts/test-hosted-generator-podman.py"]
+      ],
+      "timeout_seconds": 300
+    },
+    "python-format": {
+      "commands": [["ruff", "format", "--config", "pyproject.toml", "scripts"]]
+    },
+    "api-development": {
+      "commands": [
+        [
+          "python",
+          "-m",
+          "boxferry_ci.api_baselines",
+          "run",
+          "--repository-root",
+          ".",
+          "--repository",
+          "Strukturpiloten/quadlet-lens",
+          "--api-purpose",
+          "development",
+          "--event",
+          "local",
+          "--package",
+          "quadlet-lens",
+          "--report-json",
+          "target/api-baseline-local.json"
+        ]
+      ],
+      "timeout_seconds": 1200
+    }
+  }
+}

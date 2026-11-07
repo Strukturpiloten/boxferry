@@ -510,22 +510,141 @@ def effect_floor(api: core.GitHub, implementation: str) -> datetime:
 
 
 def unstarted_service(api: core.GitHub, run: dict[str, Any]) -> bool:
-    """A first-attempt job with no start cannot have consumed a logical budget."""
-    if run.get("run_attempt") != 1:
+    """Only a genuinely queued first attempt can use the no-start branch."""
+    queued = ("queued", "waiting", "pending", "requested")
+    if (
+        type(run.get("id")) is not int
+        or run["id"] < 1
+        or type(run.get("run_attempt")) is not int
+        or run["run_attempt"] != 1
+        or run.get("status") not in queued
+        or "conclusion" not in run
+        or run["conclusion"] is not None
+    ):
         return False
     listing = api.get(f"actions/runs/{run['id']}/attempts/1/jobs?per_page=100")
     jobs = listing.get("jobs")
     return (
         isinstance(jobs, list)
         and len(jobs) <= 100
+        and type(listing.get("total_count")) is int
         and listing.get("total_count") == len(jobs)
         and all(
             isinstance(job, dict)
+            and type(job.get("id")) is int
+            and job["id"] > 0
+            and type(job.get("run_id")) is int
+            and job["run_id"] == run["id"]
+            and type(job.get("run_attempt")) is int
+            and job["run_attempt"] == 1
+            and "started_at" in job
             and job.get("started_at") is None
+            and "conclusion" in job
             and job.get("conclusion") is None
-            and job.get("status") in {"queued", "waiting", "pending", "requested"}
+            and job.get("status") in queued
             for job in jobs
         )
+        and len({job["id"] for job in jobs}) == len(jobs)
+    )
+
+
+def skipped_service(
+    api: core.GitHub, run: dict[str, Any], implementation: str, branch: str
+) -> bool:
+    """Prove the exact guarded outer call never dispatched; this is no receipt."""
+    if (
+        api.repository not in core.REPOSITORIES
+        or type(run.get("id")) is not int
+        or run["id"] < 1
+        or type(run.get("run_attempt")) is not int
+        or run["run_attempt"] != 1
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "skipped"
+        or not isinstance(run.get("repository"), dict)
+        or run["repository"].get("full_name") != api.repository
+        or not isinstance(run.get("event"), str)
+        or run["event"] not in core.ALLOWED_EVENTS
+        or run.get("path") != core.WORKFLOW_PATH
+        or run.get("head_branch") != branch
+        or run.get("name") != "Dependency eligibility service"
+        or run.get("referenced_workflows")
+        != [{"path": f"{core.SHARED_WORKFLOW_PATH}@{implementation}", "sha": implementation}]
+    ):
+        return False
+    head = core.revision(run.get("head_sha"))
+    core.revision(implementation)
+    workflow = api.get("actions/workflows/dependency-eligibility.yml")
+    if (
+        type(run.get("workflow_id")) is not int
+        or run["workflow_id"] < 1
+        or type(workflow.get("id")) is not int
+        or workflow["id"] != run["workflow_id"]
+        or workflow.get("path") != core.WORKFLOW_PATH
+        or workflow.get("name") != run["name"]
+    ):
+        return False
+    if api.get(f"compare/{head}...{quote(branch, safe='')}").get("status") not in (
+        "ahead",
+        "identical",
+    ):
+        return False
+    caller = core.file_bytes(api, core.WORKFLOW_PATH, head)
+    if caller is None:
+        return False
+    expected = (
+        "  eligibility:\n    name: Trusted dependency metadata\n    if: >-\n"
+        "      github.event_name == 'schedule' || (github.event_name == 'workflow_run' && "
+        "(github.event.workflow_run.event == 'pull_request' || "
+        "github.event.workflow_run.event == 'merge_group'))\n"
+        "    permissions:\n      actions: write\n      checks: read\n      contents: read\n"
+        "      pull-requests: write\n      statuses: write\n"
+        f"    uses: {core.SHARED_WORKFLOW_PATH}@{implementation} # automation-v1 interface v1\n"
+        f"    with:\n      automation-sha: {implementation}\n"
+    )
+    if job_blocks(caller) != {"eligibility": expected}:
+        return False
+    listing = api.get(f"actions/runs/{run['id']}/attempts/1/jobs?per_page=100")
+    jobs = listing.get("jobs")
+    if type(listing.get("total_count")) is not int or listing["total_count"] != 1:
+        return False
+    if not isinstance(jobs, list) or len(jobs) != 1 or not isinstance(jobs[0], dict):
+        return False
+    job = jobs[0]
+    if (
+        type(job.get("id")) is not int
+        or job["id"] < 1
+        or type(job.get("run_id")) is not int
+        or job["run_id"] != run["id"]
+        or type(job.get("run_attempt")) is not int
+        or job["run_attempt"] != 1
+        or job.get("name") != "Trusted dependency metadata"
+        or job.get("workflow_name") != run["name"]
+        or job.get("head_sha") != head
+        or job.get("head_branch") != branch
+        or job.get("status") != "completed"
+        or job.get("conclusion") != "skipped"
+        or job.get("steps") != []
+        or job.get("labels") != []
+        or not {"runner_id", "runner_name", "runner_group_id", "runner_group_name"} <= job.keys()
+        or any(value is not None for key, value in job.items() if key.startswith("runner_"))
+    ):
+        return False
+    for mapping, fields in (
+        (run, ("created_at", "updated_at", "run_started_at")),
+        (job, ("started_at", "completed_at")),
+    ):
+        for field in fields:
+            if field not in mapping or (
+                mapping[field] is not None and not isinstance(mapping[field], str)
+            ):
+                return False
+            if mapping[field] is not None:
+                core.utc(mapping[field])
+    artifacts = api.get(f"actions/runs/{run['id']}/artifacts?per_page=100")
+    return (
+        type(artifacts.get("total_count")) is int
+        and artifacts["total_count"] == 0
+        and artifacts.get("artifacts") == []
     )
 
 
@@ -634,6 +753,7 @@ def history_runs(api: core.GitHub, lower: datetime) -> list[dict[str, Any]]:
     if (
         not isinstance(runs, list)
         or len(runs) > 100
+        or type(listing.get("total_count")) is not int
         or listing.get("total_count") != len(runs)
         or not all(isinstance(run, dict) for run in runs)
     ):
@@ -647,7 +767,8 @@ def history_runs(api: core.GitHub, lower: datetime) -> list[dict[str, Any]]:
         raise RecoveryRefused("service checkpoint history has ambiguous run identities")
     result = [api.get(f"actions/runs/{identifier}") for identifier in identifiers]
     if any(
-        run.get("id") != identifier for run, identifier in zip(result, identifiers, strict=True)
+        type(run.get("id")) is not int or run["id"] != identifier
+        for run, identifier in zip(result, identifiers, strict=True)
     ):
         raise RecoveryRefused("service history response changed an exact run identity")
     return result
@@ -672,6 +793,8 @@ def service_context(
     candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
     pending: list[dict[str, int]] = []
     try:
+        if type(identifier) is not int or identifier < 1 or type(attempt) is not int or attempt < 1:
+            raise RecoveryRefused("current service run/attempt identity is malformed")
         floor = effect_floor(api, implementation)
         lower = floor
         if previous is not None and previous.get("implementation_revision") == implementation:
@@ -717,7 +840,9 @@ def service_context(
                     pending.append({"run_id": run["id"], "run_attempt": run["run_attempt"]})
                 continue
             if run.get("conclusion") != "success":
-                if not unstarted_service(api, run):
+                if not unstarted_service(api, run) and not skipped_service(
+                    api, run, implementation, branch
+                ):
                     fence = (
                         "prior same-C service may have effected without terminal budget evidence"
                     )

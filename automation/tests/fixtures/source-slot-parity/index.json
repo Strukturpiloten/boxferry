@@ -1,0 +1,1225 @@
+{
+  "schema": 1,
+  "provenance": "First-party recorded 2026-11-06 issue610 source census; prepared stages are not claims of deployed adoption. Payloads are inert data, never executed.",
+  "consumers": [
+    {
+      "repository": "Strukturpiloten/boxferry",
+      "head": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "stage": "prepared reviewed ordinary-adoption draft",
+      "origin": "https://github.com/Strukturpiloten/boxferry.git",
+      "before": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "boxferry/.github/automation.json.txt",
+          "sha256": "488861acffa313db20f789363ef0feeba4fbdbf3eedf76a20d75bf843fe36ae0"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "boxferry/.github/renovate.json.txt",
+          "sha256": "fd3ff9fde8714cadda7c71b67a0a0da2d3b670684284719d2f04a9f21bc9439d"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "boxferry/.github/workflows/ci.yml.txt",
+          "sha256": "6048abe6327d71fba2cdf3e3c3aeba9d7747395347cd6466cee21b028c1cd7fd"
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "boxferry/.github/workflows/release.yml.txt",
+          "sha256": "08c2f62b717da5a50d493406a4b4ab70eb01e2f386fc65ccb1f4db4db4a7fd34"
+        },
+        {
+          "path": "scripts/shared-validation-policy.json",
+          "fixture": "boxferry/scripts/shared-validation-policy.json.txt",
+          "sha256": "b83045f7d6b17c8874f414536e9d8aa87ddb9e957df236c3f70501bab936cb52"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "boxferry/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 208,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 226,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 239,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 242,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 252,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 255,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 265,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 268,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 278,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 281,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 302,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 310,
+              "column": 26,
+              "kind": "shared-node"
+            },
+            {
+              "line": 381,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 395,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 437,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 440,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 496,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 499,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 540,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 557,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "boxferry/.github/workflows/release.yml.txt",
+          "slots": [
+            {
+              "line": 177,
+              "column": 83,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 180,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 216,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 234,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 244,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 254,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 264,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 274,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 284,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 341,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 516,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 527,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 538,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 549,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 560,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 571,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/compose-lens",
+      "head": "81fd26248c6892ce12f24e158662574507376c58",
+      "stage": "prepared ordinary-adoption draft",
+      "origin": "https://github.com/Strukturpiloten/compose-lens.git",
+      "before": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "compose-lens/.github/automation.json.txt",
+          "sha256": "3ea3aae7a5d63a0c305efb60fad4b2390992a993b8eece956ab3aa8ada465389"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "compose-lens/.github/renovate.json.txt",
+          "sha256": "34b1cd94ed15fc48e53351a6d1b6bbde4b2d11e55634bc87a518d7852ac8d4ef"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "compose-lens/.github/workflows/ci.yml.txt",
+          "sha256": "d2d3096985696621de61f4d15b54d54d237de50ca33bc1b905d2eb10d28b1e31"
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "compose-lens/.github/workflows/release.yml.txt",
+          "sha256": "7935ea056c26285bbcd2061336d8cafbf314e85228d185d537474c3b6ee209a0"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "compose-lens/scripts/validation-policy.json.txt",
+          "sha256": "7957938d108af2e6799befc95b19d12d32d1bc37f97d0bc1118e6d8889d36c73"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "compose-lens/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 56,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 64,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 76,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 90,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 93,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 103,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 106,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 116,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 119,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 129,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 132,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 141,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 144,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 166,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 174,
+              "column": 26,
+              "kind": "shared-node"
+            },
+            {
+              "line": 217,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 220,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 242,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 250,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 261,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "compose-lens/.github/workflows/release.yml.txt",
+          "slots": [
+            {
+              "line": 77,
+              "column": 83,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 80,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 104,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 113,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 152,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 389,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/podman-lens",
+      "head": "e124c73c93190ab2376322c3ee0715c7d90ffde3",
+      "stage": "prepared actual Pod159 repair worktree; do not confuse with merged earlier adoption",
+      "origin": "https://github.com/Strukturpiloten/podman-lens.git",
+      "before": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "podman-lens/.github/automation.json.txt",
+          "sha256": "3ea3aae7a5d63a0c305efb60fad4b2390992a993b8eece956ab3aa8ada465389"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "podman-lens/.github/renovate.json.txt",
+          "sha256": "e3914d51d9f93f26e2e332b18143bc7caba1246dab0f6d5d98644e7e23577549"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "podman-lens/.github/workflows/ci.yml.txt",
+          "sha256": "ec27df5629f0583e55520517f64ddc3adbaedd9347d1a15886463d55233a2ba5"
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "podman-lens/.github/workflows/release.yml.txt",
+          "sha256": "9490679017f61d855ae8cd991c3269cc0757384445fa4862e44d96c14e8f5593"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "podman-lens/scripts/validation-policy.json.txt",
+          "sha256": "0e80da07f01f66e5963c423769d0b9d6ecf92fb131437a76b2828c84c979462e"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "podman-lens/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 51,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 59,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 71,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 85,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 88,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 98,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 101,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 111,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 114,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 124,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 127,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 138,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 141,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 164,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 172,
+              "column": 26,
+              "kind": "shared-node"
+            },
+            {
+              "line": 217,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 220,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 243,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 251,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 262,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 309,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 316,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 329,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "podman-lens/.github/workflows/release.yml.txt",
+          "slots": [
+            {
+              "line": 82,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 85,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 160,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 230,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 247,
+              "column": 83,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 250,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 272,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 280,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 289,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/quadlet-lens",
+      "head": "12fc2141e2660175a17ef42057c5ea4a225dce84",
+      "stage": "prepared actual Quad175 repair worktree; do not confuse with merged earlier adoption",
+      "origin": "https://github.com/Strukturpiloten/quadlet-lens.git",
+      "before": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "quadlet-lens/.github/automation.json.txt",
+          "sha256": "3ea3aae7a5d63a0c305efb60fad4b2390992a993b8eece956ab3aa8ada465389"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "quadlet-lens/.github/renovate.json.txt",
+          "sha256": "a83fa9c8a93ed176bd1dc1477af5baa36e46fdcd7548a993713c83f34d16bc50"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "quadlet-lens/.github/workflows/ci.yml.txt",
+          "sha256": "74b62b7b696d4e1915dbbd86362e6bf7c3da66b14f0ae2503d650b3d394d0500"
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "quadlet-lens/.github/workflows/release.yml.txt",
+          "sha256": "481c3108d34e431bec93dafd3842cdac3fc0720a7ed9029b75066d44efd77522"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "quadlet-lens/scripts/validation-policy.json.txt",
+          "sha256": "d4a88fb53131ebbea02578d532d14ed8e1c5581efc162a30a9f61c7cc522ee90"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "quadlet-lens/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 31,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 39,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 51,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 71,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 79,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 88,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 138,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 141,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 151,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 154,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 163,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 166,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 189,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 197,
+              "column": 26,
+              "kind": "shared-node"
+            },
+            {
+              "line": 237,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 240,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 265,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 273,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 285,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "fixture": "quadlet-lens/.github/workflows/release.yml.txt",
+          "slots": [
+            {
+              "line": 133,
+              "column": 83,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 136,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 154,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 162,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 174,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            },
+            {
+              "line": 208,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 216,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 446,
+              "column": 26,
+              "kind": "shared-crate-publish"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/docker-lens",
+      "head": "df3987881c1a646e3d11355a4ace964a3852afd5",
+      "stage": "actual allowlisted primary checkout; prepared newer adoption not asserted",
+      "origin": "https://github.com/Strukturpiloten/docker-lens.git",
+      "before": "5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "docker-lens/.github/automation.json.txt",
+          "sha256": "e6599ec52f8c3b4260a18d457243f72aa3d2c3543784a855819cffbfb1f0495d"
+        },
+        {
+          "path": ".github/workflows/check.yml",
+          "fixture": "docker-lens/.github/workflows/check.yml.txt",
+          "sha256": "9a35f06b48de1fcb894d8213ac9877c13dd6c5124451533f2d20daf3b0a3addc"
+        },
+        {
+          "path": "renovate.json",
+          "fixture": "docker-lens/renovate.json.txt",
+          "sha256": "8afc4356ccbdd591a6f490c4cd56587e34f93ff375d4c137e7d128dd8ac35093"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "docker-lens/scripts/validation-policy.json.txt",
+          "sha256": "4f065d581601cb1acf328110755e82f8948c5fb0a2e0445c7f3e1e3832675753"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/check.yml",
+          "fixture": "docker-lens/.github/workflows/check.yml.txt",
+          "slots": [
+            {
+              "line": 64,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 72,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 84,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 98,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 101,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 110,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 113,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 122,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 125,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 133,
+              "column": 76,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 136,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 155,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 163,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 195,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 214,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 217,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 275,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 283,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 295,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/kubernetes-lens",
+      "head": "15204de1c9c3db88f654714cda8fce3aa0695d32",
+      "stage": "actual allowlisted primary checkout; prepared newer adoption not asserted",
+      "origin": "https://github.com/Strukturpiloten/kubernetes-lens.git",
+      "before": "5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+      "license": "MPL-2.0",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "kubernetes-lens/.github/automation.json.txt",
+          "sha256": "e6599ec52f8c3b4260a18d457243f72aa3d2c3543784a855819cffbfb1f0495d"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "kubernetes-lens/.github/renovate.json.txt",
+          "sha256": "70fc76b32b10709b231e6948ed52799f78776118af9f47971cb20d1091a23c5a"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "kubernetes-lens/.github/workflows/ci.yml.txt",
+          "sha256": "1a281f356477e2b73ccd4ed774bf791176342ba1d42da27057a9a8d2d8edace6"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "kubernetes-lens/scripts/validation-policy.json.txt",
+          "sha256": "09bb7a6a9dffb8a4cb478901fcdb936fde9e6c78143161a7f66a9d1f64cb250f"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "kubernetes-lens/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 68,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 73,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 84,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 107,
+              "column": 72,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 110,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 119,
+              "column": 82,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 122,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 149,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 182,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 196,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 199,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 229,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 234,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 249,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": [
+            {
+              "line": 100,
+              "column": 22,
+              "kind": "consumer-local-reusable-workflow"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "repository": "Strukturpiloten/boxferry-website",
+      "head": "cd1d5675b7fabd699bd73dbd06052c0d9b13cfca",
+      "stage": "actual allowlisted primary checkout after website219 cleanup",
+      "origin": "https://github.com/Strukturpiloten/boxferry-website.git",
+      "before": "b191fb5ffe32fe84d9cb0c851562044b0f0cc59b",
+      "license": "No license declared in recorded checkout",
+      "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+      "files": [
+        {
+          "path": ".github/automation.json",
+          "fixture": "boxferry-website/.github/automation.json.txt",
+          "sha256": "986e345a189d91e2d3db7dfe4103dce4b7ed4f4ce284f37b0c6fb640a206f79a"
+        },
+        {
+          "path": ".github/renovate.json",
+          "fixture": "boxferry-website/.github/renovate.json.txt",
+          "sha256": "f9c30be6dcf9f203c55814db305ab5c112eca36e431cb775e6f4fe4e791c619b"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "boxferry-website/.github/workflows/ci.yml.txt",
+          "sha256": "b6f3c18419ad0a32391fde46dadf4688811c30831e54a741a97b7e8747848101"
+        },
+        {
+          "path": "scripts/validation-policy.json",
+          "fixture": "boxferry-website/scripts/validation-policy.json.txt",
+          "sha256": "1a581ad3e5d96df63df0732bc786b8b52330d018058f78fa3c72325c8ee51955"
+        }
+      ],
+      "workflows": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "fixture": "boxferry-website/.github/workflows/ci.yml.txt",
+          "slots": [
+            {
+              "line": 35,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 43,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 56,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 77,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 85,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 115,
+              "column": 26,
+              "kind": "environment"
+            },
+            {
+              "line": 143,
+              "column": 80,
+              "kind": "remote-workflow"
+            },
+            {
+              "line": 146,
+              "column": 22,
+              "kind": "remote-input"
+            },
+            {
+              "line": 161,
+              "column": 15,
+              "kind": "annotated-checkout"
+            },
+            {
+              "line": 169,
+              "column": 26,
+              "kind": "shared-source"
+            },
+            {
+              "line": 181,
+              "column": 26,
+              "kind": "environment"
+            }
+          ],
+          "unowned": []
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "revision": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "path": "renovate-presets/common.json",
+      "fixture": "presets/1cf96f5a667d96e66c119753cf7814e22e0dee7e/common.json.txt",
+      "sha256": "2bf1ff3ca24b5dd273ded302f93fe65983f6f2a96e8dbe045581dd192f68bae3",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    },
+    {
+      "revision": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+      "path": "renovate-presets/rust.json",
+      "fixture": "presets/1cf96f5a667d96e66c119753cf7814e22e0dee7e/rust.json.txt",
+      "sha256": "6507400cd6a2b10418db2455c5e030a4c926dc0cf1a33e159863f5054f787999",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    },
+    {
+      "revision": "5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+      "path": "renovate-presets/common.json",
+      "fixture": "presets/5b4deb3fa2e06a0eea1643bbbdecec34e18b1281/common.json.txt",
+      "sha256": "45549718cad79becf485e36f0241406b4d84b14db58ae817b527e9deaa261af8",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    },
+    {
+      "revision": "5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+      "path": "renovate-presets/rust.json",
+      "fixture": "presets/5b4deb3fa2e06a0eea1643bbbdecec34e18b1281/rust.json.txt",
+      "sha256": "6507400cd6a2b10418db2455c5e030a4c926dc0cf1a33e159863f5054f787999",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    },
+    {
+      "revision": "b191fb5ffe32fe84d9cb0c851562044b0f0cc59b",
+      "path": "renovate-presets/common.json",
+      "fixture": "presets/b191fb5ffe32fe84d9cb0c851562044b0f0cc59b/common.json.txt",
+      "sha256": "2bf1ff3ca24b5dd273ded302f93fe65983f6f2a96e8dbe045581dd192f68bae3",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    },
+    {
+      "revision": "b191fb5ffe32fe84d9cb0c851562044b0f0cc59b",
+      "path": "renovate-presets/rust.json",
+      "fixture": "presets/b191fb5ffe32fe84d9cb0c851562044b0f0cc59b/rust.json.txt",
+      "sha256": "6507400cd6a2b10418db2455c5e030a4c926dc0cf1a33e159863f5054f787999",
+      "license": "MPL-2.0",
+      "provenance": "git show exact recorded immutable first-party source; not executed"
+    }
+  ],
+  "legacy_parser": {
+    "revision": "c9c6446d0934b7abb01798470f2782059e8890f7",
+    "path": "automation/src/boxferry_ci/eligibility.py",
+    "fixture": "legacy-expected-ci-upgrade.py.txt",
+    "sha256": "03a7c2acabc304e1dcdbf79bf0ba0896efdf3c834efbc1710ef87e1ccc554df6",
+    "license": "MPL-2.0",
+    "provenance": "Exact first-party pure function from held609 producer draft; this commit is not asserted to be admitted S. Compiled only for compatibility regression, with existing unchanged parser support globals.",
+    "unchanged_at_authority": "1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+    "authority_function_sha256": "03a7c2acabc304e1dcdbf79bf0ba0896efdf3c834efbc1710ef87e1ccc554df6"
+  }
+}

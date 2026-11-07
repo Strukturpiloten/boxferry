@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#5b4deb3fa2e06a0eea1643bbbdecec34e18b1281",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#5b4deb3fa2e06a0eea1643bbbdecec34e18b1281"
+  ],
+  "enabledManagers": [
+    "cargo",
+    "github-actions",
+    "rust-toolchain",
+    "custom.regex"
+  ],
+  "ignorePaths": [
+    "**/target/**",
+    "**/_automation/**",
+    "**/_policy/**",
+    "**/tests/**",
+    "docs/evidence/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts\\/native-conformance\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>docker) depName=(?<depName>[^\\s]+)\\s+[A-Z_]+_IMAGE='[^']+:(?<currentValue>[^@']+)@(?<currentDigest>sha256:[a-f0-9]{64})'"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": [
+        "Keep the exact already-qualified native fixture tuples fixed during shared automation adoption. Docker #127 owns independently reviewed replacement qualification; nearby development/runtime images remain automatic."
+      ],
+      "matchFileNames": ["scripts/native-conformance.sh"],
+      "groupName": "DockerLens native conformance images",
+      "pinDigests": true,
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "ghcr.io/strukturpiloten/docker-29-rootful",
+        "ghcr.io/strukturpiloten/docker-29-rootless",
+        "ghcr.io/strukturpiloten/docker-debian-11-rootful",
+        "ghcr.io/strukturpiloten/docker-debian-11-rootless",
+        "docker.io/library/busybox"
+      ],
+      "enabled": false
+    }
+  ]
+}

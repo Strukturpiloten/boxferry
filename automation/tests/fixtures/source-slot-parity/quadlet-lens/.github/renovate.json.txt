@@ -1,0 +1,164 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#1cf96f5a667d96e66c119753cf7814e22e0dee7e"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/fixtures/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Discover the newest stable Podman release across minor lines",
+      "managerFilePatterns": ["/^tools/generator-matrix\\.toml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) packageName=(?<packageName>[^\\s]+) depName=(?<depName>podman-upstream)\\nlatest_upstream = \\\"(?<currentValue>[^\\\"]+)\\\""
+      ],
+      "extractVersionTemplate": "^v?(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Discover the newest stable Podman patch independently for each maintained minor line",
+      "managerFilePatterns": ["/^tools/generator-matrix\\.toml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) packageName=(?<packageName>[^\\s]+) depName=(?<depName>podman-[0-9]+\\.[0-9]+)\\nlatest_[0-9]+_[0-9]+ = \\\"(?<currentValue>[^\\\"]+)\\\""
+      ],
+      "extractVersionTemplate": "^v?(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the generator Go builder version and digest together",
+      "managerFilePatterns": ["/^tools/generator-matrix\\.toml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nbuilder_reference = \\\"[^:\\\"]+:(?<currentValue>[^@\\\"]+)@(?<currentDigest>sha256:[a-f0-9]{64})\\\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update versioned Dev Container tools",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update directly pinned workflow tool versions",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Dev Container base release and digest together",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the GitHub CLI installed in the Dev Container",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer\\.json$/"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/github-cli:[^\"]+\"[\\s\\S]*?\"version\": \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cli/cli"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep newest-upstream and maintained-minor Podman discovery separate from reviewed support",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["podman-container-tools/podman"],
+      "matchFileNames": ["tools/generator-matrix.toml"],
+      "prBodyNotes": [
+        "This updates a Podman discovery signal only. Advancing an active generator pin, tracked_current, catalogue or application contract requires reviewed source and generator evidence."
+      ],
+      "groupName": "Podman generator discovery"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-upstream"],
+      "allowedVersions": "/^[0-9]+\\.[0-9]+\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-5.4"],
+      "allowedVersions": "/^5\\.4\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-5.5"],
+      "allowedVersions": "/^5\\.5\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-5.6"],
+      "allowedVersions": "/^5\\.6\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-5.7"],
+      "allowedVersions": "/^5\\.7\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-5.8"],
+      "allowedVersions": "/^5\\.8\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-6.0"],
+      "allowedVersions": "/^6\\.0\\.[0-9]+$/"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["podman-6.1"],
+      "allowedVersions": "/^6\\.1\\.[0-9]+$/"
+    },
+    {
+      "description": "Hold direct Dev Container base images until fresh GitHub CI qualification (#563)",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/library/node", "mcr.microsoft.com/devcontainers/rust"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "enabled": false
+    },
+    {
+      "description": "Hold direct Dev Container Cargo tool ARGs until fresh GitHub CI qualification (#563)",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["crate"],
+      "matchPackageNames": ["cargo-deny", "cargo-llvm-cov", "cargo-semver-checks", "zizmor"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "enabled": false
+    },
+    {
+      "description": "Hold direct Dev Container features until fresh GitHub CI qualification (#563)",
+      "matchManagers": ["devcontainer"],
+      "matchDepTypes": ["feature"],
+      "matchFileNames": [".devcontainer/devcontainer.json"],
+      "enabled": false
+    },
+    {
+      "description": "Hold the direct Dev Container GitHub CLI payload until fresh GitHub CI qualification (#563)",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["cli/cli"],
+      "matchFileNames": [".devcontainer/devcontainer.json"],
+      "enabled": false
+    }
+  ]
+}

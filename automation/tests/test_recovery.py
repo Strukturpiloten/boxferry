@@ -1271,3 +1271,348 @@ class ServiceCheckpointTests(unittest.TestCase):
             self.assertEqual(ledger, {N: 50})
             core.rerun_ready(api, CANDIDATE, ledger, "main", implementation=C)
         self.assertEqual(api.posts, [("actions/runs/50/rerun-failed-jobs", {})])
+
+
+SKIPPED_FIXTURES = Path(__file__).parent / "fixtures/recovery/podman-skipped-20261106"
+
+
+def skipped_fixture(name: str) -> dict[str, Any]:
+    return json.loads((SKIPPED_FIXTURES / (name + ".json.txt")).read_text())
+
+
+class RecordedHistoryAPI(CheckpointAPI):
+    def __init__(self) -> None:
+        super().__init__()
+        self.repository = "Strukturpiloten/podman-lens"
+        self.history_mutation = ""
+        self.canonical_sha = "41d7f8b868351621c4e60fbeedd9fce5955f7897"
+        self.floor = datetime(2026, 11, 6, 21, 40, 3, tzinfo=UTC)
+        for run in skipped_fixture("history-cutoff")["workflow_runs"]:
+            self.add(run)
+        self.prior = self.runs[42305732516]
+        self.current = self.runs[42306033057]
+        for prefix, identifier in (("prior", 42305732516), ("later-skipped", 42306504865)):
+            self.responses[f"actions/runs/{identifier}/attempts/1/jobs?per_page=100"] = (
+                skipped_fixture(prefix + "-attempt1-jobs")
+            )
+            self.responses[f"actions/runs/{identifier}/artifacts?per_page=100"] = skipped_fixture(
+                prefix + "-artifacts"
+            )
+        self.responses["actions/workflows/dependency-eligibility.yml"] = skipped_fixture(
+            "workflow-metadata"
+        )
+        head = self.current["head_sha"]
+        self.responses[f"compare/{head}...main"] = {"status": "identical"}
+        self.responses[f"contents/{core.WORKFLOW_PATH}?ref={head}"] = skipped_fixture(
+            "caller-contents"
+        )
+
+    def request(self, method: str, path: str, data: dict[str, Any] | None = None) -> object:
+        if (
+            method == "GET"
+            and path == f"/repos/Strukturpiloten/boxferry/git/commits/{self.canonical_sha}"
+        ):
+            return {"sha": self.canonical_sha, "committer": {"date": self.floor.isoformat()}}
+        return super().request(method, path, data)
+
+    def get(self, suffix: str) -> dict[str, Any]:
+        if suffix.startswith("actions/workflows/dependency-eligibility.yml/runs?"):
+            from urllib.parse import parse_qs
+
+            self.queries.append(suffix)
+            lower = core.utc(parse_qs(suffix.split("?", 1)[1])["created"][0][2:])
+            matching = []
+            for run in self.runs.values():
+                try:
+                    include = core.utc(run.get("created_at")) >= lower
+                except ValueError:
+                    include = True  # Return malformed server data to the real collector.
+                if include:
+                    matching.append(deepcopy(run))
+            listing = {"total_count": len(matching), "workflow_runs": list(reversed(matching))}
+            if self.history_mutation == "float-count":
+                listing["total_count"] = float(len(matching))
+            elif self.history_mutation == "bool-count":
+                listing["total_count"] = True
+            elif self.history_mutation == "truncated":
+                listing["total_count"] += 1
+            elif self.history_mutation == "duplicate":
+                listing["workflow_runs"][-1] = deepcopy(listing["workflow_runs"][0])
+            elif self.history_mutation == "omitted-current":
+                listing["workflow_runs"] = [
+                    run for run in matching if run["id"] != self.current["id"]
+                ]
+                listing["total_count"] -= 1
+            return listing
+        return super().get(suffix)
+
+
+class RecordedSkippedServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.api = RecordedHistoryAPI()
+        self.source = self.api.canonical_sha
+        self.now = datetime(2026, 11, 6, 23, tzinfo=UTC)
+
+    def context(self, previous: dict[str, Any] | None = None) -> subject.ServiceContext:
+        return subject.service_context(
+            self.api, self.api.current, previous, self.source, "main", self.now
+        )
+
+    def persist(self, context: subject.ServiceContext) -> dict[str, Any]:
+        run = self.api.current
+        state = {
+            "schema": 1,
+            "repository": self.api.repository,
+            "workflow_path": core.WORKFLOW_PATH,
+            "implementation_revision": self.source,
+            "run_id": run["id"],
+            "run_attempt": 1,
+            "observed_at": self.now.isoformat(),
+            "dependency_state": {"schema_version": 1, "first_seen": {}},
+            "reports": {},
+            "reruns": {"8" * 40: 50},
+            "recoveries": {},
+            "recovery_frontier": deepcopy(context.frontier),
+        }
+        self.api.add({**run, "status": "completed", "conclusion": "success"}, state)
+        return state
+
+    def test_full_raw_fixture_integrity_and_pagination_provenance(self) -> None:
+        import hashlib
+
+        index = json.loads((SKIPPED_FIXTURES / "index.json").read_text())
+        for name, record in index["files"].items():
+            data = (SKIPPED_FIXTURES / name).read_bytes()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), record["sha256"])
+            self.assertFalse(record["projection"])
+            if "acquisition" in record:
+                self.assertTrue(record["acquisition"]["all_pages"])
+                self.assertEqual(record["acquisition"]["headers"]["link"], [])
+        history = skipped_fixture("history-cutoff")
+        self.assertEqual(history["total_count"], 10)
+        self.assertEqual(len(history["workflow_runs"]), 10)
+        self.assertEqual(
+            skipped_fixture("prior-attempt1-jobs")["jobs"][0]["runner_group_name"], None
+        )
+
+    def test_recorded_guarded_skip_seeds_only_then_real_checkpoint_data_advances(self) -> None:
+        self.assertTrue(subject.skipped_service(self.api, self.api.prior, self.source, "main"))
+        context = self.context()
+        self.assertTrue(context.can_prepare)
+        self.assertFalse(context.can_effect)
+        self.assertIsNone(context.checkpoint_run)
+        self.assertIsNone(context.frontier["fence"])
+        self.assertEqual(context.frontier["pending"], [])
+        self.assertEqual(len(self.api.queries), 1)  # Real unordered history_runs collector.
+        state = self.persist(context)
+        # Synthetic next server actor; the actual completed first actor's state/artifact
+        # follows the real checkpoint_payload and validate_state paths, never a mocked proof.
+        later = deepcopy(self.api.current)
+        later.update(
+            id=42306033058, created_at="2026-11-06T22:39:00Z", status="in_progress", conclusion=None
+        )
+        self.api.current = later
+        self.api.add(later)
+        advanced = self.context(state)
+        self.assertTrue(advanced.can_effect)
+        assert advanced.previous is not None
+        self.assertEqual(advanced.previous["reruns"], {"8" * 40: 50})
+        subject.require_effect(self.api, advanced, self.source, "main")
+        self.assertEqual(self.api.posts, [])
+
+    def test_actual_nonmonotonic_placeholder_timestamps_are_not_dispatch_proof(self) -> None:
+        run = skipped_fixture("later-skipped-run")
+        job = skipped_fixture("later-skipped-attempt1-jobs")["jobs"][0]
+        self.assertGreater(core.utc(job["started_at"]), core.utc(job["completed_at"]))
+        self.assertTrue(subject.skipped_service(self.api, run, self.source, "main"))
+        self.assertEqual(self.api.posts, [])
+
+    def test_each_observed_missing_or_wrong_typed_field_retains_uncertainty(self) -> None:
+        run_fields = (
+            "id",
+            "run_attempt",
+            "status",
+            "conclusion",
+            "repository",
+            "event",
+            "path",
+            "head_sha",
+            "head_branch",
+            "name",
+            "workflow_id",
+            "referenced_workflows",
+            "created_at",
+            "updated_at",
+            "run_started_at",
+        )
+        job_fields = (
+            "id",
+            "run_id",
+            "run_attempt",
+            "name",
+            "workflow_name",
+            "head_sha",
+            "head_branch",
+            "status",
+            "conclusion",
+            "steps",
+            "labels",
+            "runner_id",
+            "runner_name",
+            "runner_group_id",
+            "runner_group_name",
+            "started_at",
+            "completed_at",
+        )
+        for target, fields in (("run", run_fields), ("job", job_fields)):
+            for field in fields:
+                for value in ("MISSING", False, True, 1.0, {}, ["unexpected"]):
+                    with self.subTest(target=target, field=field, value=value):
+                        self.setUp()
+                        mapping = (
+                            self.api.prior
+                            if target == "run"
+                            else self.api.responses[
+                                "actions/runs/42305732516/attempts/1/jobs?per_page=100"
+                            ]["jobs"][0]
+                        )
+                        if value == "MISSING":
+                            mapping.pop(field)
+                        else:
+                            mapping[field] = value
+                        context = self.context()
+                        self.assertFalse(context.can_prepare)
+                        self.assertFalse(context.can_effect)
+                        self.assertTrue(context.frontier["fence"] or context.frontier["pending"])
+                        self.assertEqual(self.api.posts, [])
+
+    def test_lists_artifacts_caller_and_exact_source_ancestry_fail_closed(self) -> None:
+        for mutation in (
+            "count-bool",
+            "count-float",
+            "extra-job",
+            "no-jobs",
+            "artifact",
+            "artifact-count-bool",
+            "artifact-lookup-missing",
+            "duplicate-ref",
+            "foreign-ref",
+            "wrong-source",
+            "caller",
+            "workflow-id",
+            "ancestry",
+            "unknown-runner",
+            "run-attempt2",
+            "source-sha-mismatch",
+        ):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                listing = self.api.responses[
+                    "actions/runs/42305732516/attempts/1/jobs?per_page=100"
+                ]
+                artifacts = self.api.responses["actions/runs/42305732516/artifacts?per_page=100"]
+                if mutation == "count-bool":
+                    listing["total_count"] = True
+                elif mutation == "count-float":
+                    listing["total_count"] = 1.0
+                elif mutation == "extra-job":
+                    listing["jobs"].append(deepcopy(listing["jobs"][0]))
+                    listing["total_count"] = 2
+                elif mutation == "no-jobs":
+                    listing.update(total_count=0, jobs=[])
+                elif mutation == "artifact":
+                    artifacts.update(total_count=1, artifacts=[{"id": 1}])
+                elif mutation == "artifact-count-bool":
+                    artifacts["total_count"] = False
+                elif mutation == "artifact-lookup-missing":
+                    del self.api.responses["actions/runs/42305732516/artifacts?per_page=100"]
+                elif mutation == "duplicate-ref":
+                    self.api.prior["referenced_workflows"] *= 2
+                elif mutation == "foreign-ref":
+                    self.api.prior["referenced_workflows"].append({"path": "foreign", "sha": C})
+                elif mutation == "wrong-source":
+                    # Keep same-C classification while contradicting its exact reference.
+                    self.api.prior["referenced_workflows"][0]["extra"] = True
+                elif mutation == "caller":
+                    self.api.files(
+                        self.api.prior["head_sha"], {core.WORKFLOW_PATH: b"---\njobs: {}\n"}
+                    )
+                elif mutation == "workflow-id":
+                    self.api.prior["workflow_id"] += 1
+                elif mutation == "ancestry":
+                    self.api.responses[f"compare/{self.api.prior['head_sha']}...main"] = {
+                        "status": "diverged"
+                    }
+                elif mutation == "unknown-runner":
+                    listing["jobs"][0]["runner_new_identity"] = "runner"
+                elif mutation == "run-attempt2":
+                    self.api.prior["run_attempt"] = 2
+                elif mutation == "source-sha-mismatch":
+                    self.api.prior["referenced_workflows"][0]["sha"] = C
+                context = self.context()
+                self.assertFalse(context.can_prepare)
+                self.assertIsNotNone(context.frontier["fence"])
+                self.assertEqual(self.api.posts, [])
+
+    def test_real_history_collector_refuses_incomplete_duplicate_and_aliased_counts(self) -> None:
+        for mutation in ("float-count", "bool-count", "truncated", "duplicate", "omitted-current"):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.api.history_mutation = mutation
+                context = self.context()
+                self.assertFalse(context.can_prepare)
+                self.assertFalse(context.can_effect)
+                self.assertIsNotNone(context.frontier["fence"])
+                self.assertEqual(self.api.posts, [])
+
+    def test_separate_genuinely_queued_job_schema_and_numeric_aliases(self) -> None:
+        self.api.prior.update(status="queued", conclusion=None)
+        listing = self.api.responses["actions/runs/42305732516/attempts/1/jobs?per_page=100"]
+        job = listing["jobs"][0]
+        job.update(status="queued", conclusion=None, started_at=None)
+        self.assertTrue(subject.unstarted_service(self.api, self.api.prior))
+        for field in ("id", "run_id", "run_attempt"):
+            original = job[field]
+            job[field] = float(original)
+            self.assertFalse(subject.unstarted_service(self.api, self.api.prior))
+            job[field] = original
+        listing["total_count"] = True
+        self.assertFalse(subject.unstarted_service(self.api, self.api.prior))
+        self.assertEqual(self.api.posts, [])
+
+    def test_disjoint_no_start_branch_cannot_accept_terminal_or_active_empty_jobs(self) -> None:
+        for status, conclusion in (
+            ("completed", "failure"),
+            ("completed", "cancelled"),
+            ("completed", "skipped"),
+            ("completed", "success"),
+            ("in_progress", None),
+            ("queued", "failure"),
+        ):
+            self.setUp()
+            self.api.prior.update(status=status, conclusion=conclusion)
+            self.api.responses["actions/runs/42305732516/attempts/1/jobs?per_page=100"] = {
+                "total_count": 0,
+                "jobs": [],
+            }
+            self.assertFalse(subject.unstarted_service(self.api, self.api.prior))
+            context = self.context()
+            self.assertFalse(context.can_prepare)
+            self.assertTrue(context.frontier["fence"] or context.frontier["pending"])
+            self.assertEqual(self.api.posts, [])
+
+    def test_inherited_fence_is_not_cleared_by_no_dispatch_evidence(self) -> None:
+        state = self.persist(self.context())
+        state["recovery_frontier"]["fence"] = "prior uncertainty"
+        self.api.add(self.api.current, state)
+        self.api.current = {
+            **self.api.current,
+            "id": 42306033058,
+            "created_at": "2026-11-06T22:39:00Z",
+        }
+        self.api.add(self.api.current)
+        context = self.context(state)
+        self.assertEqual(context.frontier["fence"], "prior uncertainty")
+        self.assertFalse(context.can_prepare)
+        self.assertFalse(context.can_effect)
+        self.assertEqual(self.api.posts, [])

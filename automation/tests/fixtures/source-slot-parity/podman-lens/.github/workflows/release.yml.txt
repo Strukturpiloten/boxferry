@@ -1,0 +1,294 @@
+---
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      validation_only:
+        description: Validate the exact candidate without any publication action.
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_GITHUB_API_VERSION: "2026-03-10"
+jobs:
+  deterministic:
+    name: Complete deterministic CI
+    if: github.repository == 'Strukturpiloten/podman-lens'
+    uses: ./.github/workflows/ci.yml
+    with:
+      api_purpose: published
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: read
+  release-metadata:
+    name: Release metadata
+    if: github.repository == 'Strukturpiloten/podman-lens'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate_sha: ${{ steps.metadata.outputs.candidate_sha }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Derive and validate release metadata
+        id: metadata
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
+            echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
+            exit 1
+          }
+          bash scripts/check-release-metadata.sh --release
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "podman-lens") | .version')"
+          notes="${RUNNER_TEMP}/podman-lens-release-notes-${version}.md"
+          bash scripts/extract-release-notes.sh "${version}" > "${notes}"
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'tag=v%s\n' "${version}"
+            printf 'notes=%s\n' "${notes}"
+            printf 'candidate_sha=%s\n' "${GITHUB_SHA}"
+          } >> "${GITHUB_OUTPUT}"
+  native-conformance:
+    name: Native API conformance
+    if: github.repository == 'Strukturpiloten/podman-lens'
+    uses: ./.github/workflows/native-podman-conformance.yml
+    with:
+      release_validation: true
+    permissions:
+      contents: read
+  semver:
+    name: SemVer
+    needs: deterministic
+    if: needs.deterministic.result == 'success'
+    permissions:
+      contents: read
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@1cf96f5a667d96e66c119753cf7814e22e0dee7e # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+      policy_sha: ${{ github.sha }}
+      config_path: scripts/validation-policy.json
+      package: podman-lens
+      api_purpose: published
+      initial_api_contract: true
+  release-gate:
+    name: Release validation gate
+    needs: [deterministic, native-conformance, semver]
+    if: needs.native-conformance.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download current-run native evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: podman-lens-native-api-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-podman-6.1-*
+          path: ${{ runner.temp }}/native-evidence
+          merge-multiple: false
+      - name: Validate complete current-run native evidence
+        shell: bash
+        run:
+          bash scripts/validate-native-evidence.sh "${RUNNER_TEMP}/native-evidence" "${GITHUB_SHA}" "${GITHUB_RUN_ID}"
+          "${GITHUB_RUN_ATTEMPT}"
+      - name: Require exact-candidate published API evidence
+        shell: bash
+        env:
+          DETERMINISTIC_PUBLISHED_API_SHA: ${{ needs.deterministic.outputs.deterministic_published_api_candidate_sha }}
+          SEMVER_PUBLISHED_API_SHA: ${{ needs.semver.outputs.published_api_candidate_sha }}
+        run: |
+          set -euo pipefail
+          test "${DETERMINISTIC_PUBLISHED_API_SHA}" = "${GITHUB_SHA}"
+          test "${SEMVER_PUBLISHED_API_SHA}" = "${GITHUB_SHA}"
+      - name: Expose verified current-run native evidence candidate binding
+        id: binding
+        run: printf 'candidate_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+    outputs:
+      candidate_sha: ${{ steps.binding.outputs.candidate_sha }}
+  publish:
+    name: Publish PodmanLens
+    needs: [shared-release-gate, release-preparation]
+    if: >-
+      github.repository == 'Strukturpiloten/podman-lens' && github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      inputs.validation_only != true && needs.shared-release-gate.result == 'success' &&
+      needs.shared-release-gate.outputs.candidate_sha == github.sha &&
+      needs.release-preparation.result == 'success'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          path: _automation
+          persist-credentials: false
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Check out protected exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Derive release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "podman-lens") | .version')"
+          notes="${RUNNER_TEMP}/podman-lens-release-notes-${version}.md"
+          bash scripts/extract-release-notes.sh "${version}" > "${notes}"
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'tag=v%s\n' "${version}"
+            printf 'notes=%s\n' "${notes}"
+            printf 'crate=target/package/podman-lens-%s.crate\n' "${version}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Build release package and checksum
+        env:
+          CRATE: ${{ steps.metadata.outputs.crate }}
+        run: |
+          cargo ci-package
+          sha256sum "${CRATE}" > "${CRATE}.sha256"
+      - name: Attest release package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.metadata.outputs.crate }}
+      - name: Create or verify annotated release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if git ls-remote --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            [[ "$(git rev-list -n 1 "${TAG}")" == "${GITHUB_SHA}" ]]
+          else
+            tag_object_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" -f tag="${TAG}" -f message="PodmanLens ${TAG}" -f object="${GITHUB_SHA}" -f type=commit --jq '.sha')"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" -f ref="refs/tags/${TAG}" -f sha="${tag_object_sha}"
+          fi
+      - name: Create or replace draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.metadata.outputs.notes }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --draft --title "PodmanLens ${VERSION}" --notes-file "${NOTES}"
+          fi
+      - name: Upload draft GitHub release assets
+        env:
+          CRATE: ${{ steps.metadata.outputs.crate }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: gh release upload "${TAG}" --clobber "${CRATE}" "${CRATE}.sha256"
+      - name: Publish exact approved crate through shared mechanics
+        uses: ./_automation/.github/actions/shared-crate-publish
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          release-config: ${{ github.workspace }}/.github/release-policy.json
+          package: podman-lens
+          validation-sha: ${{ needs.shared-release-gate.outputs.candidate_sha }}
+          validation-result: ${{ needs.shared-release-gate.result }}
+          validation-only: ${{ inputs.validation_only }}
+      - name: Publish immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: gh release edit "${TAG}" --draft=false --latest
+  shared-release-gate:
+    name: Shared exact-candidate release gate
+    needs: [deterministic, release-metadata, native-conformance, semver, release-gate]
+    if: always()
+    permissions:
+      contents: read
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-validation.yml@1cf96f5a667d96e66c119753cf7814e22e0dee7e # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+      policy_sha: ${{ github.sha }}
+      config_path: .github/release-policy.json
+      needs_json: ${{ toJSON(needs) }}
+  release-preparation:
+    name: Read-only exact-candidate publication inventory
+    needs: shared-release-gate
+    if: >-
+      github.repository == 'Strukturpiloten/podman-lens' && github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      needs.shared-release-gate.result == 'success' &&
+      needs.shared-release-gate.outputs.candidate_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
+          ref: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          path: _automation
+          persist-credentials: false
+      - name: Bind exact release candidate and policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          policy-sha: ${{ github.sha }}
+          config-path: .github/release-policy.json
+      - name: Install locked shared Python tooling
+        uses: ./_automation/.github/actions/shared-python
+      - name: Validate common inventory without publication credentials
+        uses: ./_automation/.github/actions/shared-crate-publish
+        with:
+          candidate-sha: ${{ github.sha }}
+          automation-sha: 1cf96f5a667d96e66c119753cf7814e22e0dee7e
+          release-config: ${{ steps.source.outputs.config }}
+          package: podman-lens
+          validation-sha: ${{ needs.shared-release-gate.outputs.candidate_sha }}
+          validation-result: ${{ needs.shared-release-gate.result }}
+          validation-only: "true"

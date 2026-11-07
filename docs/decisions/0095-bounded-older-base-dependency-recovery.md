@@ -68,6 +68,10 @@ no later than the current actor and a strictly smaller run ID. Older queued
 actors cannot act or mint clean authority. Every later success, failure,
 cancellation and earlier attempt is reconciled; only provably unstarted queued
 jobs are harmless. Active possible effects defer the frontier until closure.
+An authenticated first-attempt skipped outer reusable call is also no-effect
+history only when complete jobs/artifact metadata proves the known caller,
+no runner, steps, labels or artifacts. Placeholder timestamps are not dispatch
+proof; this exception provides neither receipt nor checkpoint authority.
 
 A genuine authority/workflow transition can request one native Renovate `rebase`
 label handoff. The label must already exist with its fixed name; the service does

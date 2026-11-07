@@ -1,0 +1,141 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/fixtures/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update versioned Dev Container tools",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Signal updates for checksum-pinned file-quality tools",
+      "managerFilePatterns": ["/^scripts/install-file-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update directly pinned workflow tool versions",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Dev Container base release and digest together",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n# release: {{{newValue}}}\nFROM {{{depName}}}:{{{newValue}}}@{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the GitHub CLI installed in the Dev Container",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer\\.json$/"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/github-cli:[^\"]+\"[\\s\\S]*?\"version\": \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cli/cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the reviewed Python bootstrap runtime across the provider matrix and runner",
+      "managerFilePatterns": [
+        "/^conformance\\/provider-config-matrix\\.toml$/",
+        "/^\\.github\\/workflows\\/provider-conformance\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=python-version depName=(?<depName>python)\\nexecution = \\[\\\"python=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
+        "# renovate: datasource=python-version depName=(?<depName>python)\\n\\s+python-version: (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "datasourceTemplate": "python-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Track fixed GitHub-hosted runner environments",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-runners\\n\\s+runner:\\n\\s+-\\s+(?<depName>ubuntu)-(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
+      ],
+      "datasourceTemplate": "github-runners"
+    },
+    {
+      "customType": "regex",
+      "description": "Discover fixed provider-conformance Python bootstrap pins",
+      "managerFilePatterns": ["/^conformance\\/provider-config-matrix\\.toml$/"],
+      "matchStrings": [
+        "(?<depName>python-dotenv)=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+);sha256=(?<currentDigest>[a-f0-9]{64})",
+        "(?<depName>PyYAML)=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+);sha256=(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "pypi"
+    }
+  ],
+  "extends": [
+    "github>Strukturpiloten/boxferry//renovate-presets/common#1cf96f5a667d96e66c119753cf7814e22e0dee7e",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#1cf96f5a667d96e66c119753cf7814e22e0dee7e"
+  ],
+  "packageRules": [
+    {
+      "description": "Regenerate Dev Container feature integrity through the exact locked CLI",
+      "matchManagers": ["devcontainer"],
+      "matchDepTypes": ["feature"],
+      "pinDigests": false,
+      "prBodyNotes": ["Regenerate and verify the committed feature lock and run the complete gate."]
+    },
+    {
+      "description": "Debian venv package version uses signed Bookworm metadata",
+      "matchDatasources": ["repology"],
+      "matchPackageNames": ["debian_12/python3-venv"],
+      "versioning": "deb",
+      "prBodyNotes": [
+        "Verify the pinned signed apt candidate and both architectures; retain the pip-capable venv preflight."
+      ]
+    },
+    {
+      "description": "Keep provider qualification targets and bootstrap artifacts fixed",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [
+        "conformance/provider-config-matrix.toml",
+        ".github/workflows/provider-conformance.yml"
+      ],
+      "enabled": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Keep the reviewed native provider Python version fixed without suppressing Action pins",
+      "matchManagers": ["github-actions"],
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["actions/python-versions"],
+      "matchDepTypes": ["uses-with"],
+      "matchFileNames": [".github/workflows/provider-conformance.yml"],
+      "enabled": false,
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Defer image, Feature and legacy image-tool proposals until GitHub image qualification",
+      "matchFileNames": [".devcontainer/**", "scripts/install-file-tools.sh"],
+      "enabled": false,
+      "dependencyDashboardApproval": false
+    }
+  ]
+}
