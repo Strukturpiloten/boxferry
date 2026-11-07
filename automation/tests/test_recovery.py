@@ -643,8 +643,8 @@ class RecoveryTests(unittest.TestCase):
                     "path": core.WORKFLOW_PATH,
                     "head_branch": "main",
                     "head_sha": B,
-                    "status": "completed",
-                    "conclusion": "success",
+                    "status": "in_progress",
+                    "conclusion": None,
                     "repository": {"full_name": REPOSITORY},
                     "referenced_workflows": [
                         {"path": f"{core.SHARED_WORKFLOW_PATH}@{C}", "sha": C}
@@ -691,6 +691,10 @@ class RecoveryTests(unittest.TestCase):
                     self.api.history = {"total_count": 1, "workflow_runs": [{"id": 100}]}
                 else:
                     self.assertEqual(self.effects(), [("actions/runs/50/rerun-failed-jobs", {})])
+                # The executing actor becomes a completed checkpoint only after return.
+                self.api.responses[f"actions/runs/{identifier}"].update(
+                    status="completed", conclusion="success"
+                )
                 artifact_id = identifier + 1000
                 self.api.archives[artifact_id] = archive(payload, core.STATE_FILE)
                 self.api.responses[f"actions/runs/{identifier}/artifacts?per_page=100"] = {
@@ -1184,6 +1188,47 @@ class ServiceCheckpointTests(unittest.TestCase):
         self.assertEqual(advanced.previous["reruns"], {"8" * 40: 50})
         assert advanced.previous is not None
         self.assertEqual(advanced.previous["recoveries"][key]["phase"], "attempted")
+
+    def test_effect_time_actor_requires_explicit_running_phase_and_null_conclusion(self) -> None:
+        variants = (
+            ("status", "completed", "conclusion", "cancelled"),
+            ("status", "completed", "conclusion", "failure"),
+            ("status", "completed", "conclusion", "success"),
+            ("status", "completed", "conclusion", None),
+            ("status", "queued", "conclusion", None),
+            ("status", "waiting", "conclusion", None),
+            ("status", "unknown", "conclusion", None),
+            ("status", None, "conclusion", None),
+            ("missing", None, "conclusion", None),
+            ("status", "in_progress", "missing", None),
+            ("status", "in_progress", "conclusion", "cancelled"),
+            ("status", "in_progress", "conclusion", "failure"),
+            ("status", "in_progress", "conclusion", False),
+        )
+        for status_key, status, conclusion_key, conclusion in variants:
+            with self.subTest(
+                status=status, conclusion=conclusion, keys=(status_key, conclusion_key)
+            ):
+                self.setUp()
+                context = self.context()
+                self.assertTrue(context.can_effect)
+                self.current.pop("status")
+                self.current.pop("conclusion")
+                if status_key != "missing":
+                    self.current[status_key] = status
+                if conclusion_key != "missing":
+                    self.current[conclusion_key] = conclusion
+                with self.assertRaisesRegex(ValueError, "effect-time actor/checkpoint"):
+                    subject.require_effect(self.api, context, C, "main")
+                self.assertFalse(context.can_effect)
+                self.assertFalse(context.can_prepare)
+                self.assertIsNotNone(context.frontier["fence"])
+                self.assertEqual(self.api.posts, [])
+        self.setUp()
+        context = self.context()
+        subject.require_effect(self.api, context, C, "main")
+        self.assertTrue(context.can_effect)
+        self.assertEqual(self.api.posts, [])
 
     def test_effect_time_attempt_change_suspends_instead_of_using_earlier_artifact(self) -> None:
         context = self.context()

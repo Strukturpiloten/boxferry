@@ -1,0 +1,270 @@
+{
+  "recorded_at": "2026-11-07",
+  "records": {
+    "boxferry-website": {
+      "license": null,
+      "license_observation": "GitHub repository license endpoint returned404 on2026-11-07; no license assertion.",
+      "observed": {
+        "evidence_role": "Observed presentation/skip-shape only; not proof of historical eligibility or successful recovery; no tests run by this agent.",
+        "jobs": [
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/boxferry-website/check-runs/128324413277",
+            "conclusion": "success",
+            "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+            "id": 128324413277,
+            "name": "Validation plan",
+            "run_attempt": 1,
+            "run_id": 42346215191,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/boxferry-website/check-runs/128324481302",
+            "conclusion": "success",
+            "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+            "id": 128324481302,
+            "name": "Dependency eligibility / Dependency eligibility",
+            "run_attempt": 1,
+            "run_id": 42346215191,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/boxferry-website/check-runs/128324481317",
+            "conclusion": "success",
+            "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+            "id": 128324481317,
+            "name": "Format, lint, test, and build",
+            "run_attempt": 1,
+            "run_id": 42346215191,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/boxferry-website/check-runs/128324814688",
+            "conclusion": "success",
+            "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+            "id": 128324814688,
+            "name": "Required CI",
+            "run_attempt": 1,
+            "run_id": 42346215191,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/boxferry-website/check-runs/128324873285",
+            "conclusion": "skipped",
+            "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+            "id": 128324873285,
+            "name": "Publish validated website",
+            "run_attempt": 1,
+            "run_id": 42346215191,
+            "status": "completed"
+          }
+        ],
+        "jobs_total_count": 5,
+        "retained_job_count": 5,
+        "run": {
+          "conclusion": "success",
+          "created_at": "2026-11-07T06:15:46Z",
+          "event": "pull_request",
+          "head_sha": "564dbe298a2c89a19045a3aeb92136b8452647ea",
+          "id": 42346215191,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "pull_requests": [],
+          "referenced_workflows": [
+            {
+              "path": "Strukturpiloten/boxferry-website/.github/workflows/deploy.yml@8be3eb86abec0222358627d61683d711d7bb10ee",
+              "ref": "refs/pull/230/merge",
+              "sha": "8be3eb86abec0222358627d61683d711d7bb10ee"
+            },
+            {
+              "path": "Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03",
+              "sha": "95f5514f00f0f27475f9a58d5e17d149c2983b03"
+            }
+          ],
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-11-07T06:17:48Z"
+        }
+      },
+      "positive_recovery_evidence": false,
+      "redistribution_status": "Maintainer-owned workspace workflow fixture; no external native oracle implementation or runtime image copied.",
+      "source_revision": null,
+      "source_role": "Prepared local website caller, not admitted source",
+      "workflow": "---\nname: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n  merge_group:\n    types: [checks_requested]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}\n\njobs:\n  validation-plan:\n    name: Validation plan\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    outputs:\n      plan: ${{ steps.plan.outputs.plan }}\n      profile: ${{ steps.plan.outputs.profile }}\n      select_quality: ${{ steps.plan.outputs.select_quality }}\n      select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Hold the exact candidate and trusted base policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install canonical locked Python tooling\n        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n      - name: Plan from independently trusted policy\n        id: plan\n        env:\n          CONFIG: ${{ steps.source.outputs.config }}\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n        run: |\n          uv run --locked --project _automation/automation python -m boxferry_ci plan \\\n            --repository-root source --config \"${CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\" \\\n            --github-output \"${GITHUB_OUTPUT}\" --summary \"${GITHUB_STEP_SUMMARY}\"\n\n  quality:\n    name: Format, lint, test, and build\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_quality == 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Hold the exact candidate and trusted base policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install canonical locked Python tooling\n        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n      - name: Install pinned Node.js toolchain\n        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version: 26.13.0\n          cache: npm\n          cache-dependency-path: source/package-lock.json\n      - name: Install checksum-pinned native file-quality tools\n        env:\n          PROFILE: ${{ needs.validation-plan.outputs.profile }}\n        run: |\n          set -euo pipefail\n          tool_dir=\"${RUNNER_TEMP}/boxferry-website-tools\"\n          if [[ \"${PROFILE}\" == full ]]; then\n            bash source/scripts/install-file-tools.sh \"${tool_dir}\"\n          else\n            bash source/scripts/install-file-tools.sh \"${tool_dir}\" --lychee-only\n          fi\n          printf '%s\\n' \"${tool_dir}\" >> \"${GITHUB_PATH}\"\n      - name: Run the independently selected website tasks\n        env:\n          CONFIG: ${{ steps.source.outputs.config }}\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          BOXFERRY_WEBSITE_FORMAT_MODE: check\n          BOXFERRY_WEBSITE_SOURCE_MODE: locked\n        run: |\n          uv run --locked --project _automation/automation python -m boxferry_ci run-local \\\n            --repository-root source --config \"${CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\" \\\n            --report-json \"${RUNNER_TEMP}/website-validation.json\" \\\n            --summary \"${GITHUB_STEP_SUMMARY}\"\n      - name: Retain structured website validation evidence\n        if: always()\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: website-validation-${{ github.sha }}\n          path: ${{ runner.temp }}/website-validation.json\n          if-no-files-found: warn\n          retention-days: 7\n\n  lockfile-release-age:\n    name: Dependency eligibility\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'\n    permissions:\n      contents: read\n      actions: read\n      statuses: read\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n\n  pr-gate:\n    name: Required CI\n    if: always()\n    needs: [validation-plan, quality, lockfile-release-age]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Hold the exact candidate and trusted base policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install canonical locked Python tooling\n        uses: ./_automation/.github/actions/shared-python # zizmor: ignore[self-repository] -- External SHA-pinned BoxFerry checkout; $/ would select this website repository.\n      - name: Require exact-candidate planned outcomes\n        env:\n          CONFIG: ${{ steps.source.outputs.config }}\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}\n          NEEDS_JSON: ${{ toJSON(needs) }}\n        run: |\n          uv run --locked --project _automation/automation python -m boxferry_ci gate \\\n            --repository-root source --config \"${CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\" \\\n            --plan-json \"${PLAN_JSON}\" --needs-json \"${NEEDS_JSON}\" \\\n            --summary \"${GITHUB_STEP_SUMMARY}\"\n\n  publish-site:\n    name: Publish validated website\n    if: >-\n      github.event_name == 'push' && github.ref == 'refs/heads/main' &&\n      needs.pr-gate.result == 'success'\n    needs: [pr-gate]\n    permissions:\n      contents: read\n    uses: ./.github/workflows/deploy.yml # zizmor: ignore[self-repository] -- Same-commit reusable workflow; pinned actionlint 1.7.12 lacks $/ support.\n    secrets:\n      BOXFERRY_RSYNC_SSH_PRIVATE_KEY: ${{ secrets.BOXFERRY_RSYNC_SSH_PRIVATE_KEY }}\n      BOXFERRY_VERSION_UPDATER_SSH_PRIVATE_KEY: ${{ secrets.BOXFERRY_VERSION_UPDATER_SSH_PRIVATE_KEY }}\n    with:\n      operation: deploy\n      revision: ${{ github.sha }}\n      automatic: true\n",
+      "workflow_sha256": "721de58d3fce2eca7abc60ca1991b34bdaad3cb092bbcdc173e94cc3b15f3c12"
+    },
+    "docker-lens": {
+      "license": "MPL-2.0",
+      "license_git_blob": "d0a1fa1482eea82e19510e7920cbe3a03e41f691",
+      "observed": {
+        "evidence_role": "Observed presentation/skip-shape only; not proof of historical eligibility or successful recovery; no tests run by this agent.",
+        "jobs": [
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361415185",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361415185,
+            "name": "Validation plan",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361415995",
+            "conclusion": "skipped",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361415995,
+            "name": "Hosted prerequisite diagnostic (not native validation)",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361443207",
+            "conclusion": "skipped",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361443207,
+            "name": "Native Engine ${{ matrix.lane }}",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469216",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469216,
+            "name": "Repository policy and Python automation",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469281",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469281,
+            "name": "Minimum supported Rust / Shared Rust task",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469308",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469308,
+            "name": "Dependency and license policy / Dependency and license policy",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469338",
+            "conclusion": "failure",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469338,
+            "name": "Rust quality / Shared Rust task",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469349",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469349,
+            "name": "Dependency eligibility / Dependency eligibility",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128361469375",
+            "conclusion": "success",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128361469375,
+            "name": "Development public API compatibility / Public API compatibility",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          },
+          {
+            "check_run_url": "https://api.github.com/repos/Strukturpiloten/docker-lens/check-runs/128362818411",
+            "conclusion": "failure",
+            "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+            "id": 128362818411,
+            "name": "Required CI",
+            "run_attempt": 1,
+            "run_id": 42358408982,
+            "status": "completed"
+          }
+        ],
+        "jobs_total_count": 10,
+        "retained_job_count": 10,
+        "run": {
+          "conclusion": "failure",
+          "created_at": "2026-11-07T09:07:58Z",
+          "event": "pull_request",
+          "head_sha": "40cc13d789256db859cfc40c356b6b415020bfa7",
+          "id": 42358408982,
+          "name": "Check",
+          "path": ".github/workflows/check.yml",
+          "pull_requests": [
+            {
+              "base": {
+                "ref": "main",
+                "repo": {
+                  "id": 1387403220,
+                  "name": "docker-lens",
+                  "url": "https://api.github.com/repos/Strukturpiloten/docker-lens"
+                },
+                "sha": "b6ca7dea85add830c6295f4a286c0e094acdf9b2"
+              },
+              "head": {
+                "ref": "renovate/rust-toolchain",
+                "repo": {
+                  "id": 1387403220,
+                  "name": "docker-lens",
+                  "url": "https://api.github.com/repos/Strukturpiloten/docker-lens"
+                },
+                "sha": "40cc13d789256db859cfc40c356b6b415020bfa7"
+              },
+              "id": 5200146435,
+              "number": 195,
+              "url": "https://api.github.com/repos/Strukturpiloten/docker-lens/pulls/195"
+            }
+          ],
+          "referenced_workflows": [
+            {
+              "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-dependencies.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03",
+              "sha": "95f5514f00f0f27475f9a58d5e17d149c2983b03"
+            },
+            {
+              "path": "Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03",
+              "sha": "95f5514f00f0f27475f9a58d5e17d149c2983b03"
+            },
+            {
+              "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03",
+              "sha": "95f5514f00f0f27475f9a58d5e17d149c2983b03"
+            },
+            {
+              "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03",
+              "sha": "95f5514f00f0f27475f9a58d5e17d149c2983b03"
+            }
+          ],
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-11-07T09:14:38Z"
+        }
+      },
+      "positive_recovery_evidence": false,
+      "redistribution_status": "Maintainer-owned workspace workflow fixture; no external native oracle implementation or runtime image copied.",
+      "source_revision": "b6ca7dea85add830c6295f4a286c0e094acdf9b2",
+      "source_role": "Pinned main snapshot",
+      "workflow": "---\nname: Check\n\non:\n  pull_request:\n  merge_group:\n    types: [checks_requested]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\nconcurrency:\n  # Diagnostics must not cancel required main native qualification.\n  group: check-${{ github.event_name == 'workflow_dispatch' && 'diagnostic' || 'validation' }}-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  hosted-prerequisite-diagnostic:\n    name: Hosted prerequisite diagnostic (not native validation)\n    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - name: Collect bounded read-only prerequisite observations\n        run: |\n          set -euo pipefail\n          umask 077\n          set -o noclobber\n          timeout --signal=TERM --kill-after=2s 55s python3 -B scripts/native-outer-runtime-profile.py > \"$RUNNER_TEMP/dockerlens-hosted-prerequisite.json\"\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: dockerlens-hosted-prerequisite\n          path: ${{ runner.temp }}/dockerlens-hosted-prerequisite.json\n          if-no-files-found: error\n          retention-days: 7\n\n  validation-plan:\n    name: Validation plan\n    if: github.event_name != 'workflow_dispatch'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    outputs:\n      plan: ${{ steps.plan.outputs.plan }}\n      profile: ${{ steps.plan.outputs.profile }}\n      select_rust: ${{ steps.plan.outputs.select_rust }}\n      select_msrv: ${{ steps.plan.outputs.select_msrv }}\n      select_dependencies: ${{ steps.plan.outputs.select_dependencies }}\n      select_api: ${{ steps.plan.outputs.select_api }}\n      select_documentation: ${{ steps.plan.outputs.select_documentation }}\n      select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Bind exact candidate and trusted policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install locked shared Python tooling\n        uses: ./_automation/.github/actions/shared-python\n      - name: Select checks from the trusted comparison base\n        id: plan\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          POLICY_CONFIG: ${{ steps.source.outputs.config }}\n        run: |\n          uv run --locked --project _automation/automation python -m boxferry_ci plan \\\n            --repository-root source --config \"${POLICY_CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\" \\\n            --github-output \"${GITHUB_OUTPUT}\"\n\n  rust:\n    name: Rust quality\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_rust == 'true'\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n      config_path: scripts/validation-policy.json\n      task: rust-quality\n\n  msrv:\n    name: Minimum supported Rust\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_msrv == 'true'\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n      config_path: scripts/validation-policy.json\n      task: msrv\n\n  dependencies:\n    name: Dependency and license policy\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_dependencies == 'true'\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-dependencies.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n      config_path: scripts/validation-policy.json\n\n  api:\n    name: Development public API compatibility\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_api == 'true'\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n      config_path: scripts/validation-policy.json\n      package: docker-lens\n      api_purpose: development\n      initial_api_contract: false\n\n  documentation:\n    name: Repository policy and Python automation\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_documentation == 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Bind exact candidate and trusted policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install locked shared Python tooling\n        uses: ./_automation/.github/actions/shared-python\n      - name: Set up exact shared CI Node\n        if: needs.validation-plan.outputs.profile != 'prose'\n        uses: ./source/.github/actions/setup-node\n        with:\n          repository-root: source\n      - name: Set up canonical tools and the real Renovate engine\n        if: needs.validation-plan.outputs.profile != 'prose'\n        run: uv run --locked --project _automation/automation python source/scripts/setup-ci-tools.py --engine docker --node-context hosted\n      - name: Check workflow syntax and the changed complete-gate shell\n        if: needs.validation-plan.outputs.profile != 'prose'\n        working-directory: source\n        run: |\n          actionlint\n          shellcheck scripts/check-all.sh\n          shfmt -d -i 2 -ci -sr scripts/check-all.sh\n      - name: Check newly shared Python entry points\n        working-directory: source\n        run: |\n          uv run --locked --project ../_automation/automation ruff check scripts/validation-plan.py scripts/setup-ci-tools.py tests/test_shared_automation.py\n          uv run --locked --project ../_automation/automation ruff format --check scripts/setup-ci-tools.py tests/test_shared_automation.py\n          uv run --locked --project ../_automation/automation ty check scripts/validation-plan.py scripts/setup-ci-tools.py\n      - name: Run the repository-owned offline policy suite\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          POLICY_CONFIG: ${{ steps.source.outputs.config }}\n          DOCKERLENS_METADATA_UNCHANGED: ${{ needs.validation-plan.outputs.profile == 'prose' && '1' || '0' }}\n        run: |\n          uv run --locked --project _automation/automation python -m boxferry_ci run \\\n            --task documentation \\\n            --repository-root source --config \"${POLICY_CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\"\n\n  lockfile-release-age:\n    name: Dependency eligibility\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'\n    permissions:\n      contents: read\n      actions: read\n      statuses: read\n    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@95f5514f00f0f27475f9a58d5e17d149c2983b03 # automation-v1 interface v1\n    with:\n      candidate_sha: ${{ github.sha }}\n      automation_sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n      policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n\n  native-conformance:\n    name: Native Engine ${{ matrix.lane }}\n    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 35\n    strategy:\n      fail-fast: false\n      matrix:\n        lane:\n          [\n            debian11-rootful,\n            debian11-rootless,\n            upstream-rootful,\n            upstream-rootless,\n          ]\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - name: Run isolated native lane\n        env:\n          DOCKERLENS_NATIVE_EVIDENCE_DIR: ${{ runner.temp }}/dockerlens-native-evidence\n          DOCKERLENS_NATIVE_CANDIDATE_SHA: ${{ github.sha }}\n        run: ./scripts/native-conformance.sh \"${{ matrix.lane }}\"\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: dockerlens-native-${{ matrix.lane }}\n          path: ${{ runner.temp }}/dockerlens-native-evidence/${{ matrix.lane }}.json\n          if-no-files-found: error\n          retention-days: 30\n\n  check-gate:\n    name: Required CI\n    if: always() && !(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')\n    needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        api,\n        documentation,\n        lockfile-release-age,\n        native-conformance,\n      ]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    outputs:\n      candidate_sha: ${{ github.sha }}\n    steps:\n      - name: Check out immutable shared automation\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          repository: Strukturpiloten/boxferry\n          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1\n          ref: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          path: _automation\n          persist-credentials: false\n      - name: Bind exact candidate and trusted policy\n        id: source\n        uses: ./_automation/.github/actions/shared-source\n        with:\n          candidate-sha: ${{ github.sha }}\n          automation-sha: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          policy-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          config-path: scripts/validation-policy.json\n      - name: Install locked shared Python tooling\n        uses: ./_automation/.github/actions/shared-python\n      - name: Require selected jobs and only intentional skips\n        id: offline\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}\n          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}\n          AUTOMATION_SHA: 95f5514f00f0f27475f9a58d5e17d149c2983b03\n          POLICY_CONFIG: ${{ steps.source.outputs.config }}\n          PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}\n          NEEDS_JSON: ${{ toJSON(needs) }}\n        run: |\n          NEEDS_JSON=\"$(python3 -c 'import json, os; needs = json.loads(os.environ[\"NEEDS_JSON\"]); needs.pop(\"native-conformance\"); print(json.dumps(needs))')\"\n          uv run --locked --project _automation/automation python -m boxferry_ci gate \\\n            --repository-root source --config \"${POLICY_CONFIG}\" \\\n            --event \"${EVENT_NAME}\" --base-sha \"${BASE_SHA}\" --head-sha \"${HEAD_SHA}\" \\\n            --tested-sha \"${GITHUB_SHA}\" --policy-sha \"${POLICY_SHA}\" \\\n            --automation-sha \"${AUTOMATION_SHA}\" \\\n            --plan-json \"${PLAN_JSON}\" --needs-json \"${NEEDS_JSON}\"\n      - name: Fail on skipped, cancelled, or failed validation\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          EVENT_REF: ${{ github.ref }}\n          SCAFFOLD_RESULT: ${{ steps.offline.outcome }}\n          NATIVE_RESULT: ${{ needs.native-conformance.result }}\n        run: |\n          test \"$SCAFFOLD_RESULT\" = success\n          if [[ \"$EVENT_NAME\" == pull_request || \"$EVENT_NAME\" == merge_group ]]; then\n            test \"$NATIVE_RESULT\" = skipped\n            echo 'PR and queue validation is offline-only; native Engine evidence is not claimed'\n          elif [[ \"$EVENT_NAME\" == push && \"$EVENT_REF\" == refs/heads/main ]]; then\n            test \"$NATIVE_RESULT\" = success\n          else\n            echo 'unexpected validation event; native evidence is required' >&2\n            exit 1\n          fi\n",
+      "workflow_sha256": "1eb5f72e2038f3e0d316a9f314ccf0d51cdcd93c2572573796b4b8ab5f1b727c"
+    }
+  },
+  "schema": 1,
+  "scope": "Exact static event-excluded job presentation and source shapes only; no eligibility or automated recovery proof"
+}

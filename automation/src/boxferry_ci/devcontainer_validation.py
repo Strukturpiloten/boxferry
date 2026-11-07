@@ -96,7 +96,7 @@ PROBES: tuple[tuple[str, ...], ...] = (
     ("cargo", "--version"),
     ("cargo-clippy", "--version"),
     ("cargo-deny", "--version"),
-    ("cargo-llvm-cov", "--version"),
+    ("cargo-llvm-cov", "llvm-cov", "--version"),
     ("cargo-semver-checks", "--version"),
     ("curl", "--version"),
     ("gh", "--version"),

@@ -719,7 +719,8 @@ def validate_state(
             or re.fullmatch(r"[0-9a-f]{64}", key) is None
             or not isinstance(entry, dict)
             or entry.get("phase") not in {"prepared", "attempted", "uncertain", "suspended"}
-            or entry.get("kind") not in {"retained-graph", "handoff", "native-legacy-handoff"}
+            or entry.get("kind")
+            not in {"retained-graph", "handoff", "native-legacy-handoff", "retained-original"}
             or type(entry.get("original_run_id")) is not int
             or entry["original_run_id"] < 1
             or type(entry.get("original_attempt")) is not int
@@ -730,6 +731,11 @@ def validate_state(
             raise EligibilityError("trusted recovery reservation has invalid bindings")
         for binding_name in ("source_head_sha", "authority"):
             revision(entry.get(binding_name))
+        if entry["kind"] == "retained-original" and (
+            not isinstance(entry.get("original_identity_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", entry["original_identity_sha256"]) is None
+        ):
+            raise EligibilityError("retained-original reservation lacks exact PR identity")
         if entry["kind"] == "native-legacy-handoff":
             revision(entry.get("merge_base_sha"))
             if (
@@ -2006,7 +2012,14 @@ def service(
     }:
         raise EligibilityError("current service policy is outside trusted default-branch history")
     previous = previous_state(api, implementation, default_branch, now)
-    from .recovery import RecoveryRefused, recover, require_effect, service_context
+    from .recovery import (
+        RecoveryRefused,
+        probe_retained,
+        recover,
+        recover_retained,
+        require_effect,
+        service_context,
+    )
 
     effect_context = service_context(
         api, current_run, previous, implementation, default_branch, now
@@ -2023,6 +2036,7 @@ def service(
     initial_scan_cursor = scan_cursor
     evaluated_cursor: int | None = None
     candidates: list[Candidate] = []
+    retained: list[tuple[int, int | None]] = []
     errors: list[str] = []
     if effect_context.frontier.get("fence"):
         errors.append(f"Recovery suspended: {effect_context.frontier['fence']}")
@@ -2057,13 +2071,24 @@ def service(
                     if len(prs) != 1 or type(prs[0].get("number")) is not int:
                         _resolution_guard("source-pr-cardinality")
                         raise EligibilityError("candidate CI run has no unique authoritative PR")
-                    candidate = pr_candidate(api, prs[0]["number"])
+                    original = probe_retained(api, prs[0]["number"], default_branch, run=source)
+                    if original is not None:
+                        if head not in {original.historical.source_head, original.historical.head}:
+                            raise EligibilityError("source callback differs from retained original")
+                        retained.append((prs[0]["number"], source_id))
+                        candidate = None
+                    else:
+                        candidate = pr_candidate(api, prs[0]["number"])
                     # REST workflow runs may identify the PR source head rather than the
                     # synthetic merge SHA. Only the live PR supplies the latter.
-                    if head not in {candidate.source_head, candidate.head}:
+                    if candidate is not None and head not in {
+                        candidate.source_head,
+                        candidate.head,
+                    }:
                         _resolution_guard("source-head-stale", pr_source_sha=candidate.source_head)
                         raise EligibilityError("candidate CI run is stale relative to the live PR")
-                    candidates.append(candidate)
+                    if candidate is not None:
+                        candidates.append(candidate)
             except QueueTargetMoved as moved:
                 binding = moved.binding
                 if (
@@ -2161,7 +2186,20 @@ def service(
             scan_cursor = selected[-1]["number"]
         for pr in selected:
             try:
-                candidates.append(pr_candidate(api, pr["number"]))
+                if (
+                    probe_retained(
+                        api,
+                        pr["number"],
+                        default_branch,
+                        source_head=(
+                            pr["head"].get("sha") if isinstance(pr.get("head"), dict) else None
+                        ),
+                    )
+                    is not None
+                ):
+                    retained.append((pr["number"], None))
+                else:
+                    candidates.append(pr_candidate(api, pr["number"]))
             except EligibilityError:
                 errors.append(
                     f"PR {pr.get('number')}: merge candidate unavailable; next schedule rechecks"
@@ -2245,6 +2283,37 @@ def service(
                 errors.append(f"PR {candidate.number}: older-base recovery refused: {error}")
         except (EligibilityError, RecoveryRefused) as error:
             errors.append(f"PR {candidate.number}: {error}")
+            if api.requests >= 450 or time.monotonic() >= api.deadline - 30:
+                if event_name == "schedule":
+                    scan_cursor = (
+                        initial_scan_cursor if evaluated_cursor is None else evaluated_cursor
+                    )
+                break
+    for number, original_run_id in retained:
+        try:
+            dependency_state = recover_retained(
+                api,
+                number,
+                dependency_state,
+                previous,
+                recoveries,
+                reports,
+                implementation=implementation,
+                service_run=run_id,
+                branch=default_branch,
+                now=now,
+                context=effect_context,
+                original_run_id=original_run_id,
+            )
+            if event_name == "schedule" and any(
+                report.get("pull_request") == number
+                and report.get("protected_queue_required") is True
+                for report in reports.values()
+            ):
+                evaluated_cursor = number
+                scan_cursor = number
+        except (EligibilityError, RecoveryRefused) as error:
+            errors.append(f"PR {number}: retained-original recovery refused: {error}")
             if api.requests >= 450 or time.monotonic() >= api.deadline - 30:
                 if event_name == "schedule":
                     scan_cursor = (
@@ -2571,6 +2640,11 @@ def summary(payload: dict[str, Any]) -> str:
             f"; next automatic recheck after {report['retry_at']}" if report.get("retry_at") else ""
         )
         lines.append(f"- PR #{report['pull_request']}, `{head}`: {report['status']}{retry}.")
+        if report.get("protected_queue_required") is True:
+            lines.append(
+                "  Historical hint/base metadata only; the original immutable waiter must "
+                "approve its actual tested SHA, then a fresh protected queue must pass."
+            )
     for reservation in payload.get("recoveries", {}).values():
         lines.append(
             f"- Older-base {reservation['kind']} for CI run {reservation['original_run_id']}: "

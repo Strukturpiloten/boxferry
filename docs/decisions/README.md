@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Proposed decisions
 
+[ADR 0098](0098-preserved-original-dependency-recheck.md) proposes original-graph dependency
+rechecks followed by fresh protected queue validation, with exact static event exclusions.
+
 [ADR 0095](0095-bounded-older-base-dependency-recovery.md) records bounded historical/current
 dependency evaluation, exact-base readers, finite retry reservations and a fixed Renovate
 handoff; consumer adoption and independent validation precede activation.
