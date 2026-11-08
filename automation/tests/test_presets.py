@@ -1821,7 +1821,7 @@ class NativePresetTests(unittest.TestCase):
       packageName:"cli/cli",packageFile:featurePath});
     assert.equal(limitedOption.minimumReleaseAge,"3 days");
     assert.equal(limitedOption.dependencyDashboardApproval,false);
-    assert.equal(limitedOption.automerge,true);
+    assert.equal(limitedOption.automerge,false);
     assert.equal(limitedOption.groupName,"Dev Container features");
     replacements++;
     // Runner policy uses the real native extractor; matrix-only discovery remains caller-owned.

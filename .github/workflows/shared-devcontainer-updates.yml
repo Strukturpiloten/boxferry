@@ -12,6 +12,8 @@ on:
         required: true
 permissions:
   contents: read
+  checks: read
+  statuses: read
 concurrency:
   group: devcontainer-updates-${{ github.repository }}
   cancel-in-progress: false
@@ -66,12 +68,11 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
-          permission-checks: read
-          permission-statuses: read
       - name: Run bounded feature owners and official whole-graph maintenance
         shell: bash
         env:
           RENOVATE_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOXFERRY_FEATURE_READ_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           BOXFERRY_NODE="$(command -v node)"

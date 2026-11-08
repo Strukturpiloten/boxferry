@@ -3,6 +3,7 @@
 - Status: proposed; producer implementation and consumer admission are separate
 - Date: 2026-11-04
 - Amended: 2026-11-06; conventional VS Code local development and standard hosted storage
+- Amended: 2026-11-08; scoped metadata reader and Python-only queue authority
 - Builds on: ADR 0092 shared development automation and ADR 0079 runtime selection
 
 ## Context
@@ -106,7 +107,28 @@ acceptance before image/updater activation. Fixed FCOS/runtime/application targe
 and separate #446/#453 acceptance remain unchanged.
 
 Existing release-plz App credential names are reused with a one-repository
-contents/PR-write token and the checks/status reads required for eligibility.
+Contents/Pull requests-write token, without App Checks or Commit statuses grants.
+A distinct repository-scoped workflow token has only Contents, Checks and Statuses
+read permissions; callers and the reusable workflow declare the same read scopes.
+The Python writer and fixed held-head check/status reader share one 60-attempt
+API budget. The reader refuses redirects and validates complete resource/head
+identity before required-context success can authorize `expectedHeadOid` queue
+admission. Both feature streams retain this path and fresh App commits wait for
+ordinary CI before a later unchanged pass can enqueue them.
+
+The limited native instance disables both automerge modes and all four optional
+status publishers; it may propose updates but cannot merge, enqueue or enable
+auto-merge. Three-day age filtering, strict internal checks and canonical trusted
+eligibility remain unchanged. Its private config routes only initial current-repository
+commit-namespace read requests to the workflow token, with abort-on-error and no
+ignored status codes. Other requests, including GraphQL and writes, retain the App
+credential. The pinned transport can retain the read token on redirects within
+exactly `https://api.github.com`; this trusted-origin exception does not expand
+the token's repository/read permissions or establish response resource identity.
+Cross-origin redirects strip credentials. Native metadata is advisory and can
+never replace Python's independent no-redirect exact-head queue evidence.
+Neither token reaches official generation or candidate hooks; secret-bearing
+native config stays in private temporary storage and is removed on every exit.
 Actual restricted-token compatibility and bot-triggered ordinary CI must be
 qualified before each consumer activates automatic updates. Inactive producer
 implementation may be admitted after its complete gates and complete main CI. No new App setup, publication, release, deployment,

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from email.message import Message
 from pathlib import Path
 from typing import IO, Any
@@ -58,13 +59,17 @@ def _execute(
     env: Mapping[str, str],
     command: Run = runner.run,
     timeout: int = 300,
+    secrets: tuple[str, ...] = (),
 ) -> str:
-    result = command(argv, cwd=cwd, stage=stage, environment=env, timeout_seconds=timeout)
+    result = command(
+        argv, cwd=cwd, stage=stage, environment=env, timeout_seconds=timeout, secrets=secrets
+    )
     if result.status != "success":
-        raise UpdateError(
+        message = (
             f"{stage}: {result.diagnostic.cause}; command={result.argv}; "
             f"{result.stderr}; inspect the generated graph and retry the scheduled updater"
         )
+        raise UpdateError(runner.redact(message, (*runner.protected_values(env), *secrets)))
     return result.stdout
 
 
@@ -205,9 +210,17 @@ def limited_config(repository: str, automation: Path, python: Path) -> dict[str,
         "enabledManagers": ["devcontainer", "custom.regex"],
         "dependencyDashboard": False,
         "dependencyDashboardApproval": False,
-        "automerge": True,
+        # Native metadata is advisory. Only the exact-head Python queue path
+        # may authorize integration, after ordinary CI on a later pass.
+        "automerge": False,
         "automergeType": "pr",
         "platformAutomerge": False,
+        "statusCheckNames": {
+            "artifactError": None,
+            "configValidation": None,
+            "mergeConfidence": None,
+            "minimumReleaseAge": None,
+        },
         "minimumReleaseAge": "3 days",
         "minimumReleaseAgeBehaviour": "timestamp-required",
         "internalChecksFilter": "strict",
@@ -259,15 +272,34 @@ def limited_config(repository: str, automation: Path, python: Path) -> dict[str,
     }
 
 
+@dataclass
+class ApiBudget:
+    """One service-wide allowance, including denied and failed HTTP attempts."""
+
+    attempts: int = 0
+
+    def charge(self) -> None:
+        self.attempts += 1
+        if self.attempts > 60:
+            raise UpdateError("feature updater API request bound/path refused")
+
+
 class GitHub:
     """Finite Git data requests for this single fixed feature branch only."""
 
-    def __init__(self, repository: str, token: str) -> None:
-        if repository not in REPOSITORIES or not token:
-            raise UpdateError("allowlisted repository and scoped App token required")
+    def __init__(self, repository: str, token: str, *, budget: ApiBudget | None = None) -> None:
+        if (
+            repository not in REPOSITORIES
+            or not isinstance(token, str)
+            or not token
+            or token.strip() != token
+            or "\n" in token
+            or "\r" in token
+        ):
+            raise UpdateError("allowlisted repository and scoped token required")
         self.repository = repository
         self.token = token
-        self.requests = 0
+        self.budget = budget if budget is not None else ApiBudget()
 
     def graphql(self, query: str, variables: dict[str, str]) -> dict[str, Any]:
         return self._request(
@@ -280,9 +312,7 @@ class GitHub:
         return self._request(f"https://api.github.com/repos/{self.repository}{path}", method, body)
 
     def _request(self, url: str, method: str, body: object) -> dict[str, Any]:
-        self.requests += 1
-        if self.requests > 60:
-            raise UpdateError("feature updater API request bound/path refused")
+        self.budget.charge()
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(
             url,
@@ -314,7 +344,10 @@ class GitHub:
                 value = response.read(MAX_BYTES + 1)
             if len(value) > MAX_BYTES:
                 raise UpdateError("GitHub API response exceeds byte bound")
-            decoded = json.loads(value)
+            try:
+                decoded = json.loads(value)
+            except (ValueError, RecursionError):
+                raise UpdateError("GitHub returned malformed JSON evidence") from None
             if isinstance(decoded, list):
                 return {"items": decoded}
             if not isinstance(decoded, dict):
@@ -325,7 +358,9 @@ class GitHub:
             path = urllib.parse.urlsplit(url).path
             raise UpdateError(
                 f"GitHub API {method} {path}: HTTP {error.code}; retry updater"
-            ) from error
+            ) from None
+        except OSError:
+            raise UpdateError("GitHub API transport unavailable; retry updater") from None
 
     def sha(self, branch: str) -> str:
         sha = self.request("/git/ref/heads/" + branch)["object"]["sha"]
@@ -356,6 +391,101 @@ class GitHub:
         if len(content) > MAX_BYTES:
             raise UpdateError("feature document exceeds byte bound")
         return content
+
+
+class CommitReader:
+    """Only two held-head metadata GETs; no URL, method or GraphQL interface."""
+
+    def __init__(self, repository: str, token: str, *, budget: ApiBudget) -> None:
+        self.repository = repository
+        self._api = GitHub(repository, token, budget=budget)
+
+    def _head(self, head: str) -> str:
+        if not isinstance(head, str) or re.fullmatch(r"[a-f0-9]{40}", head) is None:
+            raise UpdateError("commit reader requires the exact held head")
+        return head
+
+    def checks(self, head: str) -> dict[str, Any]:
+        return self._api.request(f"/commits/{self._head(head)}/check-runs?per_page=100")
+
+    def statuses(self, head: str) -> dict[str, Any]:
+        return self._api.request(f"/commits/{self._head(head)}/status?per_page=100")
+
+
+def _native_read_rule(repository: str, token: str) -> dict[str, Any]:
+    """Private native config only; same-API redirects are advisory, never authority."""
+    if repository not in REPOSITORIES or not token:
+        raise UpdateError("allowlisted repository and workflow reader token required")
+    return {
+        "hostType": "github",
+        "matchHost": f"https://api.github.com/repos/{repository}/commits/",
+        "readOnly": True,
+        "token": token,
+        "abortOnError": True,
+        "abortIgnoreStatusCodes": [],
+    }
+
+
+def _required_states(reader: CommitReader, head: str) -> dict[str, bool]:
+    prefix = f"https://api.github.com/repos/{reader.repository}/"
+    checks = reader.checks(head)
+    statuses = reader.statuses(head)
+    states: dict[str, bool] = {}
+    for document, key in ((checks, "check_runs"), (statuses, "statuses")):
+        values = document.get(key)
+        count = document.get("total_count")
+        if (
+            not isinstance(values, list)
+            or type(count) is not int
+            or count != len(values)
+            or not 0 <= count < 100
+        ):
+            raise UpdateError("required metadata inventory is incomplete or malformed")
+    if statuses.get("sha") != head or statuses.get("url") != prefix + f"commits/{head}/status":
+        raise UpdateError("required statuses do not identify the held repository/head")
+    for check in checks["check_runs"]:
+        if (
+            not isinstance(check, dict)
+            or check.get("head_sha") != head
+            or not isinstance(check.get("url"), str)
+            or re.fullmatch(re.escape(prefix) + r"check-runs/[1-9][0-9]*", check["url"]) is None
+        ):
+            raise UpdateError("required check does not identify the held repository/head")
+        name, status, conclusion = check.get("name"), check.get("status"), check.get("conclusion")
+        if (
+            not isinstance(name, str)
+            or not 0 < len(name) <= 512
+            or status
+            not in ("queued", "in_progress", "completed", "waiting", "pending", "requested")
+            or conclusion
+            not in (
+                None,
+                "success",
+                "failure",
+                "neutral",
+                "cancelled",
+                "skipped",
+                "timed_out",
+                "action_required",
+                "stale",
+                "startup_failure",
+            )
+            or (status != "completed" and conclusion is not None)
+        ):
+            raise UpdateError("required check has unsupported provider state")
+        states[name] = states.get(name, True) and status == "completed" and conclusion == "success"
+    for status in statuses["statuses"]:
+        if (
+            not isinstance(status, dict)
+            or status.get("url") != prefix + f"statuses/{head}"
+            or not isinstance(status.get("context"), str)
+            or not 0 < len(status["context"]) <= 512
+            or status.get("state") not in ("error", "failure", "pending", "success")
+        ):
+            raise UpdateError("required status has unsupported resource/provider state")
+        name = status["context"]
+        states[name] = states.get(name, True) and status["state"] == "success"
+    return states
 
 
 def _owned_head(api: GitHub, pull: dict[str, Any], base: str, branch: str) -> str:
@@ -392,7 +522,16 @@ def _owned_head(api: GitHub, pull: dict[str, Any], base: str, branch: str) -> st
     return head
 
 
-def _queue_ready(api: GitHub, number: int, head: str, base: str, branch: str) -> bool:
+def _queue_entry_id(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    identity = value.get("id")
+    return identity if isinstance(identity, str) and identity.strip() else None
+
+
+def _queue_ready(
+    api: GitHub, reader: CommitReader, number: int, head: str, base: str, branch: str
+) -> bool:
     """Enqueue only the exact owned head after every required context succeeds.
 
     Ordinary branch rules and queue checks still decide integration. This helper
@@ -414,19 +553,9 @@ def _queue_ready(api: GitHub, number: int, head: str, base: str, branch: str) ->
             required.update(
                 item["context"] for item in rule["parameters"]["required_status_checks"]
             )
-    checks = api.request(f"/commits/{head}/check-runs?per_page=100")
-    runs = checks.get("check_runs", [])
-    if checks.get("total_count") != len(runs) or len(runs) >= 100:
-        return False
-    states = {
-        check["name"]: check.get("status") == "completed" and check.get("conclusion") == "success"
-        for check in runs
-    }
-    statuses = api.request(f"/commits/{head}/status?per_page=100")
-    contexts = statuses.get("statuses", [])
-    if statuses.get("total_count") != len(contexts) or len(contexts) >= 100:
-        return False
-    states.update({status["context"]: status.get("state") == "success" for status in contexts})
+    if reader.repository != api.repository:
+        raise UpdateError("required metadata reader repository differs from writer")
+    states = _required_states(reader, head)
     if any(not states.get(name, False) for name in required):
         return False
     if api.sha("main") != base or api.sha(branch) != head:
@@ -436,9 +565,12 @@ def _queue_ready(api: GitHub, number: int, head: str, base: str, branch: str) ->
         "pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{id}}}"
     )
     response = api.graphql(query, {"id": pull["node_id"], "head": head})
-    if response.get("errors") or not response.get("data", {}).get("enqueuePullRequest", {}).get(
-        "mergeQueueEntry", {}
-    ).get("id"):
+    data = response.get("data") if isinstance(response, dict) else None
+    enqueued = data.get("enqueuePullRequest") if isinstance(data, dict) else None
+    entry_id = _queue_entry_id(
+        enqueued.get("mergeQueueEntry") if isinstance(enqueued, dict) else None
+    )
+    if not isinstance(response, dict) or response.get("errors") or entry_id is None:
         raise UpdateError(
             "protected exact-head queue admission refused; "
             "inspect required checks/reviews and retry"
@@ -447,14 +579,25 @@ def _queue_ready(api: GitHub, number: int, head: str, base: str, branch: str) ->
         "query($id:ID!){node(id:$id){... on PullRequest{headRefOid mergeQueueEntry{id}}}}",
         {"id": pull["node_id"]},
     )
-    node = observed.get("data", {}).get("node", {})
-    if observed.get("errors") or node.get("headRefOid") != head or not node.get("mergeQueueEntry"):
-        raise UpdateError("queue admission readback does not identify the held feature head")
+    data = observed.get("data") if isinstance(observed, dict) else None
+    node = data.get("node") if isinstance(data, dict) else None
+    if (
+        not isinstance(observed, dict)
+        or observed.get("errors")
+        or not isinstance(node, dict)
+        or not isinstance(node.get("headRefOid"), str)
+        or node["headRefOid"] != head
+        or _queue_entry_id(node.get("mergeQueueEntry")) != entry_id
+    ):
+        raise UpdateError("queue admission readback does not identify the held feature head/entry")
     return True
 
 
 def maintenance(
-    api: GitHub, automation: Path, generator: Callable[[Path, Path], bool] = generate_lock
+    api: GitHub,
+    reader: CommitReader,
+    automation: Path,
+    generator: Callable[[Path, Path], bool] = generate_lock,
 ) -> bool:
     """Refresh exactly one Feature stream and enqueue only protected exact heads.
 
@@ -505,7 +648,7 @@ def maintenance(
                 # Exact current main already carries the official graph.
                 api.request(f"/pulls/{pull['number']}", "PATCH", {"state": "closed"})
             else:
-                _queue_ready(api, pull["number"], head, base, branch)
+                _queue_ready(api, reader, pull["number"], head, base, branch)
         return False
     if (
         pull
@@ -515,7 +658,7 @@ def maintenance(
         and api.request(f"/compare/{base}...{head}").get("status") == "ahead"
     ):
         # The active proposal already has this entire graph on the current base.
-        _queue_ready(api, pull["number"], head, base, branch)
+        _queue_ready(api, reader, pull["number"], head, base, branch)
         return False
     source_tree = api.tree(source)
     tree = api.request(
@@ -576,7 +719,12 @@ def service(repository: str, automation: Path, runtime: Path, *, command: Run = 
     version = expected.split(":", 1)[1].split("@", 1)[0]
     if json.loads(_read(runtime / "package.json"))["version"] != version:
         raise UpdateError("Renovate package version differs from its image")
-    api = GitHub(repository, token)
+    read_token = os.environ.get("BOXFERRY_FEATURE_READ_TOKEN", "")
+    if not read_token or read_token == token:
+        raise UpdateError("distinct workflow reader token unavailable")
+    budget = ApiBudget()
+    api = GitHub(repository, token, budget=budget)
+    reader = CommitReader(repository, read_token, budget=budget)
     if api.request("").get("default_branch") != "main":
         raise UpdateError("the feature service requires the real main default branch")
     node = os.environ.get("BOXFERRY_NODE", "")
@@ -585,8 +733,12 @@ def service(repository: str, automation: Path, runtime: Path, *, command: Run = 
         owned = Path(temporary)
         config["baseDir"] = str(owned / "base")
         config["cacheDir"] = str(owned / "cache")
+        config["hostRules"] = [_native_read_rule(repository, read_token)]
         config_file = owned / "config.json"
-        config_file.write_text(json.dumps(config))
+        with open(
+            config_file, "x", opener=lambda path, flags: os.open(path, flags, 0o600)
+        ) as stream:
+            stream.write(json.dumps(config))
         env = clean_environment(owned / "home")
         Path(env["HOME"]).mkdir(mode=0o700)
         env.update(
@@ -603,8 +755,9 @@ def service(repository: str, automation: Path, runtime: Path, *, command: Run = 
             env,
             command,
             timeout=900,
+            secrets=(read_token,),
         )
-    maintenance(api, automation)
+    maintenance(api, reader, automation)
 
 
 def main() -> int:
@@ -636,8 +789,15 @@ def main() -> int:
                 raise UpdateError("service requires the verified runtime directory")
             service(options.repository, options.automation, options.runtime)
         else:
+            token = os.environ.get("RENOVATE_TOKEN", "")
+            read_token = os.environ.get("BOXFERRY_FEATURE_READ_TOKEN", "")
+            if not read_token or read_token == token:
+                raise UpdateError("distinct workflow reader token unavailable")
+            budget = ApiBudget()
             maintenance(
-                GitHub(options.repository, os.environ.get("RENOVATE_TOKEN", "")), options.automation
+                GitHub(options.repository, token, budget=budget),
+                CommitReader(options.repository, read_token, budget=budget),
+                options.automation,
             )
     except (TypeError, AttributeError, KeyError) as error:
         print(
