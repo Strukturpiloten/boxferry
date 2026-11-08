@@ -1,0 +1,159 @@
+---
+name: 629 inert dependent probe
+on:
+  workflow_call:
+    inputs:
+      case:
+        description: Fixed experiment case A through E.
+        required: true
+        type: string
+      series:
+        description: Operator-owned 32 lowercase hexadecimal series identifier.
+        required: true
+        type: string
+      expected_source_sha:
+        description: Recorded immutable default-branch source (40 lowercase hex).
+        required: true
+        type: string
+      preparation_artifact_id:
+        description: Fixed preparation artifact ID.
+        required: true
+        type: string
+      preparation_artifact_digest:
+        description: Fixed preparation archive SHA256.
+        required: true
+        type: string
+      preparation_marker:
+        description: Fixed preparation source correlation.
+        required: true
+        type: string
+      caller_prerequisite_result:
+        description: Fixed preparation scheduler needs result.
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  effect:
+    name: 629 inert dependent witness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    env:
+      PROBE_CASE: ${{ inputs.case }}
+      PROBE_SERIES: ${{ inputs.series }}
+      PROBE_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+      PROBE_SHA: ${{ github.sha }}
+      PROBE_REPOSITORY: ${{ github.repository }}
+      PROBE_EVENT: ${{ github.event_name }}
+      PROBE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      PROBE_REF: ${{ github.ref }}
+      PROBE_WORKFLOW_REF: ${{ github.workflow_ref }}
+      PROBE_RUN: ${{ github.run_id }}
+      PROBE_ATTEMPT: ${{ github.run_attempt }}
+      PREPARATION_ARTIFACT_ID: ${{ inputs.preparation_artifact_id }}
+      PREPARATION_ARTIFACT_DIGEST: ${{ inputs.preparation_artifact_digest }}
+      PREPARATION_MARKER: ${{ inputs.preparation_marker }}
+      CALLER_PREREQUISITE_RESULT: ${{ inputs.caller_prerequisite_result }}
+    steps:
+      - name: Validate closed dependent identity and write entry witness
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          values = {key: os.environ[key] for key in (
+              "PROBE_CASE", "PROBE_SERIES", "PROBE_EXPECTED_SHA", "PROBE_SHA",
+              "PROBE_REPOSITORY", "PROBE_EVENT", "PROBE_DEFAULT_BRANCH", "PROBE_REF",
+              "PROBE_WORKFLOW_REF", "PROBE_RUN", "PROBE_ATTEMPT",
+          )}
+          workflow_path = ".github/workflows/recovery-cancellation-provider-probe.yml"
+          if not (
+              values["PROBE_REPOSITORY"] == "Strukturpiloten/boxferry"
+              and values["PROBE_EVENT"] == "workflow_dispatch"
+              and values["PROBE_DEFAULT_BRANCH"] == "main"
+              and values["PROBE_REF"] == "refs/heads/main"
+              and values["PROBE_WORKFLOW_REF"] == (
+                  "Strukturpiloten/boxferry/" + workflow_path + "@refs/heads/main"
+              )
+              and values["PROBE_ATTEMPT"] == "1"
+              and re.fullmatch(r"[1-9][0-9]{0,19}", values["PROBE_RUN"])
+              and values["PROBE_CASE"] in ("A", "B", "C", "D", "E")
+              and re.fullmatch(r"[a-f0-9]{32}", values["PROBE_SERIES"])
+              and re.fullmatch(r"[a-f0-9]{40}", values["PROBE_EXPECTED_SHA"])
+              and values["PROBE_SHA"] == values["PROBE_EXPECTED_SHA"]
+          ):
+              raise SystemExit("Provider probe refuses context or input identity.")
+          marker = ":".join(("boxferry.provider-probe.v1", values["PROBE_SERIES"],
+                             values["PROBE_RUN"], "1", values["PROBE_SHA"]))
+          witness = {
+              "schema": "boxferry.provider-probe.v1",
+              "repository": values["PROBE_REPOSITORY"],
+              "workflow_path": workflow_path,
+              "source_sha": values["PROBE_SHA"],
+              "series": values["PROBE_SERIES"],
+              "case": values["PROBE_CASE"],
+              "run_id": values["PROBE_RUN"],
+              "run_attempt": 1,
+          }
+          if not (
+              os.environ["CALLER_PREREQUISITE_RESULT"] == "success"
+              and re.fullmatch(r"[1-9][0-9]{0,19}", os.environ["PREPARATION_ARTIFACT_ID"])
+              and re.fullmatch(r"[a-f0-9]{64}", os.environ["PREPARATION_ARTIFACT_DIGEST"])
+              and os.environ["PREPARATION_MARKER"] == marker
+          ):
+              raise SystemExit("Provider probe refuses preparation binding.")
+          witness.update(
+              role="effect", marker_phase="entry",
+              preparation_artifact_id=os.environ["PREPARATION_ARTIFACT_ID"],
+              preparation_artifact_digest=os.environ["PREPARATION_ARTIFACT_DIGEST"],
+              preparation_marker=marker,
+              caller_prerequisite_result=os.environ["CALLER_PREREQUISITE_RESULT"],
+          )
+          print("Provider probe inert dependent entry " + json.dumps(witness, sort_keys=True))
+          payload = json.dumps(witness, sort_keys=True, separators=(",", ":")) + "\n"
+          if len(payload.encode("utf-8")) > 4096:
+              raise SystemExit("Provider probe witness exceeds bound.")
+          with Path("witness.json").open("x", encoding="utf-8") as stream:
+              stream.write(payload)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write("marker=" + marker + "\n")
+              stream.write("artifact_name=boxferry-629-provider-probe-v1-"
+                           + values["PROBE_SERIES"] + "-" + values["PROBE_RUN"]
+                           + "-attempt1-effect-entry\n")
+          PY
+      - name: Upload inert dependent entry witness
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.validate.outputs.artifact_name }}
+          path: witness.json
+          archive: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Fixed inert dependent hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import time
+
+          if os.environ["PROBE_CASE"] == "E":
+              for tick in range(48):
+                  print("Provider probe fixed hold heartbeat.", flush=True)
+                  time.sleep(5)
+          PY
+      - name: Print inert completion marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          print("Provider probe inert dependent completed.")
+          PY
