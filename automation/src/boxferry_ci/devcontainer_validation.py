@@ -67,12 +67,21 @@ def _bounded_text(value: str, limit: int) -> str:
 
 
 def failure_evidence(value: str) -> dict[str, object]:
-    """Keep initial context, early causal lines and final context within a byte bound."""
-    causal = "\n".join(
-        _bounded_text(line[max(0, match.start() - 64) :], 384)
-        for line in value.splitlines()
-        if (match := _CAUSAL_LINE.search(line))
-    )
+    """Keep initial context and recent causal lines, including long terminal suffixes."""
+    causes = []
+    for line in value.splitlines():
+        if match := _CAUSAL_LINE.search(line):
+            context = line[max(0, match.start() - 64) :]
+            if len(context.encode("utf-8")) > 176:
+                context = (
+                    _bounded_text(context, 48)
+                    + " [... line omitted ...] "
+                    + context.encode("utf-8")[-104:].decode("utf-8", "ignore")
+                )
+            causes.append(context)
+    if len(causes) > 4:
+        causes = [causes[0], "[... earlier causal lines omitted ...]", *causes[-3:]]
+    causal = "\n".join(causes)
     if len(value.encode("utf-8")) <= MAX_FAILURE_STREAM:
         excerpt = value
     else:
@@ -512,6 +521,112 @@ def canonical_versions(automation: Path) -> dict[str, str]:
     return versions
 
 
+def markdownlint_versions(candidate: Path) -> dict[str, str]:
+    """Bind the help banner to the image-owned candidate's exact npm graph."""
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValidationError("markdownlint metadata contains ambiguous duplicate keys")
+            result[key] = value
+        return result
+
+    documents = []
+    for relative in ("package.json", "package-lock.json"):
+        path = candidate / relative
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size > 2 * 1024**2:
+                raise ValidationError("markdownlint metadata must be bounded regular JSON files")
+            with path.open("rb") as stream:
+                data = stream.read(2 * 1024**2 + 1)
+            if len(data) > 2 * 1024**2:
+                raise ValidationError("markdownlint metadata exceeded its byte bound while reading")
+            try:
+                document = json.loads(data, object_pairs_hook=unique)
+            except RecursionError as error:
+                raise ValidationError(
+                    "candidate markdownlint package/lock JSON exceeds supported nesting depth"
+                ) from error
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValidationError(
+                "candidate markdownlint package/lock metadata is unavailable"
+            ) from error
+        if not isinstance(document, dict):
+            raise ValidationError("candidate markdownlint package/lock metadata must be objects")
+        documents.append(document)
+    package, lock = documents
+    sections = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+
+    def declaration(document: dict[str, Any]) -> tuple[str, str]:
+        declarations = []
+        for section in sections:
+            values = document.get(section, {})
+            if not isinstance(values, dict):
+                raise ValidationError("candidate markdownlint declarations are malformed")
+            if "markdownlint-cli2" in values:
+                declarations.append((section, values["markdownlint-cli2"]))
+        if len(declarations) != 1 or declarations[0][0] not in sections[:2]:
+            raise ValidationError(
+                "candidate needs one supported exact markdownlint-cli2 declaration"
+            )
+        section, version = declarations[0]
+        if not isinstance(version, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+            raise ValidationError("candidate markdownlint-cli2 version must be exact numeric")
+        return section, version
+
+    declared = declaration(package)
+    packages = lock.get("packages")
+    if lock.get("lockfileVersion") != 3 or not isinstance(packages, dict):
+        raise ValidationError("candidate markdownlint needs its npm v3 integrity lock")
+    root = packages.get("")
+    if not isinstance(root, dict) or declaration(root) != declared:
+        raise ValidationError("candidate markdownlint package and lock root disagree")
+    versions = {}
+    for name in ("markdownlint-cli2", "markdownlint"):
+        matches = [
+            key
+            for key in packages
+            if key == "node_modules/" + name or key.endswith("/node_modules/" + name)
+        ]
+        if name == "markdownlint":
+            # npm resolves the CLI's own nested dependency before its hoisted peer.
+            matches = [
+                key
+                for key in (
+                    "node_modules/markdownlint-cli2/node_modules/markdownlint",
+                    "node_modules/markdownlint",
+                )
+                if key in packages
+            ][:1]
+        if len(matches) != 1 or (
+            name == "markdownlint-cli2" and matches[0] != "node_modules/markdownlint-cli2"
+        ):
+            raise ValidationError("candidate markdownlint lock identity is absent or ambiguous")
+        record = packages[matches[0]]
+        if not isinstance(record, dict):
+            raise ValidationError("candidate markdownlint lock record is malformed")
+        version = record.get("version")
+        if (
+            not isinstance(version, str)
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None
+            or record.get("resolved") != f"https://registry.npmjs.org/{name}/-/{name}-{version}.tgz"
+            or not isinstance(record.get("integrity"), str)
+            or re.fullmatch(r"sha512-[A-Za-z0-9+/]{86}==", record["integrity"]) is None
+        ):
+            raise ValidationError("candidate markdownlint version/source/integrity is inconsistent")
+        versions[name] = version
+    cli = packages["node_modules/markdownlint-cli2"]
+    if (
+        versions["markdownlint-cli2"] != declared[1]
+        or not isinstance(cli.get("dependencies"), dict)
+        or cli["dependencies"].get("markdownlint") != versions["markdownlint"]
+        or cli.get("bin") != {"markdownlint-cli2": "markdownlint-cli2-bin.mjs"}
+    ):
+        raise ValidationError("candidate markdownlint executable/dependency graph disagrees")
+    return versions
+
+
 def _cli(automation: Path) -> tuple[Path, str]:
     project = automation / CLI_PROJECT
     package = _json((project / "package.json").read_bytes())
@@ -728,7 +843,7 @@ def _hosted_root_command(seconds: int) -> tuple[str, ...]:
         f"{seconds}s",
         "/usr/bin/env",
         "-i",
-        "PATH=/usr/local/bin:/usr/bin:/bin",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME=/root",
         "LC_ALL=C.UTF-8",
     )
@@ -1162,8 +1277,67 @@ def probe_script(versions: Mapping[str, str], sources: Mapping[str, str], reposi
         command = shlex.join(argv)
         name = argv[0]
         lines.append("printf '%s\\n' " + shlex.quote("probe: " + name))
-        if name in versions:
-            lines.append(f"observed=$({command})")
+        failure = (
+            "printf 'Probe failed for %s: argv=%s; exit=%s\\n' "
+            + shlex.quote(name)
+            + " "
+            + shlex.quote(command)
+            + ' "$probe_status" >&2'
+        )
+        if name == "markdownlint-cli2":
+            if argv != ("markdownlint-cli2", "--help") or any(
+                re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", versions.get(tool, "")) is None
+                for tool in ("markdownlint-cli2", "markdownlint")
+            ):
+                raise ValidationError(
+                    "markdownlint help requires its exact candidate package/lock versions"
+                )
+            expected = (
+                f"markdownlint-cli2 v{versions['markdownlint-cli2']} "
+                f"(markdownlint v{versions['markdownlint']})"
+            )
+            lines.extend(
+                (
+                    "help_errors=$(mktemp /tmp/qualification-home/markdownlint-help.XXXXXX)",
+                    "probe_status=0",
+                    f'observed=$({command} 2>"$help_errors") || probe_status=$?',
+                    "help_prefix=${observed:0:8192}",
+                    "help_banner=; help_usage=",
+                    "while IFS= read -r help_line; do",
+                    '  if [[ -z "$help_banner" && -n "$help_line" ]]; then',
+                    "    help_banner=$help_line",
+                    "  fi",
+                    '  if [[ "$help_line" == "Syntax: markdownlint-cli2 glob0 [glob1] "* ]]; then',
+                    "    help_usage=$help_line",
+                    "  fi",
+                    'done <<< "$help_prefix"',
+                    "expected=" + shlex.quote(expected),
+                    'if [[ "$probe_status" != 2 || -s "$help_errors"',
+                    '  || "$help_banner" != "$expected"',
+                    "  || \"$help_prefix\" != *$'\\nhttps://github.com/DavidAnson/markdownlint-cli2\\n'*",
+                    '  || "$help_usage" != *"[--help]"*',
+                    '  || "$help_usage" != *"[--no-globs]"* ]]; then',
+                    "  printf '%s\\n' \"$observed\"",
+                    '  cat "$help_errors" >&2',
+                    '  rm -f -- "$help_errors"',
+                    "  " + failure.replace("Probe failed", "Probe help contract mismatch"),
+                    '  if [[ "$probe_status" == 0 ]]; then exit 1; else exit "$probe_status"; fi',
+                    "fi",
+                    'rm -f -- "$help_errors"',
+                )
+            )
+        elif name in versions:
+            lines.extend(
+                (
+                    "probe_status=0",
+                    f"observed=$({command}) || probe_status=$?",
+                    'if [[ "$probe_status" != 0 ]]; then',
+                    "  printf '%s\\n' \"$observed\"",
+                    "  " + failure,
+                    '  exit "$probe_status"',
+                    "fi",
+                )
+            )
             if name == "node":
                 expected = "v" + versions[name]
                 lines.append('actual="$observed"')
@@ -1175,15 +1349,27 @@ def probe_script(versions: Mapping[str, str], sources: Mapping[str, str], reposi
                 (
                     "expected=" + shlex.quote(expected),
                     'if [[ "$actual" != "$expected" ]]; then',
-                    "  printf 'Version mismatch for %s: expected %.160s; observed %.160s\\n' "
+                    "  printf 'Version mismatch for %s: expected %.160s; observed %.160s; "
+                    "argv=%s; exit=0\\n' "
                     + shlex.quote(name)
-                    + ' "$expected" "$actual" >&2',
+                    + ' "$expected" "$actual" '
+                    + shlex.quote(command)
+                    + " >&2",
                     "  exit 1",
                     "fi",
                 )
             )
         else:
-            lines.append(command + " >/dev/null")
+            lines.extend(
+                (
+                    "probe_status=0",
+                    command + " || probe_status=$?",
+                    'if [[ "$probe_status" != 0 ]]; then',
+                    "  " + failure,
+                    '  exit "$probe_status"',
+                    "fi",
+                )
+            )
     lines.append("bash .devcontainer/verify-tools.sh")
     return "\n".join(lines)
 
@@ -1367,8 +1553,9 @@ def qualify(
         node = shutil.which("node")
         if node is None or not Path(node).is_file():
             raise ValidationError("trusted Node executable is unavailable")
+        probe_versions = canonical_versions(automation) | markdownlint_versions(snapshot)
         node_version = commands.call((node, "--version"), "node-version").strip()
-        if node_version != "v" + canonical_versions(automation)["node"]:
+        if node_version != "v" + probe_versions["node"]:
             raise ValidationError("host Node differs from selected canonical automation authority")
         actual_cli = commands.call((node, str(cli), "--version"), "cli-version").strip()
         if actual_cli != cli_version:
@@ -1527,7 +1714,7 @@ def qualify(
             *_runtime_environment(config, sources, repository),
             "/bin/bash",
             "-c",
-            probe_script(canonical_versions(automation), sources, repository),
+            probe_script(probe_versions, sources, repository),
             "qualification",
             machine,
         )

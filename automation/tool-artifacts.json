@@ -115,21 +115,21 @@
       "tool": "lychee",
       "repository": "lycheeverse/lychee",
       "architecture": "x86_64",
-      "filenameTemplate": "lychee-x86_64-unknown-linux-gnu.tar.gz",
-      "memberTemplate": "lychee-x86_64-unknown-linux-gnu/lychee",
+      "filenameTemplate": "lychee-x86_64-unknown-linux-musl.tar.gz",
+      "memberTemplate": "lychee-x86_64-unknown-linux-musl/lychee",
       "archive": "tar.gz",
       "currentVersion": "lychee-v0.24.2",
-      "sha256": "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a"
+      "sha256": "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
     },
     {
       "tool": "lychee",
       "repository": "lycheeverse/lychee",
       "architecture": "aarch64",
-      "filenameTemplate": "lychee-aarch64-unknown-linux-gnu.tar.gz",
-      "memberTemplate": "lychee-aarch64-unknown-linux-gnu/lychee",
+      "filenameTemplate": "lychee-aarch64-unknown-linux-musl.tar.gz",
+      "memberTemplate": "lychee-aarch64-unknown-linux-musl/lychee",
       "archive": "tar.gz",
       "currentVersion": "lychee-v0.24.2",
-      "sha256": "91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c"
+      "sha256": "5d0b0e3aeab240f41920c633a6eaf97599be6eedda034b36e858ede7dba5e535"
     }
   ]
 }
