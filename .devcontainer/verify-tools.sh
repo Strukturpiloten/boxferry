@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+tooling_root="/opt/boxferry-tooling"
 
 for persistent_directory_name in CARGO_HOME GH_CONFIG_DIR; do
   persistent_directory="${!persistent_directory_name:-}"
@@ -41,12 +42,15 @@ tools=(
   node
   npm
   prettier
+  python3
+  ruff
   rustc
   rustfmt
   rustup
   shellcheck
   shfmt
   tombi
+  ty
   uv
   zizmor
 )
@@ -79,5 +83,58 @@ if [[ "$(git -C "${repository_root}" rev-parse --show-toplevel 2> /dev/null)" !=
   printf 'BoxFerry Dev Container requires its own Git checkout: %s\n' "${repository_root}" >&2
   exit 1
 fi
+
+# The image retains the selected authority for executable version checks; no bootstrap here.
+python3 - "${repository_root}" "${tooling_root}" << 'PYTHON'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tomllib
+
+try:
+    repository, tooling = map(Path, sys.argv[1:])
+    manifest = json.loads((repository / ".github/automation.json").read_text())
+    if json.loads((tooling / ".github/automation.json").read_text()) != manifest:
+        raise ValueError("retained shared-tool authority differs from the checkout; rebuild the image")
+    project = tooling / "target/boxferry-automation" / manifest["revision"] / "automation"
+    metadata = tomllib.loads((project / "pyproject.toml").read_text())
+    requirement = metadata["tool"]["uv"]["required-version"]
+    if not requirement.startswith("=="):
+        raise ValueError("selected uv requirement must be exact")
+    versions = {"uv": requirement[2:]}
+    for name in ("ruff", "ty"):
+        declared = [item.split("==", 1)[1] for item in metadata["dependency-groups"]["dev"]
+                    if item.startswith(name + "==")]
+        if len(declared) != 1:
+            raise ValueError(f"selected project must declare one exact {name} version")
+        versions[name] = declared[0]
+    image = (repository / ".devcontainer/Dockerfile").read_text()
+    node = re.search(r"^FROM docker\.io/library/node:([0-9]+\.[0-9]+\.[0-9]+)-[^\s]+@sha256:[a-f0-9]{64}",
+                     image, re.MULTILINE)
+    if node is None:
+        raise ValueError("Node image must retain its version and digest declaration")
+    versions["node"] = node[1]
+    for name, expected in versions.items():
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", expected) is None:
+            raise ValueError(f"selected {name} version must be exact")
+        actual = subprocess.run([name, "--version"], check=True, capture_output=True,
+                                text=True, timeout=30).stdout.strip()
+        pattern = ("v" + re.escape(expected) if name == "node" else
+                   re.escape(name + " " + expected) + r"(?: \([^\r\n]+\))?")
+        if re.fullmatch(pattern, actual) is None:
+            raise ValueError(f"{name} executable does not match selected version {expected}")
+        subprocess.run([name, "--help"], check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE, timeout=30)
+    channel = tomllib.loads((repository / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    compiler = subprocess.run(["rustc", "--version"], check=True, capture_output=True,
+                              text=True, timeout=30).stdout.strip()
+    if not compiler.startswith("rustc " + channel + " "):
+        raise ValueError("installed Rust compiler does not match rust-toolchain.toml")
+except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
+    print(f"BoxFerry Dev Container tool verification failed: {error}", file=sys.stderr)
+    raise SystemExit(1) from None
+PYTHON
 
 printf 'BoxFerry Dev Container tooling is ready.\n'

@@ -1,7 +1,7 @@
 // Verify custom-manager extraction and native replacement with Renovate 44.139.0.
 // Oracle: pinned local package from .ci-tools/renovate in KubernetesLens #75.
 // Command: node scripts/test-kubernetes-tools-renovate.cjs <renovate-dist-root> <repo-root>.
-// Source: github.com/renovatebot/renovate; MIT; no oracle source redistributed.
+// Source: github.com/renovatebot/renovate; AGPL-3.0-only; no oracle source redistributed.
 (async () => {
   const assert = require("node:assert/strict");
   const fs = require("node:fs");

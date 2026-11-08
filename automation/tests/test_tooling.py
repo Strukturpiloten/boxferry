@@ -1207,19 +1207,22 @@ class ConsumerContractTests(unittest.TestCase):
     def test_devcontainer_minimal_closure_has_no_duplicate_version_authorities(self) -> None:
         source = (CONSUMERS / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
         for relative, destination in (
-            ("scripts/install-file-tools.sh", "/tmp/boxferry-tooling/scripts/"),
+            ("scripts/install-file-tools.sh", "/opt/boxferry-tooling/scripts/"),
             (
                 "automation/src/boxferry_ci/tooling.py",
-                "/tmp/boxferry-tooling/automation/src/boxferry_ci/",
+                "/opt/boxferry-tooling/automation/src/boxferry_ci/",
             ),
-            ("automation/tool-artifacts.json", "/tmp/boxferry-tooling/automation/"),
+            ("automation/tool-artifacts.json", "/opt/boxferry-tooling/automation/"),
         ):
             self.assertIn(f"COPY {relative} {destination}", source)
         self.assertIn(
-            "bash /tmp/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin", source
+            "bash /opt/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin", source
         )
         self.assertIn("--destination /usr/local/bin --tools actionlint lychee", source)
-        self.assertIn("rm -r /tmp/boxferry-tooling", source)
+        self.assertIn("COPY scripts/shared-ci.py /opt/boxferry-tooling/scripts/", source)
+        self.assertIn("COPY .github/automation.json /opt/boxferry-tooling/.github/", source)
+        self.assertIn("--tools actionlint lychee --python-tools", source)
+        self.assertNotIn("rm -r /opt/boxferry-tooling", source)
         self.assertNotIn("ACTIONLINT_VERSION", source)
         self.assertNotIn("LYCHEE_VERSION", source)
         self.assertNotIn("releases/download/v${", source)

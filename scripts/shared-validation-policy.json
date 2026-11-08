@@ -16,7 +16,8 @@
     "semver",
     "coverage",
     "migration-readiness",
-    "lockfile-release-age"
+    "lockfile-release-age",
+    "devcontainer-validation"
   ],
   "profile_jobs": {
     "prose": ["automation", "documentation", "lockfile-release-age"],

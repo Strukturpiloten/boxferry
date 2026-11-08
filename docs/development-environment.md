@@ -92,6 +92,10 @@ checks the actual store's filesystem against its disk budget, and cleans only
 its exact owned containers and image tag. Runner disposal handles residual caches.
 BoxFerry's CI workspace probes retain all seven real checkout revisions; ordinary
 local setup does not require those checkouts or add an image build to the local gate.
+The caller requires both native lanes while seeding the independently approved prior policy,
+then permits only trusted planned skips. Required CI checks the current tested candidate receipt.
+The image retains its selected shared-tool metadata for non-root version checks; rebuild it after
+changing the shared automation manifest. Updater schedules remain held pending native and App evidence.
 
 Image/updater activation still requires actual per-owner native image evidence,
 VS Code reopen/rebuild acceptance and restricted-App/ordinary-CI qualification under

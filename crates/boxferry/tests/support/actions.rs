@@ -194,31 +194,9 @@ fn validate_devcontainer_tooling(repository_root: &Path, errors: &mut Vec<String
     let dockerfile_path = repository_root.join(".devcontainer/Dockerfile");
     let dockerfile = fs::read_to_string(&dockerfile_path)
         .map_err(|error| format!("failed to read {}: {error}", dockerfile_path.display()))?;
-    let cargo_llvm_cov_versions = dockerfile
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("ARG CARGO_LLVM_COV_VERSION="))
-        .collect::<Vec<_>>();
-    if cargo_llvm_cov_versions.len() != 1
-        || !is_exact_version(cargo_llvm_cov_versions.first().copied().unwrap_or_default())
-    {
-        errors.push(format!(
-            "{} must contain one exact CARGO_LLVM_COV_VERSION major.minor.patch pin",
-            dockerfile_path.display()
-        ));
+    if let Err(error) = validate_selected_rust_tooling(&dockerfile) {
+        errors.push(format!("{} {error}", dockerfile_path.display()));
     }
-
-    for required in [
-        "rustup component add llvm-tools-preview",
-        "cargo install --locked --version \"${CARGO_LLVM_COV_VERSION}\" cargo-llvm-cov",
-    ] {
-        if !dockerfile.contains(required) {
-            errors.push(format!(
-                "{} is missing required tooling `{required}`",
-                dockerfile_path.display()
-            ));
-        }
-    }
-
     let verifier_path = repository_root.join(".devcontainer/verify-tools.sh");
     let verifier = fs::read_to_string(&verifier_path)
         .map_err(|error| format!("failed to read {}: {error}", verifier_path.display()))?;
@@ -342,6 +320,70 @@ fn action_reference(line: &str) -> Option<&str> {
         .map(str::trim)
 }
 
+// Validate the active reviewed build instruction, not matching text in comments or an
+// unrelated install. The same selected workspace channel must own every Cargo tool.
+fn validate_selected_rust_tooling(dockerfile: &str) -> Result<(), String> {
+    let mut instructions = Vec::new();
+    let mut instruction = String::new();
+    for line in dockerfile.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let continued = line.ends_with('\\');
+        let segment = line.strip_suffix('\\').unwrap_or(line).trim_end();
+        if !instruction.is_empty() {
+            instruction.push(' ');
+        }
+        instruction.push_str(segment);
+        if !continued {
+            instructions.push(std::mem::take(&mut instruction));
+        }
+    }
+    if !instruction.is_empty() {
+        return Err("has an incomplete Dockerfile instruction".to_owned());
+    }
+    for pin in [
+        "CARGO_DENY_VERSION",
+        "CARGO_LLVM_COV_VERSION",
+        "CARGO_SEMVER_CHECKS_VERSION",
+        "ZIZMOR_VERSION",
+    ] {
+        let prefix = format!("ARG {pin}=");
+        let versions = instructions
+            .iter()
+            .filter_map(|line| line.strip_prefix(&prefix))
+            .collect::<Vec<_>>();
+        if versions.len() != 1 || !is_exact_version(versions.first().copied().unwrap_or_default()) {
+            return Err(format!("must contain one exact {pin} major.minor.patch pin"));
+        }
+    }
+    let copied = instructions
+        .iter()
+        .filter(|line| line.as_str() == "COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml")
+        .count();
+    if copied != 1 {
+        return Err("must copy the canonical workspace Rust toolchain exactly once".to_owned());
+    }
+    let rust_instructions = instructions
+        .iter()
+        .filter(|line| line.starts_with("RUN ") && (line.contains("rustup ") || line.contains("cargo ")))
+        .collect::<Vec<_>>();
+    let expected = concat!(
+        r#"RUN --mount=type=cache,target=/usr/local/cargo/registry set -eux; "#,
+        r#"rust_channel="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("/opt/boxferry-toolchain/rust-toolchain.toml").read_text())["toolchain"]["channel"])')"; "#,
+        r#"rustup toolchain install "${rust_channel}" --profile minimal --component clippy --component rustfmt --component llvm-tools-preview; "#,
+        r#"rustup default "${rust_channel}"; "#,
+        r#"cargo "+${rust_channel}" install --locked --version "${CARGO_DENY_VERSION}" cargo-deny; "#,
+        r#"cargo "+${rust_channel}" install --locked --version "${CARGO_LLVM_COV_VERSION}" cargo-llvm-cov; "#,
+        r#"cargo "+${rust_channel}" install --locked --version "${CARGO_SEMVER_CHECKS_VERSION}" cargo-semver-checks; "#,
+        r#"cargo "+${rust_channel}" install --locked --version "${ZIZMOR_VERSION}" zizmor"#,
+    );
+    if rust_instructions.len() != 1 || rust_instructions[0].as_str() != expected {
+        return Err("must select workspace Rust with LLVM, Clippy and rustfmt before locked Cargo installs on that same channel, without other Rust install/default overrides".to_owned());
+    }
+    Ok(())
+}
+
 fn is_immutable_versioned_action(reference: &str) -> bool {
     let Some((action_and_sha, version)) = reference.split_once('#') else {
         return false;
@@ -383,6 +425,8 @@ fn is_reviewed_shared_bootstrap(reference: &str) -> bool {
             | "shared-rust-semver.yml"
             | "shared-release-prepare.yml"
             | "shared-release-validation.yml"
+            | "shared-devcontainer-validation.yml"
+            | "shared-devcontainer-updates.yml"
     ) && revision.len() == 40
         && revision
             .bytes()
@@ -424,7 +468,7 @@ fn finish(errors: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_immutable_versioned_action, is_reviewed_shared_bootstrap};
+    use super::{is_immutable_versioned_action, is_reviewed_shared_bootstrap, validate_selected_rust_tooling};
 
     #[test]
     fn accepts_a_full_sha_with_an_exact_version() {
@@ -466,7 +510,12 @@ mod tests {
     #[test]
     fn shared_adoption_bootstrap_keeps_exact_origin_workflow_revision_and_provenance() {
         let sha = "a".repeat(40);
-        for workflow in ["shared-rust-ci.yml", "shared-release-prepare.yml"] {
+        for workflow in [
+            "shared-rust-ci.yml",
+            "shared-release-prepare.yml",
+            "shared-devcontainer-validation.yml",
+            "shared-devcontainer-updates.yml",
+        ] {
             for comment in [
                 "reviewed bootstrap; no automation release tag exists (ADR 0092)",
                 "automation-v1 interface v1",
@@ -476,6 +525,9 @@ mod tests {
                 for invalid in [
                     canonical.replace("Strukturpiloten/boxferry", "outside/boxferry"),
                     canonical.replace(workflow, "unreviewed.yml"),
+                    canonical.replace(workflow, "shared-devcontainer-unreviewed.yml"),
+                    canonical.replace(".github/workflows/", ".github/actions/"),
+                    canonical.replace("Strukturpiloten/boxferry", "Strukturpiloten/boxferry-lookalike"),
                     canonical.replace(&sha, "main"),
                     canonical.replace(&sha, "v1.0.0"),
                     canonical.replace(&sha, &"a".repeat(39)),
@@ -486,6 +538,88 @@ mod tests {
                     assert!(!is_reviewed_shared_bootstrap(&invalid), "accepted {invalid}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn selected_workspace_rust_tooling_accepts_the_reviewed_recipe() {
+        let dockerfile = include_str!("../../../../.devcontainer/Dockerfile");
+        assert_eq!(validate_selected_rust_tooling(dockerfile), Ok(()));
+    }
+
+    #[test]
+    fn selected_workspace_rust_tooling_rejects_missing_unlocked_wrong_version_or_channel() {
+        let dockerfile = include_str!("../../../../.devcontainer/Dockerfile");
+        let mutations = [
+            (
+                "missing LLVM",
+                dockerfile.replace(" --component llvm-tools-preview", ""),
+            ),
+            ("missing rustfmt", dockerfile.replace(" --component rustfmt", "")),
+            (
+                "unlocked install",
+                dockerfile.replace(
+                    r#"install --locked --version "${CARGO_LLVM_COV_VERSION}""#,
+                    r#"install --version "${CARGO_LLVM_COV_VERSION}""#,
+                ),
+            ),
+            (
+                "wrong version source",
+                dockerfile.replace(
+                    r#"--version "${CARGO_LLVM_COV_VERSION}""#,
+                    r#"--version "${CARGO_DENY_VERSION}""#,
+                ),
+            ),
+            (
+                "wrong literal version",
+                dockerfile.replace(r#"--version "${CARGO_LLVM_COV_VERSION}""#, "--version 0.0.0"),
+            ),
+            (
+                "wrong install channel",
+                dockerfile.replace(r#"cargo "+${rust_channel}" install"#, r#"cargo "+stable" install"#),
+            ),
+            (
+                "wrong component channel",
+                dockerfile.replace(
+                    r#"rustup toolchain install "${rust_channel}""#,
+                    "rustup toolchain install stable",
+                ),
+            ),
+            (
+                "wrong default channel",
+                dockerfile.replace(r#"rustup default "${rust_channel}""#, "rustup default stable"),
+            ),
+            (
+                "wrong metadata selection",
+                dockerfile.replace(r#"["toolchain"]["channel"]"#, r#"["toolchain"]["other"]"#),
+            ),
+            (
+                "missing canonical COPY",
+                dockerfile.replace(
+                    "COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml",
+                    "# COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml",
+                ),
+            ),
+            (
+                "malformed version pin",
+                dockerfile.replace("ARG CARGO_LLVM_COV_VERSION=", "ARG CARGO_LLVM_COV_VERSION=latest-"),
+            ),
+            (
+                "duplicate version authority",
+                format!("{dockerfile}\nARG CARGO_LLVM_COV_VERSION=0.0.0\n"),
+            ),
+            (
+                "later unlocked override",
+                format!("{dockerfile}\nRUN cargo install cargo-llvm-cov\n"),
+            ),
+            (
+                "later default override",
+                format!("{dockerfile}\nRUN rustup default stable\n"),
+            ),
+        ];
+        for (case, changed) in mutations {
+            assert_ne!(changed, dockerfile, "ineffective control: {case}");
+            assert!(validate_selected_rust_tooling(&changed).is_err(), "accepted {case}");
         }
     }
 }

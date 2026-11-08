@@ -45,7 +45,8 @@ class ConsumerContracts(unittest.TestCase):
         for name in callers:
             text = (ROOT / f".github/workflows/{name}.yml").read_text()
             refs = re.findall(
-                r"Strukturpiloten/boxferry/\.github/workflows/[\w-]+\.yml@([a-f0-9]{40})", text
+                r"Strukturpiloten/boxferry/\.github/workflows/[\w-]+\.yml@([a-f0-9]{40})",
+                text,
             )
             self.assertTrue(refs, name)
             self.assertEqual(set(refs), {PIN}, name)
@@ -58,7 +59,9 @@ class ConsumerContracts(unittest.TestCase):
             ],
         )
 
-    def test_no_missing_trusted_policy_fallback_and_exact_revision_binding(self) -> None:
+    def test_no_missing_trusted_policy_fallback_and_exact_revision_binding(
+        self,
+    ) -> None:
         for name in ("validation-plan", "pr-gate"):
             source = job(name)
             self.assertIn(".validation-base/scripts/shared-validation-policy.json", source)
@@ -69,14 +72,53 @@ class ConsumerContracts(unittest.TestCase):
             self.assertNotIn("conservative complete bootstrap", source)
         self.assertIn('--plan-json "${PLAN_JSON}" --needs-json "${NEEDS_JSON}"', job("pr-gate"))
 
-    def test_ordinary_gate_defers_image_qualification_and_updater(self) -> None:
+    def test_image_caller_preserves_trusted_plan_and_held_updater(self) -> None:
         policy = json.loads((ROOT / "scripts/shared-validation-policy.json").read_text())
-        self.assertNotIn("devcontainer-validation", policy["jobs"])
-        self.assertNotIn("shared-devcontainer-validation.yml@", workflow())
+        prior = json.loads(
+            (
+                ROOT / "automation/tests/fixtures/devcontainer_seed/boxferry-policy.json.txt"
+            ).read_text()
+        )
+        expected = copy.deepcopy(prior)
+        expected["jobs"].append("devcontainer-validation")
+        self.assertEqual(policy, expected)
+        image = job("devcontainer-validation")
+        self.assertIn("    needs: validation-plan\n", image)
+        self.assertIn(
+            "    if: needs.validation-plan.outputs.select_devcontainer_validation != 'false'\n",
+            image,
+        )
+        self.assertIn("    permissions:\n      contents: read\n", image)
+        self.assertIn(
+            "shared-devcontainer-validation.yml@" + PIN + " # automation-v1 interface v1",
+            image,
+        )
+        self.assertEqual(
+            set(re.findall(r"^      ([a-z_]+):", image.split("    with:\n", 1)[1], re.MULTILINE)),
+            {"candidate_sha", "policy_sha", "automation_sha", "config_path"},
+        )
+        for binding in (
+            "candidate_sha: ${{ github.sha }}",
+            "policy_sha: ${{ github.event.pull_request.base.sha || "
+            "github.event.merge_group.base_sha || github.sha }}",
+            "automation_sha: " + PIN,
+            "config_path: scripts/shared-validation-policy.json",
+        ):
+            self.assertIn(binding, image)
+        self.assertIn(
+            "select_devcontainer_validation: "
+            "${{ steps.plan.outputs.select_devcontainer_validation }}",
+            job("validation-plan"),
+        )
+        aggregate = job("pr-gate")
+        self.assertIn("    if: always()\n", aggregate)
+        self.assertIn("python -m boxferry_ci gate --devcontainer-validation", aggregate)
+        needs = aggregate.split("    needs:\n", 1)[1].split("    runs-on:", 1)[0]
+        self.assertEqual(
+            re.findall(r"^        ([a-z-]+),$", needs, re.MULTILINE),
+            ["validation-plan", *policy["jobs"]],
+        )
         self.assertNotIn("shared-devcontainer-updates.yml@", workflow())
-        self.assertNotIn("--devcontainer-validation", job("pr-gate"))
-        self.assertIn("python -m boxferry_ci gate", job("pr-gate"))
-        self.assertIn("--automation-sha", job("pr-gate"))
 
     def test_repository_native_suites_and_coverage_floors_remain_owned(self) -> None:
         policy = json.loads((ROOT / "scripts/shared-validation-policy.json").read_text())
@@ -134,7 +176,10 @@ class ConsumerContracts(unittest.TestCase):
         )
         self.assertIn("command: check\n", source)
         self.assertNotIn("command-arguments:", source)
-        self.assertIn("cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1", source)
+        self.assertIn(
+            "cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1",
+            source,
+        )
         self.assertNotIn("cargo-deny-action@", job("dependencies"))
 
     def test_reporter_runs_once_and_native_parser_has_separate_lane(self) -> None:
@@ -164,7 +209,8 @@ class ConsumerContracts(unittest.TestCase):
         self.assertEqual(docs.count("path: _automation"), 1)
         self.assertEqual(docs.count("uses: ./_automation/.github/actions/shared-python"), 1)
         self.assertIn(
-            "          cache: npm\n          cache-dependency-path: package-lock.json", docs
+            "          cache: npm\n          cache-dependency-path: package-lock.json",
+            docs,
         )
         self.assertNotIn("node-version:", docs)
         self.assertNotIn("uses: actions/setup-node@", docs)
@@ -185,12 +231,22 @@ class ConsumerContracts(unittest.TestCase):
         self.assertIn('run_step "Check development API compatibility"', source)
         self.assertIn('run_step "Test shared automation adoption"', source)
 
-    def test_preexisting_image_definition_is_not_activated_by_ordinary_adoption(self) -> None:
+    def test_image_exports_selected_python_and_installs_rust_before_cargo_tools(
+        self,
+    ) -> None:
         image = (ROOT / ".devcontainer/Dockerfile").read_text()
-        self.assertIn("AS uv_toolchain", image)
-        self.assertIn("COPY automation/src/boxferry_ci/tooling.py", image)
-        self.assertNotIn("COPY scripts/shared-ci.py", image)
-        self.assertNotIn("--python-tools", image)
+        self.assertNotIn("AS uv_toolchain", image)
+        self.assertIn("COPY scripts/shared-ci.py", image)
+        self.assertIn("COPY .github/automation.json", image)
+        self.assertIn("--tools actionlint lychee --python-tools", image)
+        self.assertLess(
+            image.index("rustup toolchain install"),
+            image.index('cargo "+${rust_channel}" install'),
+        )
+        self.assertIn("ARG CARGO_SEMVER_CHECKS_VERSION=0.50.0", image)
+        self.assertIn("chown -R vscode:vscode /opt/boxferry-tooling/target", image)
+        self.assertIn("UV_PYTHON_INSTALL_DIR=/opt/boxferry-tooling/python", image)
+        self.assertNotIn("rm -r /opt/boxferry-tooling", image)
 
     def test_fixed_workloads_and_provider_remain_outside_updates(self) -> None:
         rules = json.loads((ROOT / ".github/renovate.json").read_text())["packageRules"]
@@ -213,6 +269,187 @@ class SharedBehavior(unittest.TestCase):
         self.policy_module = policy
         self.policy = policy.load_policy(ROOT / "scripts/shared-validation-policy.json")
 
+    def test_box_seed_and_adopted_receipts_use_actual_approved_policy(self) -> None:
+        from boxferry_ci.gate import verify_devcontainer_gate
+
+        seed_path = ROOT / "automation/tests/fixtures/devcontainer_seed/boxferry-policy.json.txt"
+        self.assertEqual(
+            hashlib.sha256(seed_path.read_bytes()).hexdigest(),
+            "b83045f7d6b17c8874f414536e9d8aa87ddb9e957df236c3f70501bab936cb52",
+        )
+        seed = self.policy_module.load_policy(seed_path)
+        for event in ("pull_request", "merge_group"):
+            comparison = self.planner.Comparison(event, "a" * 40, "b" * 40, "c" * 40)
+            for policy in (seed, self.policy):
+                selected = {name: name in policy.selected_jobs(("prose",)) for name in policy.jobs}
+                plan: dict[str, object] = {
+                    "schema": 3,
+                    "repository": policy.repository,
+                    "event": event,
+                    "base_sha": comparison.base_sha,
+                    "head_sha": comparison.head_sha,
+                    "tested_sha": comparison.tested_sha,
+                    "profile": "prose",
+                    "profiles": ["prose"],
+                    "jobs": selected,
+                    "reasons": ["actual Box caller prose"],
+                    "local_fingerprint": None,
+                }
+                needs: dict[str, dict[str, object]] = {
+                    name: {"result": "success" if enabled else "skipped"}
+                    for name, enabled in selected.items()
+                }
+                needs["validation-plan"] = {"result": "success"}
+                needs["devcontainer-validation"] = {
+                    "result": "success",
+                    "outputs": {"candidate_sha": comparison.tested_sha},
+                }
+                original = copy.deepcopy(plan)
+                verify_devcontainer_gate(plan, needs, policy, comparison, expected_plan=original)
+                self.assertEqual(plan, original)
+                for receipt in (
+                    None,
+                    comparison.base_sha,
+                    comparison.head_sha,
+                    "d" * 40,
+                ):
+                    wrong = copy.deepcopy(needs)
+                    wrong["devcontainer-validation"]["outputs"] = {"candidate_sha": receipt}
+                    with (
+                        self.subTest(event=event, seed=policy is seed, receipt=receipt),
+                        self.assertRaises(self.contracts.ContractError),
+                    ):
+                        verify_devcontainer_gate(
+                            plan, wrong, policy, comparison, expected_plan=original
+                        )
+                for outcome in ("missing", "failure", "cancelled", "skipped"):
+                    wrong = copy.deepcopy(needs)
+                    if outcome == "missing":
+                        del wrong["devcontainer-validation"]
+                    else:
+                        wrong["devcontainer-validation"] = {"result": outcome}
+                    if policy is self.policy and outcome == "skipped":
+                        verify_devcontainer_gate(
+                            plan, wrong, policy, comparison, expected_plan=original
+                        )
+                    else:
+                        with self.assertRaises(
+                            (self.contracts.ContractError, self.gate.GateFailure)
+                        ):
+                            verify_devcontainer_gate(
+                                plan, wrong, policy, comparison, expected_plan=original
+                            )
+                wrong = copy.deepcopy(needs)
+                wrong["automation"] = {"result": "failure"}
+                with self.assertRaises(self.gate.GateFailure):
+                    verify_devcontainer_gate(
+                        plan, wrong, policy, comparison, expected_plan=original
+                    )
+
+    def test_all_final_recipe_inputs_select_image_without_local_image_executor(
+        self,
+    ) -> None:
+        image = (ROOT / ".devcontainer/Dockerfile").read_text()
+        copied = {
+            item
+            for line in image.splitlines()
+            if line.startswith("COPY ") and not line.startswith("COPY --from=")
+            for item in line.split()[1:-1]
+        }
+        self.assertEqual(
+            copied,
+            {
+                "rust-toolchain.toml",
+                "scripts/install-file-tools.sh",
+                "automation/src/boxferry_ci/tooling.py",
+                "automation/tool-artifacts.json",
+                "scripts/shared-ci.py",
+                ".github/automation.json",
+                "package.json",
+                "package-lock.json",
+                "scripts/install-kubernetes-tools.sh",
+            },
+        )
+        inputs = copied | {
+            ".devcontainer/Dockerfile",
+            ".devcontainer/devcontainer.json",
+            ".devcontainer/devcontainer-lock.json",
+            ".devcontainer/verify-tools.sh",
+            "automation/pyproject.toml",
+            "automation/uv.lock",
+            "automation/src/boxferry_ci/bootstrap.py",
+            "automation/src/boxferry_ci/runner.py",
+            "scripts/shared-validation-policy.json",
+            "unknown-input",
+        }
+        for name in inputs:
+            with self.subTest(path=name):
+                profiles = self.planner.path_profiles(name, (b"plain text\n",), self.policy, set())
+                self.assertEqual(profiles, {"full"})
+                self.assertIn(
+                    "devcontainer-validation",
+                    self.policy.selected_jobs(tuple(profiles)),
+                )
+        for profile, commands in self.policy.local_commands.items():
+            with self.subTest(local_profile=profile):
+                self.assertTrue(
+                    all("devcontainer" not in " ".join(command) for command in commands)
+                )
+        for event in ("push", "workflow_dispatch", "workflow_call"):
+            self.assertEqual(
+                set(self.policy.selected_jobs(("full",))), set(self.policy.jobs), event
+            )
+
+    def test_box_hosted_source_closure_is_seven_exact_checkouts_only(self) -> None:
+        from boxferry_ci import devcontainer_validation as validation
+
+        repositories = (
+            "boxferry",
+            "compose-lens",
+            "docker-lens",
+            "kubernetes-lens",
+            "podman-lens",
+            "quadlet-lens",
+            "boxferry-website",
+        )
+        sources = {name: str(index + 1) * 40 for index, name in enumerate(repositories)}
+        candidate = sources["boxferry"]
+        self.assertEqual(
+            validation.parse_sources({"schema": 1, "repositories": sources}, "boxferry", candidate),
+            sources,
+        )
+        script = validation.probe_script(
+            validation.markdownlint_versions(ROOT), sources, "boxferry"
+        )
+        for name, revision in sources.items():
+            target = (
+                "/workspaces/boxferry"
+                if name == "boxferry"
+                else "/workspaces/boxferry/.boxferry-workspace/" + name
+            )
+            self.assertIn(f'git -C {target} rev-parse HEAD)" = {revision}', script)
+        for changed in (
+            {name: revision for name, revision in sources.items() if name != "compose-lens"},
+            {**sources, "unscoped": "a" * 40},
+            {**sources, "boxferry": "b" * 40},
+            {**sources, "compose-lens": "main"},
+        ):
+            with (
+                self.subTest(sources=changed),
+                self.assertRaises(self.contracts.ContractError),
+            ):
+                validation.parse_sources(
+                    {"schema": 1, "repositories": changed}, "boxferry", candidate
+                )
+        local = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())
+        self.assertNotIn("workspaceMount", local)
+        self.assertNotIn("workspaceFolder", local)
+        self.assertEqual(len(local["mounts"]), 2)
+        self.assertTrue(all(mount.endswith("type=volume") for mount in local["mounts"]))
+        self.assertNotIn(
+            ".boxferry-workspace/", (ROOT / ".devcontainer/verify-tools.sh").read_text()
+        )
+
     def test_known_safe_union_retains_all_mandatory_checks(self) -> None:
         prose = self.planner.path_profiles(
             "docs/public/concepts/new-page.md",
@@ -222,7 +459,11 @@ class SharedBehavior(unittest.TestCase):
             complete_pair=True,
         )
         rust = self.planner.path_profiles(
-            "crates/boxferry/src/lib.rs", (b"old", b"new"), self.policy, set(), complete_pair=True
+            "crates/boxferry/src/lib.rs",
+            (b"old", b"new"),
+            self.policy,
+            set(),
+            complete_pair=True,
         )
         self.assertEqual(prose, {"prose"})
         self.assertEqual(rust, {"rust-source"})
@@ -283,9 +524,9 @@ class SharedBehavior(unittest.TestCase):
 
     def test_ordinary_inventory_requires_every_original_job(self) -> None:
         policy, plan, needs, comparison = self.ordinary_fixture()
-        self.assertEqual(len(policy.jobs), 15)
+        self.assertEqual(len(policy.jobs), 16)
         result = self.gate.verify_gate(plan, needs, policy, comparison, expected_plan=plan)
-        self.assertEqual(len(result), 16)
+        self.assertEqual(len(result), 17)
         for name in policy.jobs:
             for outcome in ("failure", "cancelled", "skipped"):
                 broken = copy.deepcopy(needs)
@@ -305,7 +546,10 @@ class SharedBehavior(unittest.TestCase):
         for field in ("base_sha", "head_sha", "tested_sha"):
             wrong = copy.deepcopy(plan)
             wrong[field] = "d" * 40
-            with self.subTest(field=field), self.assertRaises(self.contracts.ContractError):
+            with (
+                self.subTest(field=field),
+                self.assertRaises(self.contracts.ContractError),
+            ):
                 self.gate.verify_gate(wrong, needs, policy, comparison, expected_plan=plan)
 
     def test_missing_policy_is_never_candidate_bootstrap_authority(self) -> None:
@@ -407,14 +651,17 @@ class ReleaseConsumerContracts(unittest.TestCase):
             self.release.replace("!inputs.validation_only", "true"),
             self.release.replace("needs.release-prepare.result == 'success'", "true"),
             self.release.replace(
-                "needs.release-validation.outputs.published_api_candidate_sha == github.sha", "true"
+                "needs.release-validation.outputs.published_api_candidate_sha == github.sha",
+                "true",
             ),
         ]
         for changed in mutations:
             with self.subTest(source=changed[-40:]), self.assertRaises(AssertionError):
                 require_release_boundaries(changed)
 
-    def test_complete_typed_order_and_initial_bootstrap_scope_are_preserved(self) -> None:
+    def test_complete_typed_order_and_initial_bootstrap_scope_are_preserved(
+        self,
+    ) -> None:
         packages = [
             "boxferry-model",
             "boxferry-engine",
@@ -442,7 +689,8 @@ class ReleaseConsumerContracts(unittest.TestCase):
             self.assertEqual(found, packages)
             self.assertEqual(block.count(f'validation-only: "{validation}"'), 6)
             self.assertEqual(
-                block.count("uses: ./_automation/.github/actions/shared-crate-publish"), 6
+                block.count("uses: ./_automation/.github/actions/shared-crate-publish"),
+                6,
             )
         self.assertNotIn("secrets.", source_job(self.release, "release-prepare"))
         self.assertEqual(
@@ -485,7 +733,11 @@ class ReleaseConsumerContracts(unittest.TestCase):
             "Publish boxferry-model through the shared crate component",
         ):
             self.assertLess(stage, publish.index(marker))
-        for forbidden in ("gh run list", "gh run download", "--workflow migration-readiness.yml"):
+        for forbidden in (
+            "gh run list",
+            "gh run download",
+            "--workflow migration-readiness.yml",
+        ):
             self.assertNotIn(forbidden, self.release)
 
 
@@ -502,7 +754,12 @@ class NativeRenovateContracts(unittest.TestCase):
 
         try:
             result = subprocess.run(
-                command, cwd=ROOT, capture_output=True, text=True, timeout=120, check=False
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             stdout = output(getattr(error, "stdout", None))
@@ -725,7 +982,9 @@ const {extractPackageFile} =
 """
         return self.run_native_fixture(runtime, inline=source, fault=fault)
 
-    def test_native_replacement_failure_and_termination_preserve_real_inputs(self) -> None:
+    def test_native_replacement_failure_and_termination_preserve_real_inputs(
+        self,
+    ) -> None:
         def source_states() -> dict[str, tuple[str, int]]:
             result = {}
             for directory, dirs, names in os.walk(ROOT):
@@ -733,7 +992,14 @@ const {extractPackageFile} =
                     name
                     for name in dirs
                     if name
-                    not in {".git", "target", ".venv", "__pycache__", ".ruff_cache", "node_modules"}
+                    not in {
+                        ".git",
+                        "target",
+                        ".venv",
+                        "__pycache__",
+                        ".ruff_cache",
+                        "node_modules",
+                    }
                 ]
                 for name in names:
                     path = Path(directory) / name
@@ -756,7 +1022,9 @@ const {extractPackageFile} =
                     self.assertEqual(result.returncode, -signal.SIGTERM)
                 self.assertEqual(source_states(), before)
 
-    def test_hostile_child_environment_is_filtered_without_mutating_parent(self) -> None:
+    def test_hostile_child_environment_is_filtered_without_mutating_parent(
+        self,
+    ) -> None:
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory(prefix="boxferry-hostile-environment-") as directory:
@@ -853,7 +1121,8 @@ class NativeCachePreparationContracts(unittest.TestCase):
                 command: list[str], **options: object
             ) -> subprocess.CompletedProcess[str]:
                 self.assertEqual(
-                    command, [sys.executable, str(root / "scripts/shared-ci.py"), "--help"]
+                    command,
+                    [sys.executable, str(root / "scripts/shared-ci.py"), "--help"],
                 )
                 self.assertEqual(
                     options,
@@ -871,7 +1140,10 @@ class NativeCachePreparationContracts(unittest.TestCase):
                 if create_cache:
                     cache()
                 return subprocess.CompletedProcess(
-                    command, returncode, "captured bootstrap stdout", "captured bootstrap stderr"
+                    command,
+                    returncode,
+                    "captured bootstrap stdout",
+                    "captured bootstrap stderr",
                 )
 
             with (

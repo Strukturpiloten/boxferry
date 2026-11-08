@@ -1,8 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>Strukturpiloten/boxferry//renovate-presets/common#da716b7df2706b7cf4b677bdcbec9ff12ebfd8e7",
-    "github>Strukturpiloten/boxferry//renovate-presets/rust#da716b7df2706b7cf4b677bdcbec9ff12ebfd8e7"
+    "github>Strukturpiloten/boxferry//renovate-presets/common#a87b112d174f249bce12153eb2ae4d72cd531abf",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#a87b112d174f249bce12153eb2ae4d72cd531abf"
   ],
   "dependencyDashboard": true,
   "ignorePaths": [
@@ -15,7 +15,6 @@
     "**/tests/**"
   ],
   "minimumReleaseAge": "3 days",
-  "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
@@ -325,7 +324,6 @@
       "matchPackageNames": [
         "docker.io/library/node",
         "mcr.microsoft.com/devcontainers/rust",
-        "ghcr.io/astral-sh/uv",
         "cargo-deny",
         "cargo-llvm-cov",
         "cargo-semver-checks",

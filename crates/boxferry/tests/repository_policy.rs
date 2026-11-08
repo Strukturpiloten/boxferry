@@ -7020,13 +7020,24 @@ fn devcontainer_preinstalls_the_workspace_toolchain_from_its_canonical_file() ->
         fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     for required in [
         "COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml",
-        "WORKDIR /opt/boxferry-toolchain\nRUN rustup show active-toolchain\nWORKDIR /",
+        "rustup toolchain install \"${rust_channel}\" --profile minimal --component clippy --component rustfmt --component llvm-tools-preview",
+        "rustup default \"${rust_channel}\"",
+        "cargo \"+${rust_channel}\" install --locked --version \"${CARGO_SEMVER_CHECKS_VERSION}\" cargo-semver-checks",
     ] {
         if !dockerfile.contains(required) {
             return Err(format!(
                 "Dev Container must preinstall the workspace toolchain: `{required}`"
             ));
         }
+    }
+    let toolchain = dockerfile
+        .find("rustup toolchain install")
+        .ok_or("missing selected toolchain install")?;
+    let cargo_tools = dockerfile
+        .find("cargo \"+${rust_channel}\" install")
+        .ok_or("missing selected Cargo tools")?;
+    if toolchain >= cargo_tools {
+        return Err("Dev Container must select Rust before installing Cargo tools".to_owned());
     }
     Ok(())
 }
