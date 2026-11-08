@@ -196,6 +196,19 @@ class ManifestTests(unittest.TestCase):
     def test_production_manifest_has_complete_version_independent_coverage(self) -> None:
         self.assert_complete_invariants(subject.load_manifest())
 
+    def test_production_lychee_selects_portable_musl_archives_for_both_native_lanes(self) -> None:
+        values = subject.load_manifest()
+        for architecture in ("x86_64", "aarch64"):
+            with self.subTest(architecture=architecture):
+                selected = values["lychee", architecture]
+                self.assertEqual(
+                    selected.filename, f"lychee-{architecture}-unknown-linux-musl.tar.gz"
+                )
+                self.assertEqual(
+                    selected.member, f"lychee-{architecture}-unknown-linux-musl/lychee"
+                )
+                self.assertEqual(selected.archive, "tar.gz")
+
     def test_different_valid_production_release_and_integrity_pairs_are_accepted(self) -> None:
         document = json.loads(subject.MANIFEST.read_text(encoding="utf-8"))
         for row in document["assets"]:
@@ -722,6 +735,33 @@ class RetryTests(unittest.TestCase):
 
 
 class InstallationTests(unittest.TestCase):
+    def test_old_gnu_bytes_with_same_version_cannot_replace_verified_musl_asset(self) -> None:
+        inventory = subject.load_manifest()
+        for architecture in ("x86_64", "aarch64"):
+            selected = inventory["lychee", architecture]
+            legacy = f"old GNU payload reporting the same version {selected.tag}\n".encode()
+            self.assertNotEqual(hashlib.sha256(legacy).hexdigest(), selected.digest)
+
+            def stale_download(_value: subject.Asset, path: Path, payload: bytes = legacy) -> None:
+                path.write_bytes(payload)
+
+            with (
+                self.subTest(architecture=architecture),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                target = root / "lychee"
+                target.write_bytes(legacy)
+                with (
+                    patch.object(subject, "extract") as extract,
+                    self.assertRaisesRegex(subject.ToolError, "SHA256 differs"),
+                ):
+                    subject.install(
+                        root, ("lychee",), architecture=architecture, downloader=stale_download
+                    )
+                extract.assert_not_called()
+                self.assertEqual(target.read_bytes(), legacy)
+
     def install_fixture(
         self, root: Path, tools: tuple[str, ...], *, fail: bool = False
     ) -> list[subject.Asset]:

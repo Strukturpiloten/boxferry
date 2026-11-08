@@ -14,6 +14,7 @@ import time
 import unittest
 from collections.abc import Callable
 from contextlib import ExitStack
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -30,6 +31,38 @@ IMAGE = "sha256:" + "d" * 64
 CONTAINER = "e" * 64
 INPUT = "f" * 64
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def write_markdownlint_metadata(
+    root: Path, *, deep: str | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    package: dict[str, Any] = {"devDependencies": {"markdownlint-cli2": "0.24.0"}}
+    lock: dict[str, Any] = {
+        "lockfileVersion": 3,
+        "packages": {
+            "": deepcopy(package),
+            "node_modules/markdownlint-cli2": {
+                "version": "0.24.0",
+                "resolved": "https://registry.npmjs.org/markdownlint-cli2/-/markdownlint-cli2-0.24.0.tgz",
+                "integrity": "sha512-" + "a" * 86 + "==",
+                "dependencies": {"markdownlint": "0.42.0"},
+                "bin": {"markdownlint-cli2": "markdownlint-cli2-bin.mjs"},
+            },
+            "node_modules/markdownlint": {
+                "version": "0.42.0",
+                "resolved": "https://registry.npmjs.org/markdownlint/-/markdownlint-0.42.0.tgz",
+                "integrity": "sha512-" + "b" * 86 + "==",
+            },
+        },
+    }
+    (root / "package.json").write_text(json.dumps(package))
+    (root / "package-lock.json").write_text(json.dumps(lock))
+    if deep is not None:
+        path = root / deep
+        path.write_text(
+            path.read_text()[:-1] + ', "unused":' + "[" * 10000 + "0" + "]" * 10000 + "}"
+        )
+    return package, lock
 
 
 class FakeCommands(validation.Commands):
@@ -718,7 +751,14 @@ class ProducerTests(unittest.TestCase):
 
     def test_probe_script_executes_versions_and_real_workspace_heads(self) -> None:
         script = validation.probe_script(
-            {"uv": "1.2.3", "node": "4.5.6", "ruff": "7.8.9", "ty": "0.1.2"},
+            {
+                "uv": "1.2.3",
+                "node": "4.5.6",
+                "ruff": "7.8.9",
+                "ty": "0.1.2",
+                "markdownlint-cli2": "0.24.0",
+                "markdownlint": "0.42.0",
+            },
             {name: SHA for name in validation.ALL_REPOSITORIES},
             "boxferry",
         )
@@ -773,6 +813,358 @@ class ProducerTests(unittest.TestCase):
                         elif expected == "failed":
                             self.assertEqual(result.returncode, 1)
                             self.assertIn("Version mismatch for cargo-llvm-cov", result.stderr)
+
+    def test_markdownlint_versions_bind_candidate_declaration_and_resolved_graph(self) -> None:
+        metadata = self.root / "node-metadata"
+        metadata.mkdir()
+        package, lock = write_markdownlint_metadata(metadata)
+        expected = {"markdownlint-cli2": "0.24.0", "markdownlint": "0.42.0"}
+        self.assertEqual(validation.markdownlint_versions(metadata), expected)
+        self.assertEqual(
+            validation.markdownlint_versions(ROOT)["markdownlint-cli2"],
+            json.loads((ROOT / "package.json").read_text())["devDependencies"]["markdownlint-cli2"],
+        )
+        package["dependencies"] = package.pop("devDependencies")
+        lock["packages"][""] = deepcopy(package)
+        lock["packages"]["node_modules/markdownlint-cli2/node_modules/markdownlint"] = lock[
+            "packages"
+        ].pop("node_modules/markdownlint")
+        lock["packages"]["node_modules/markdownlint"] = {
+            "version": "0.41.0",
+            "resolved": "https://registry.npmjs.org/markdownlint/-/markdownlint-0.41.0.tgz",
+            "integrity": "sha512-" + "c" * 86 + "==",
+        }
+        (metadata / "package.json").write_text(json.dumps(package))
+        (metadata / "package-lock.json").write_text(json.dumps(lock))
+        self.assertEqual(validation.markdownlint_versions(metadata), expected)
+
+    def test_markdownlint_metadata_missing_ambiguous_mismatch_and_untrusted_records_refuse(
+        self,
+    ) -> None:
+        metadata = self.root / "node-metadata"
+        metadata.mkdir()
+        changes: tuple[tuple[str, Callable[[dict[str, Any], dict[str, Any]], None]], ...] = (
+            ("range", lambda p, _l: p["devDependencies"].update({"markdownlint-cli2": "^0.24.0"})),
+            (
+                "root mismatch",
+                lambda _p, lock_data: lock_data["packages"][""]["devDependencies"].update(
+                    {"markdownlint-cli2": "0.23.0"}
+                ),
+            ),
+            (
+                "duplicate declaration",
+                lambda p, _l: p.update(dependencies={"markdownlint-cli2": "0.24.0"}),
+            ),
+            (
+                "unsupported declaration",
+                lambda p, _l: p.update(optionalDependencies=p.pop("devDependencies")),
+            ),
+            (
+                "missing CLI",
+                lambda _p, lock_data: lock_data["packages"].pop("node_modules/markdownlint-cli2"),
+            ),
+            (
+                "missing library",
+                lambda _p, lock_data: lock_data["packages"].pop("node_modules/markdownlint"),
+            ),
+            (
+                "duplicate CLI",
+                lambda _p, lock_data: lock_data["packages"].update(
+                    {
+                        "node_modules/x/node_modules/markdownlint-cli2": lock_data["packages"][
+                            "node_modules/markdownlint-cli2"
+                        ]
+                    }
+                ),
+            ),
+            (
+                "invalid nested cannot fall through to valid hoisted library",
+                lambda _p, lock_data: lock_data["packages"].update(
+                    {
+                        "node_modules/markdownlint-cli2/node_modules/markdownlint": {
+                            "version": "0.41.0"
+                        }
+                    }
+                ),
+            ),
+            (
+                "wrong CLI version",
+                lambda _p, lock_data: lock_data["packages"][
+                    "node_modules/markdownlint-cli2"
+                ].update(version="0.23.0"),
+            ),
+            (
+                "wrong library dependency",
+                lambda _p, lock_data: lock_data["packages"]["node_modules/markdownlint-cli2"][
+                    "dependencies"
+                ].update(markdownlint="0.41.0"),
+            ),
+            (
+                "missing integrity",
+                lambda _p, lock_data: lock_data["packages"]["node_modules/markdownlint"].pop(
+                    "integrity"
+                ),
+            ),
+            (
+                "untrusted source",
+                lambda _p, lock_data: lock_data["packages"][
+                    "node_modules/markdownlint-cli2"
+                ].update(resolved="https://untrusted.invalid/cli.tgz"),
+            ),
+            (
+                "wrong bin",
+                lambda _p, lock_data: lock_data["packages"][
+                    "node_modules/markdownlint-cli2"
+                ].update(bin={"markdownlint-cli2": "wrong.js"}),
+            ),
+            ("old lock", lambda _p, lock_data: lock_data.update(lockfileVersion=2)),
+        )
+        for label, change in changes:
+            with self.subTest(label=label):
+                package, lock = write_markdownlint_metadata(metadata)
+                change(package, lock)
+                (metadata / "package.json").write_text(json.dumps(package))
+                (metadata / "package-lock.json").write_text(json.dumps(lock))
+                with self.assertRaises(validation.ValidationError):
+                    validation.markdownlint_versions(metadata)
+        for name in ("package.json", "package-lock.json"):
+            with self.subTest(missing=name):
+                write_markdownlint_metadata(metadata)
+                (metadata / name).unlink()
+                with self.assertRaises(validation.ValidationError):
+                    validation.markdownlint_versions(metadata)
+        write_markdownlint_metadata(metadata)
+        (metadata / "package.json").write_text('{"devDependencies": {}, "devDependencies": {}}')
+        with self.assertRaisesRegex(validation.ValidationError, "ambiguous duplicate"):
+            validation.markdownlint_versions(metadata)
+        for payload in (b"{", b"[]", b" " * (2 * 1024**2 + 1)):
+            write_markdownlint_metadata(metadata)
+            (metadata / "package.json").write_bytes(payload)
+            with self.assertRaises(validation.ValidationError):
+                validation.markdownlint_versions(metadata)
+        write_markdownlint_metadata(metadata)
+        (metadata / "package.json").unlink()
+        (metadata / "package.json").symlink_to(metadata / "package-lock.json")
+        with self.assertRaises(validation.ValidationError):
+            validation.markdownlint_versions(metadata)
+
+    def probe_result(
+        self,
+        argv: tuple[str, ...],
+        versions: dict[str, str],
+        program: str | None,
+        *,
+        secrets: tuple[str, ...] = (),
+        timeout: int = 5,
+    ) -> RunResult:
+        tools = self.root / "probe-bin"
+        tools.mkdir(exist_ok=True)
+        for name, output in (("id", "1000"), ("uname", "x86_64")):
+            executable = tools / name
+            executable.write_text("#!/bin/sh\nprintf '%s\\n' " + output + "\n")
+            executable.chmod(0o700)
+        executable = tools / argv[0]
+        if program is None:
+            executable.unlink(missing_ok=True)
+        else:
+            executable.write_text("#!" + sys.executable + "\nimport sys\n" + program)
+            executable.chmod(0o700)
+        (self.root / ".devcontainer").mkdir(exist_ok=True)
+        (self.root / ".devcontainer/verify-tools.sh").write_text("exit 0\n")
+        with patch.object(validation, "PROBES", (argv,)):
+            script = validation.probe_script(versions, {}, "boxferry")
+        script = script.replace("/tmp/qualification-home", str(self.root / "probe-home"))
+        return run(
+            ("/bin/bash", "-c", script, "qualification", "x86_64"),
+            cwd=self.root,
+            stage="probe-command-contract",
+            timeout_seconds=timeout,
+            secrets=secrets,
+            environment={"PATH": str(tools) + ":/usr/bin:/bin"},
+        )
+
+    def test_markdownlint_help_accepts_only_bound_banner_usage_empty_stderr_and_exit_two(
+        self,
+    ) -> None:
+        banner = "markdownlint-cli2 v0.24.0 (markdownlint v0.42.0)"
+        help_output = (
+            banner + "\nhttps://github.com/DavidAnson/markdownlint-cli2\n\n"
+            "Syntax: markdownlint-cli2 glob0 [glob1] [...] [globN] [--help] [--no-globs]\n"
+        )
+        versions = {"markdownlint-cli2": "0.24.0", "markdownlint": "0.42.0"}
+        cases = [("valid help", help_output, "", 2, "success")]
+        cases.extend(
+            (f"status {status}", help_output, "", status, "failed") for status in (0, 1, 3, 127)
+        )
+        cases.extend(
+            (
+                ("arbitrary exit two", "unrelated stdout", "", 2, "failed"),
+                ("wrong CLI", help_output.replace("v0.24.0", "v0.23.0"), "", 2, "failed"),
+                ("wrong library", help_output.replace("v0.42.0", "v0.41.0"), "", 2, "failed"),
+                ("wrong homepage", help_output.replace("DavidAnson", "untrusted"), "", 2, "failed"),
+                ("missing syntax", help_output.replace("Syntax:", "Other:"), "", 2, "failed"),
+                ("missing help flag", help_output.replace("[--help]", ""), "", 2, "failed"),
+                ("missing no-globs flag", help_output.replace("[--no-globs]", ""), "", 2, "failed"),
+                ("unexpected stderr", help_output, "fatal: unexpected error\n", 2, "failed"),
+            )
+        )
+        for label, output, errors, status, expected in cases:
+            with self.subTest(label=label):
+                program = (
+                    "assert sys.argv[1:] == ['--help']\n"
+                    f"sys.stdout.write({output!r})\nsys.stderr.write({errors!r})\n"
+                    f"raise SystemExit({status})\n"
+                )
+                result = self.probe_result(("markdownlint-cli2", "--help"), versions, program)
+                self.assertEqual(result.status, expected, result)
+                if expected == "failed":
+                    self.assertEqual(result.returncode, status or 1)
+                    self.assertIn(f"exit={status}", result.stderr)
+                    self.assertIn("help contract mismatch", result.stderr)
+                    self.assertIn("argv=markdownlint-cli2 --help", result.stderr)
+                    self.assertIn(output.rstrip(), result.stdout)
+        with self.assertRaisesRegex(validation.ValidationError, "exact candidate"):
+            self.probe_result(("markdownlint-cli2", "--help"), {}, "raise SystemExit(2)")
+        with self.assertRaises(validation.ValidationError):
+            self.probe_result(("markdownlint-cli2", "--version"), versions, "raise SystemExit(2)")
+        missing = self.probe_result(("markdownlint-cli2", "--help"), versions, None)
+        self.assertEqual(missing.returncode, 127)
+        self.assertIn("exit=127", missing.stderr)
+        timed_out = self.probe_result(
+            ("markdownlint-cli2", "--help"),
+            versions,
+            "import time\ntime.sleep(10)\n",
+            timeout=1,
+        )
+        self.assertNotEqual(timed_out.status, "success")
+        self.assertIn("timed out", timed_out.diagnostic.cause)
+
+    def test_generic_and_observed_probe_failures_keep_stdout_argv_real_status_and_redaction(
+        self,
+    ) -> None:
+        secret = "synthetic-probe-output-secret"
+        for argv, versions in (
+            (("failing-tool", "--check"), {}),
+            (("uv", "--version"), {"uv": "1.2.3"}),
+        ):
+            for status in (2, 7):
+                with self.subTest(argv=argv, status=status):
+                    result = self.probe_result(
+                        argv,
+                        versions,
+                        f"print('fatal: missing dependency {secret}')\n"
+                        f"raise SystemExit({status})\n",
+                        secrets=(secret,),
+                    )
+                    self.assertEqual(result.status, "failed", result)
+                    self.assertEqual(result.returncode, status)
+                    self.assertIn("missing dependency [REDACTED]", result.stdout)
+                    self.assertIn(f"exit={status}", result.stderr)
+                    self.assertIn("argv=" + " ".join(argv), result.stderr)
+                    self.assertNotIn(secret, result.stdout + result.stderr)
+        missing = self.probe_result(("absent-qualification-tool", "--check"), {}, None)
+        self.assertEqual(missing.returncode, 127)
+        self.assertIn("exit=127", missing.stderr)
+
+    def test_help_banner_uses_candidate_lock_instead_of_producer_or_ambient_versions(self) -> None:
+        metadata = self.root / "different-candidate"
+        metadata.mkdir()
+        package, lock = write_markdownlint_metadata(metadata)
+        package["devDependencies"]["markdownlint-cli2"] = "0.25.0"
+        lock["packages"][""] = deepcopy(package)
+        cli = lock["packages"]["node_modules/markdownlint-cli2"]
+        cli.update(
+            version="0.25.0",
+            resolved="https://registry.npmjs.org/markdownlint-cli2/-/markdownlint-cli2-0.25.0.tgz",
+            dependencies={"markdownlint": "0.43.0"},
+        )
+        lock["packages"]["node_modules/markdownlint"].update(
+            version="0.43.0",
+            resolved="https://registry.npmjs.org/markdownlint/-/markdownlint-0.43.0.tgz",
+        )
+        (metadata / "package.json").write_text(json.dumps(package))
+        (metadata / "package-lock.json").write_text(json.dumps(lock))
+        producer_versions = {"markdownlint-cli2": "0.24.0", "markdownlint": "0.42.0"}
+        with patch.object(
+            validation, "canonical_versions", return_value=producer_versions
+        ) as ambient:
+            versions = validation.markdownlint_versions(metadata)
+        ambient.assert_not_called()
+        self.assertNotEqual(versions, producer_versions)
+        for cli_version, library_version, expected in (
+            ("0.25.0", "0.43.0", "success"),
+            ("0.24.0", "0.42.0", "failed"),
+        ):
+            output = (
+                f"markdownlint-cli2 v{cli_version} (markdownlint v{library_version})\n"
+                "https://github.com/DavidAnson/markdownlint-cli2\n"
+                "Syntax: markdownlint-cli2 glob0 [glob1] [--help] [--no-globs]\n"
+            )
+            result = self.probe_result(
+                ("markdownlint-cli2", "--help"),
+                versions,
+                f"sys.stdout.write({output!r})\nraise SystemExit(2)\n",
+            )
+            self.assertEqual(result.status, expected, result)
+
+    def test_terminal_failure_suffix_survives_early_warnings_long_run_and_stack_tail(self) -> None:
+        secret = "synthetic-late-causal-secret"
+        private = self.root / "late-causal"
+        suffix = f"runtime start failed: permission denied {secret} {private} 界"
+        output = (
+            f"error: nonfatal base parse warning {secret} {private} ä\n" * 8
+            + "error running container: did not get container start message from parent: EOF\n"
+            + "Error: building at STEP RUN "
+            + "build-command " * 1000
+            + suffix
+            + "\n"
+            + "Error: Command failed: podman build\n"
+            + f"stack-frame {secret} {private} ä界\n" * 2000
+        )
+        evidence = validation.failure_evidence(validation.redact(output, (secret, str(private))))
+        self.assertIn("runtime start failed: permission denied", str(evidence["causal"]))
+        self.assertIn("parent: EOF", str(evidence["causal"]))
+        self.assertIn("[REDACTED]", str(evidence["excerpt"]))
+        self.assertNotIn(secret, json.dumps(evidence))
+        self.assertLessEqual(len(str(evidence["excerpt"]).encode()), validation.MAX_FAILURE_STREAM)
+        self.assertLessEqual(len(str(evidence["causal"]).encode()), 768)
+        self.assertTrue(evidence["truncated"])
+        commands = validation.Commands(private)
+        program = self.root / "late-cause.py"
+        program.write_text(f"import sys; sys.stderr.write({output!r}); sys.exit(7)")
+        with patch.dict(os.environ, {"TEST_TOKEN": secret}):
+            with self.assertRaisesRegex(validation.ValidationError, "permission denied"):
+                commands.call((sys.executable, str(program)), "build")
+        encoded = json.dumps(commands.outcomes)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn(str(private), encoded)
+        str(evidence["excerpt"]).encode("utf-8").decode("utf-8")
+        self.assertLess(len(encoded.encode()), validation.MAX_REPORT)
+
+    def test_candidate_markdownlint_metadata_is_required_before_build(self) -> None:
+        report, fake = self.simulate(missing_node_metadata=True)
+        self.assertEqual(report["status"], "failure")
+        self.assertIn("metadata is unavailable", str(report["cause"]))
+        self.assertFalse(any(stage == "build" for _, stage, _ in fake.calls))
+
+    def test_deep_package_and_lock_metadata_raise_structured_validation_error(self) -> None:
+        metadata = self.root / "deep-metadata"
+        metadata.mkdir()
+        for relative in ("package.json", "package-lock.json"):
+            with self.subTest(relative=relative):
+                write_markdownlint_metadata(metadata, deep=relative)
+                self.assertLess((metadata / relative).stat().st_size, 2 * 1024**2)
+                with self.assertRaisesRegex(validation.ValidationError, "nesting depth"):
+                    validation.markdownlint_versions(metadata)
+
+    def test_deep_candidate_metadata_produces_failure_report_before_build(self) -> None:
+        for relative in ("package.json", "package-lock.json"):
+            with self.subTest(relative=relative):
+                report, fake = self.simulate(deep_node_metadata=relative)
+                self.assertEqual(report["status"], "failure")
+                self.assertIn("nesting depth", str(report["cause"]))
+                self.assertEqual(report["cleanup"], "success")
+                self.assertFalse(any(stage == "build" for _, stage, _ in fake.calls))
 
     def test_version_probe_requires_successful_execution_and_exact_selected_version(self) -> None:
         tools = self.root / "bin"
@@ -912,7 +1304,10 @@ class ProducerTests(unittest.TestCase):
             '/usr/bin/sudo -n /usr/bin/timeout --signal=TERM --kill-after=2s "${seconds}s"', script
         )
         self.assertIn(
-            "/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root LC_ALL=C.UTF-8", script
+            "/usr/bin/env -i "
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+            "HOME=/root LC_ALL=C.UTF-8",
+            script,
         )
         self.assertIn('/usr/bin/podman --remote=false "$@"', script)
         for forbidden in (
@@ -928,6 +1323,74 @@ class ProducerTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, script)
         self.assertFalse((directory / "containers.conf").exists())
+
+    def test_hosted_root_path_and_clean_environment_ignore_hostile_ambient_values(self) -> None:
+        directory = self.root / "root-path-launcher"
+        directory.mkdir()
+        normal = Path(validation._engine(directory, "podman")).read_bytes()
+        hostile = self.root / "hostile"
+        hostile.mkdir()
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": f"{hostile}::.",
+                "HOME": str(hostile),
+                "LD_PRELOAD": str(hostile / "inject.so"),
+                "CONTAINERS_CONF": str(hostile / "containers.conf"),
+                "XDG_CONFIG_HOME": str(hostile),
+            },
+            clear=True,
+        ):
+            prefix = validation._hosted_root_command(37)
+            generated = Path(validation._engine(directory, "podman")).read_bytes()
+        self.assertEqual(
+            prefix,
+            (
+                "/usr/bin/sudo",
+                "-n",
+                "/usr/bin/timeout",
+                "--signal=TERM",
+                "--kill-after=2s",
+                "37s",
+                "/usr/bin/env",
+                "-i",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME=/root",
+                "LC_ALL=C.UTF-8",
+            ),
+        )
+        self.assertEqual(generated, normal)
+        self.assertNotIn(str(hostile).encode(), generated)
+        self.assertEqual({item.split("=", 1)[0] for item in prefix[8:]}, {"PATH", "HOME", "LC_ALL"})
+
+    def test_hosted_root_path_resolves_only_fixture_sbin_iptables_helpers(self) -> None:
+        fixture = self.root / "system-tree"
+        fixture.mkdir()
+        old = "/usr/local/bin:/usr/bin:/bin"
+        selected = validation._hosted_root_command(5)[8].removeprefix("PATH=")
+        for absolute in set((old + ":" + selected).split(":")):
+            (fixture / absolute.lstrip("/")).mkdir(parents=True, exist_ok=True)
+        sbin = fixture / "usr/sbin"
+        sbin.mkdir(parents=True, exist_ok=True)
+        hostile = fixture / "ambient"
+        hostile.mkdir()
+        for name in ("iptables", "ip6tables"):
+            for directory in (sbin, hostile):
+                path = directory / name
+                path.write_text("#!/bin/sh\nexit 99\n")
+                path.chmod(0o700)
+        old_fixture_path = os.pathsep.join(str(fixture / p.lstrip("/")) for p in old.split(":"))
+        selected_fixture_path = os.pathsep.join(
+            str(fixture / p.lstrip("/")) for p in selected.split(":")
+        )
+        with patch.dict(os.environ, {"PATH": str(hostile)}):
+            for name in ("iptables", "ip6tables"):
+                with self.subTest(helper=name):
+                    self.assertEqual(shutil.which(name), str(hostile / name))
+                    self.assertIsNone(shutil.which(name, path=old_fixture_path))
+                    self.assertEqual(
+                        shutil.which(name, path=selected_fixture_path), str(sbin / name)
+                    )
 
     def test_podman_accepts_observed_ordinary_storage_and_requires_native_rootful_backend(
         self,
@@ -1116,6 +1579,8 @@ class ProducerTests(unittest.TestCase):
         mode: str = "hosted",
         responses: dict[str, str] | None = None,
         cancel_stage: str = "",
+        missing_node_metadata: bool = False,
+        deep_node_metadata: str | None = None,
     ) -> tuple[dict[str, object], FakeCommands]:
         fake = FakeCommands(self.root)
         fake.engine, fake.mode = engine, mode
@@ -1139,6 +1604,8 @@ class ProducerTests(unittest.TestCase):
             fake.checkouts.append(destination)
             destination.mkdir()
             shutil.copyfile(self.root / "payload", destination / "payload")
+            if not missing_node_metadata:
+                write_markdownlint_metadata(destination, deep=deep_node_metadata)
 
         def commands(private: Path) -> FakeCommands:
             fake.private = private
