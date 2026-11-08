@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  checks: read
+  statuses: read
 jobs:
   qualify:
     if: >-
