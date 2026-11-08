@@ -7115,17 +7115,23 @@ fn devcontainer_uses_cargo_default_workspace_target_directory() -> Result<(), St
 fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(), String> {
     let root = repository_root();
     let dockerfile = fs::read_to_string(root.join(".devcontainer/Dockerfile")).map_err(|error| error.to_string())?;
-    let expected_version = pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
+    pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
     let shared =
         fs::read_to_string(root.join(".github/workflows/shared-rust-ci.yml")).map_err(|error| error.to_string())?;
-    if !shared.contains("renovate: datasource=crate depName=cargo-llvm-cov") {
-        return Err("shared Rust CI must retain the canonical coverage tool Renovate marker".to_owned());
+    for required in [
+        "python -m boxferry_ci.cargo_tools install",
+        "python -m boxferry_ci.cargo_tools verify",
+        "--repository-root . --package cargo-llvm-cov --require-candidate",
+        "--github-path \"${GITHUB_PATH}\"",
+        "--github-env \"${GITHUB_ENV}\"",
+        "rustup component add llvm-tools-preview --toolchain",
+    ] {
+        if !shared.contains(required) {
+            return Err(format!("shared coverage must use exact candidate tooling: {required}"));
+        }
     }
-    let shared_version = pinned_cargo_llvm_cov_version(&shared, ".github/workflows/shared-rust-ci.yml")?;
-    if shared_version != expected_version {
-        return Err(format!(
-            "shared Rust CI pins cargo-llvm-cov {shared_version}, but the Dev Container pins {expected_version}"
-        ));
+    if shared.contains("renovate: datasource=crate depName=cargo-llvm-cov") || shared.contains("run: cargo install") {
+        return Err("shared coverage must not add a second version authority".to_owned());
     }
     validate_shared_automation_contract(&root)?;
     let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml")).map_err(|error| error.to_string())?;
@@ -7309,17 +7315,13 @@ fn release_uses_fresh_reusable_readiness_evidence_and_validation_only_mode() -> 
 }
 
 fn pinned_cargo_llvm_cov_version(document: &str, source: &str) -> Result<String, String> {
-    const WORKFLOW_PREFIX: &str = "run: cargo install --locked --version ";
-    const WORKFLOW_SUFFIX: &str = " cargo-llvm-cov";
     const DEVCONTAINER_PREFIX: &str = "ARG CARGO_LLVM_COV_VERSION=";
 
     let versions = document
         .lines()
         .filter_map(|line| {
             let line = line.trim();
-            line.strip_prefix(WORKFLOW_PREFIX)
-                .and_then(|value| value.strip_suffix(WORKFLOW_SUFFIX))
-                .or_else(|| line.strip_prefix(DEVCONTAINER_PREFIX))
+            line.strip_prefix(DEVCONTAINER_PREFIX)
         })
         .collect::<Vec<_>>();
 

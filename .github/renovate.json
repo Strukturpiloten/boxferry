@@ -42,8 +42,7 @@
       "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)"
       ]
     },
     {
@@ -325,7 +324,6 @@
         "docker.io/library/node",
         "mcr.microsoft.com/devcontainers/rust",
         "cargo-deny",
-        "cargo-llvm-cov",
         "cargo-semver-checks",
         "zizmor"
       ],

@@ -79,7 +79,9 @@ class Selection:
         return self.package.removeprefix("cargo-")
 
 
-def select(root: Path, package: str, fallback: Path | None = None) -> Selection:
+def select(
+    root: Path, package: str, fallback: Path | None = None, *, require_candidate: bool = False
+) -> Selection:
     if package not in DECLARATIONS or not package.startswith("cargo-"):
         raise ContractError("unsupported Cargo subcommand selection")
     metadata = root
@@ -87,6 +89,8 @@ def select(root: Path, package: str, fallback: Path | None = None) -> Selection:
     if path.parent.is_symlink():
         raise ContractError("Cargo tool Dockerfile directory must not be a symlink")
     if not path.exists() and not path.is_symlink():
+        if require_candidate:
+            raise ContractError("candidate Dockerfile must declare the selected Cargo tool")
         # Consumers without a Dockerfile already use this immutable archive's data.
         metadata = fallback if fallback is not None else Path(__file__).resolve().parents[3]
     versions = declarations(metadata)
@@ -293,12 +297,17 @@ def main(argv: list[str] | None = None) -> int:
         "--package", choices=tuple(k for k in DECLARATIONS if k.startswith("cargo-")), required=True
     )
     parser.add_argument("--destination", type=Path)
+    parser.add_argument("--require-candidate", action="store_true")
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--github-path", type=Path)
     parser.add_argument("--github-env", type=Path)
     options = parser.parse_args(argv)
     try:
-        selection = select(options.repository_root.resolve(), options.package)
+        selection = select(
+            options.repository_root.resolve(),
+            options.package,
+            require_candidate=options.require_candidate,
+        )
         if options.operation == "install":
             if options.destination is None:
                 raise ContractError("exact installation requires an owned destination")

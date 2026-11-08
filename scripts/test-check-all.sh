@@ -55,8 +55,13 @@ case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
   python3:automation/src/boxferry_ci/bootstrap.py\ install-uv*) printf '%s/uv\n' "${0%/*}" ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
+  uv:*boxferry_ci.cargo_tools*--package\ cargo-llvm-cov*)
+    [[ "${CARGO_HOME}" == "${CHECK_ALL_TEST_COVERAGE_HOME}" ]] ;;
   uv:*boxferry_ci.cargo_tools* | uv:*boxferry_ci.api_baselines*)
     [[ "${CARGO_HOME}" == "${CARGO_TARGET_DIR%/cargo-semver-checks-target}/cargo-home" ]] ;;
+  cargo:llvm-cov*)
+    [[ "${CARGO_HOME}" == "${CHECK_ALL_TEST_COVERAGE_HOME}" ]]
+    [[ "${RUSTUP_TOOLCHAIN}" == "${CHECK_ALL_TEST_MSRV}" ]] ;;
   cargo:semver-checks*)
     [[ "${RUSTUP_TOOLCHAIN}" == "${CHECK_ALL_TEST_MSRV}" ]]
     [[ "${CARGO_HOME}" == "${CARGO_TARGET_DIR%/cargo-semver-checks-target}/cargo-home" ]] ;;
@@ -78,6 +83,9 @@ run_gate() {
     CHECK_ALL_TEST_LOG="${test_root}/${label}.commands" \
     CHECK_ALL_TEST_MSRV="${CHECK_ALL_TEST_MSRV:-${mock_msrv}}" \
     CARGO_TARGET_DIR="${mock_target}" \
+    CARGO_HOME="${test_root}/ambient-cargo-home" \
+    CHECK_ALL_TEST_COVERAGE_HOME="${test_root}/ambient-cargo-home" \
+    RUSTUP_TOOLCHAIN=stable \
     BOXFERRY_SEMVER_RELEASE_TYPE="" PODMAN_LENS_SEMVER_CHECK=0 \
     BOXFERRY_WEBSITE_SOURCE_MODE=local \
     "${bash_executable}" "${mock_repository}/scripts/check-all.sh" "$@" \
@@ -204,6 +212,7 @@ for mode in default fix check; do
   for command in \
     "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
     "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-semver-checks" \
+    "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-llvm-cov --require-candidate" \
     "uv run --locked --project automation ruff check automation" \
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
@@ -225,6 +234,13 @@ if grep -q '^cargo fmt' "${test_root}/invalid_semver.commands"; then
   exit 1
 fi
 grep -Fq 'Verify exact local Cargo SemVer selection' "${test_root}/invalid_semver.output"
+# Failed coverage selection stops before any formatting, build or coverage command.
+status=0
+CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-llvm-cov --require-candidate" \
+  run_gate invalid_coverage --check || status=$?
+[[ "${status}" == 17 ]]
+[[ "$(grep -c '^cargo ' "${test_root}/invalid_coverage.commands" || true)" == 0 ]]
+grep -Fq 'Verify exact local Cargo coverage selection' "${test_root}/invalid_coverage.output"
 assert_contains fix "uv run --locked --project automation ruff format automation"
 assert_contains check "uv run --locked --project automation ruff format --check automation"
 for mode in fix check; do
@@ -237,6 +253,7 @@ for mode in fix check; do
     "python3 automation/src/boxferry_ci/bootstrap.py install-uv --project automation --cache-root target/shared-uv --no-path-uv" \
     "${format_command}" \
     "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-semver-checks" \
+    "uv run --locked --project automation python -m boxferry_ci.cargo_tools verify --repository-root ${test_root}/repository --package cargo-llvm-cov --require-candidate" \
     "uv run --locked --project automation ruff check automation" \
     "uv run --locked --project automation ty check --project automation" \
     "uv run --locked --project automation python -m boxferry_ci.asset_verification --repository-root . --working-tree" \
