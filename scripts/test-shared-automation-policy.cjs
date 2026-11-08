@@ -138,6 +138,7 @@
       // Native preset resolution consumes the actual local configuration and its exact refs.
       // It does not grant authority from a hand-built projection or description metadata.
       const { config } = await resolveConfigPresets(candidate);
+      assert.equal(config.rebaseWhen, "auto", "actual native resolved rebaseWhen");
       for (const [label, ...fields] of ordinary) {
         const actual = await applyPackageRules({ ...config, ...dependency(...fields) });
         assert.equal(actual.automerge, true, label + " automerge");
@@ -154,7 +155,6 @@
       for (const [datasource, packageName] of [
         ["docker", "docker.io/library/node"],
         ["docker", "mcr.microsoft.com/devcontainers/rust"],
-        ["docker", "ghcr.io/astral-sh/uv"],
         ["crate", "cargo-deny"],
         ["crate", "cargo-llvm-cov"],
         ["crate", "cargo-semver-checks"],
@@ -274,6 +274,9 @@
       }
     }
     await checkActualPolicy(local);
+    const lateRebase = structuredClone(local);
+    lateRebase.rebaseWhen = "behind-base-branch";
+    await assert.rejects(() => checkActualPolicy(lateRebase), /rebaseWhen/);
     for (const override of [{ pinDigests: false }, { groupName: "unreviewed group" }]) {
       const changed = structuredClone(local);
       changed.packageRules.push({
@@ -331,7 +334,7 @@
       await assert.rejects(() => checkActualPolicy(changed), /admission/);
     }
     console.log(
-      "Actual native local policy and fourteen late-override/lock/admission counterfactuals passed.",
+      "Actual native local policy and fifteen late-override/lock/admission counterfactuals passed.",
     );
   } finally {
     process.chdir(parent);

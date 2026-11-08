@@ -406,7 +406,7 @@ class ValidationPlanTests(unittest.TestCase):
 
     def test_mandatory_gate_projection_is_monotonic_and_fail_closed(self) -> None:
         gate, policy, comparison, plan, needs = adopted_fixture()
-        self.assertEqual(len(policy.jobs), 15)
+        self.assertEqual(len(policy.jobs), 16)
         gate.verify_gate(plan, needs, policy, comparison, expected_plan=plan)
         mandatory = (
             "release-binaries",

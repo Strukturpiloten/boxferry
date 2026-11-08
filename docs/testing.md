@@ -185,10 +185,8 @@ systemd or runtime behavior. Hosted success establishes candidate evidence; see 
 
 ## Shared caller regression boundaries
 
-`scripts/test-shared-automation.py --structural` checks independently expected task selection,
-trusted-policy failures, all fifteen ordinary policy jobs, development/published API
-separation and protected release consumption. The dedicated `NativeRenovateContracts`
-lane retains the integrity-pinned native parser requirement. `scripts/test-check-all.sh`
-checks command dispatch and failure propagation with inert stubs. Ordinary validation
-contains no Dev Container image-build or private-store qualification step; image and
-updater qualification stay separate under #563.
+`scripts/test-shared-automation.py --structural` checks selection, trusted-policy failures,
+all fifteen prior jobs, image receipts, API separation and release consumers.
+`NativeRenovateContracts` tests the pinned native parser; `scripts/test-check-all.sh` tests dispatch
+and failures with inert stubs. Local checks build no image. Hosted image and App/updater acceptance
+require observed evidence under #563.

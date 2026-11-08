@@ -211,9 +211,11 @@ class PresetTests(unittest.TestCase):
     def test_automatic_policy_including_major_compiler_image_checksum(self) -> None:
         assert_automatic_policy(_shared())
 
-    def test_common_queue_auto_and_pre_adoption_local_policy_remain_distinct(self) -> None:
-        local = json.loads((ROOT / ".github/renovate.json").read_text())
-        for config, expected in ((_shared(), "auto"), (local, "behind-base-branch")):
+    def test_common_and_adopted_local_policy_inherit_queue_auto(self) -> None:
+        local_path = ROOT / ".github/renovate.json"
+        local = json.loads(local_path.read_text())
+        self.assertNotIn("rebaseWhen", local)
+        for config in (_shared(), consumer_config(local_path)):
             result = effective(
                 config,
                 {
@@ -223,7 +225,7 @@ class PresetTests(unittest.TestCase):
                     "updateType": "minor",
                 },
             )
-            self.assertEqual(result["rebaseWhen"], expected)
+            self.assertEqual(result["rebaseWhen"], "auto")
             self.assertEqual(result["minimumReleaseAge"], "3 days")
 
     def test_devcontainer_node_image_couples_source_without_changing_age_or_other_owners(
@@ -2253,7 +2255,8 @@ class NativePresetTests(unittest.TestCase):
       packageName: "serde",
       depName: "serde",
     });
-    assert.equal(localEffective.rebaseWhen, "behind-base-branch");
+    assert.equal(Object.hasOwn(local, "rebaseWhen"), false, "inherit shared queue policy");
+  assert.equal(localEffective.rebaseWhen, "auto");
     const adopted = (local.extends || []).some((ref) =>
       ref.startsWith("github>Strukturpiloten/boxferry//renovate-presets/common#"),
     );
@@ -2656,7 +2659,7 @@ validationWiring: (() => {
 
     @staticmethod
     def _shared_route_command(command: str) -> str:
-        mode = "plan" if command == "plan" else "gate"
+        mode = "plan" if command == "plan" else "gate --devcontainer-validation"
         suffix = (
             '--github-output "${GITHUB_OUTPUT}"'
             if command == "plan"
@@ -2752,7 +2755,7 @@ validationWiring: (() => {
             self.assertTrue(call["run"].startswith("set -euo pipefail\n"))
             normalized = " ".join(call["run"].replace("\\\n", " ").split())
             self.assertEqual(normalized, " ".join(self._shared_route_command(command).split()))
-            self.assertNotIn("--devcontainer-validation", normalized)
+            self.assertEqual("--devcontainer-validation" in normalized, command == "gate")
             if command == "plan":
                 self.assertEqual(call["id"], "plan")
             else:
@@ -3002,7 +3005,7 @@ validationWiring: (() => {
             "wrong policy argument",
             "wrong policy identity",
             "wrong plan binding",
-            "inactive image gate",
+            "missing image gate",
             "wrong candidate package",
             "plan step condition",
             "plan step continue-on-error",
@@ -3046,9 +3049,9 @@ validationWiring: (() => {
                     job["steps"][0]["with"]["ref"] = "main"
                 else:
                     call = job["steps"][-1]
-                    if mutation == "inactive image gate":
+                    if mutation == "missing image gate":
                         call["run"] = call["run"].replace(
-                            "boxferry_ci gate ", "boxferry_ci gate --devcontainer-validation "
+                            "boxferry_ci gate --devcontainer-validation ", "boxferry_ci gate "
                         )
                     elif mutation == "wrong plan binding":
                         call["env"]["PLAN_JSON"] = "${{ needs.untrusted.outputs.plan }}"

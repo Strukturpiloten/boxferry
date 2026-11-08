@@ -24,7 +24,6 @@ DOCKERFILE_PATH = ".devcontainer/Dockerfile"
 EXPECTED_PINS = {
     ("docker", "docker.io/library/node"),
     ("docker", "mcr.microsoft.com/devcontainers/rust"),
-    ("docker", "ghcr.io/astral-sh/uv"),
     ("crate", "cargo-deny"),
     ("crate", "cargo-llvm-cov"),
     ("crate", "cargo-semver-checks"),
@@ -135,7 +134,7 @@ class DevContainerRenovateTests(unittest.TestCase):
         self.configuration = inherited_configuration(self.configuration)
         self.dockerfile = (ROOT / DOCKERFILE_PATH).read_text(encoding="utf-8")
 
-    def test_all_seven_operational_pins_have_one_real_extraction_owner(self) -> None:
+    def test_all_operational_pins_have_one_real_extraction_owner(self) -> None:
         pins = validate_ownership(self.configuration, self.dockerfile)
         self.assertEqual(len(pins), len(EXPECTED_PINS))
         self.assertTrue(all(match["currentValue"] for _, match in pins))
@@ -176,7 +175,8 @@ class DevContainerRenovateTests(unittest.TestCase):
                 ):
                     with self.assertRaises(ValueError):
                         validate_ownership(
-                            self.configuration, self.dockerfile.replace(reference, replacement, 1)
+                            self.configuration,
+                            self.dockerfile.replace(reference, replacement, 1),
                         )
 
     def test_image_replacement_updates_comment_tag_and_digest_without_touching_aliases(
@@ -208,10 +208,13 @@ class DevContainerRenovateTests(unittest.TestCase):
                 )
                 validate_ownership(self.configuration, source)
                 self.assertEqual(
-                    re.findall(r" AS [a-z_]+", source), re.findall(r" AS [a-z_]+", self.dockerfile)
+                    re.findall(r" AS [a-z_]+", source),
+                    re.findall(r" AS [a-z_]+", self.dockerfile),
                 )
                 legacy = self.dockerfile.replace(
-                    f"{match['depName']}:{match['currentValue']}@", f"{match['depName']}@", 1
+                    f"{match['depName']}:{match['currentValue']}@",
+                    f"{match['depName']}@",
+                    1,
                 )
                 legacy_match = next(
                     candidate
@@ -233,15 +236,23 @@ class DevContainerRenovateTests(unittest.TestCase):
         self.assertEqual(rules[0]["matchManagers"], ["custom.regex"])
         self.assertEqual(rules[0]["matchFileNames"], [DOCKERFILE_PATH])
         self.assertEqual(
-            set(rules[0]["matchUpdateTypes"]), {"minor", "patch", "pin", "digest", "pinDigest"}
+            set(rules[0]["matchUpdateTypes"]),
+            {"minor", "patch", "pin", "digest", "pinDigest"},
         )
         self.assertNotIn("minimumReleaseAge", rules[0])
         self.assertEqual(self.configuration["minimumReleaseAge"], "3 days")
         self.assertNotIn("scripts/install-kubernetes-tools.sh", rules[0]["matchFileNames"])
 
-    def test_all_seven_image_context_pins_are_held_without_manual_approval(self) -> None:
+    def test_all_image_context_pins_are_held_without_manual_approval(self) -> None:
         for _, match in validate_ownership(self.configuration, self.dockerfile):
-            for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
+            for update_type in (
+                "major",
+                "minor",
+                "patch",
+                "pin",
+                "digest",
+                "pinDigest",
+            ):
                 with self.subTest(dependency=match["depName"], update=update_type):
                     policy = pin_policy(self.configuration, match, update_type)
                     self.assertIs(policy["automerge"], True)
@@ -261,7 +272,9 @@ class DevContainerRenovateTests(unittest.TestCase):
         for _, match in validate_ownership(changed, self.dockerfile):
             self.assertIs(pin_policy(changed, match, "patch")["automerge"], False)
 
-    def test_manual_dockerfile_review_does_not_capture_normal_cargo_dependencies(self) -> None:
+    def test_manual_dockerfile_review_does_not_capture_normal_cargo_dependencies(
+        self,
+    ) -> None:
         policy = effective_policy(
             self.configuration,
             {
@@ -301,7 +314,8 @@ class DevContainerRenovateTests(unittest.TestCase):
                 )
                 validate_ownership(self.configuration, source)
                 self.assertEqual(
-                    re.findall(r" AS [a-z_]+", source), re.findall(r" AS [a-z_]+", self.dockerfile)
+                    re.findall(r" AS [a-z_]+", source),
+                    re.findall(r" AS [a-z_]+", self.dockerfile),
                 )
 
 
@@ -317,7 +331,8 @@ class FileToolWrapperTests(unittest.TestCase):
                 self.assertRegex(dockerfile, rf"(?m)^COPY {re.escape(source)} ")
                 self.assertTrue((ROOT / source).is_file())
         self.assertIn(
-            "bash /tmp/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin", dockerfile
+            "bash /opt/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin",
+            dockerfile,
         )
         inventory = json.loads(
             (ROOT / "automation/tool-artifacts.json").read_text(encoding="utf-8")
@@ -437,7 +452,7 @@ class KubernetesToolRenovateTests(unittest.TestCase):
     def test_each_tool_has_one_owner_and_two_reviewed_checksums(self) -> None:
         pins = self.validate(self.configuration, self.source)
         self.assertEqual(
-            len(pins), len(re.findall(r"^readonly \w+_version=", self.source, re.M)) + 2
+            len(pins), len(re.findall(r"^readonly \w+_version=", self.source, re.MULTILINE)) + 2
         )
         for tool in ("kubectl", "helm", "kustomize"):
             self.assertEqual(
@@ -479,9 +494,18 @@ class KubernetesToolRenovateTests(unittest.TestCase):
         self.assertEqual(re.fullmatch(pattern, "kustomize/v99.2.3")["version"], "99.2.3")
         self.assertIsNone(re.fullmatch(pattern, "kyaml/v99.2.3"))
 
-    def test_scoped_kubernetes_updates_auto_merge_without_dashboard_approval(self) -> None:
+    def test_scoped_kubernetes_updates_auto_merge_without_dashboard_approval(
+        self,
+    ) -> None:
         for manager, match in self.validate(self.configuration, self.source):
-            for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
+            for update_type in (
+                "major",
+                "minor",
+                "patch",
+                "pin",
+                "digest",
+                "pinDigest",
+            ):
                 with self.subTest(dependency=match["depName"], update=update_type):
                     datasource = match.groupdict().get("datasource") or manager.get(
                         "datasourceTemplate"
@@ -595,7 +619,11 @@ class KubernetesInstallerTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            unsupported = system != "Linux" or machine not in ("x86_64", "aarch64", "arm64")
+            unsupported = system != "Linux" or machine not in (
+                "x86_64",
+                "aarch64",
+                "arm64",
+            )
             if failure or unsupported:
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(list(target.iterdir()), [target / "kind"])
@@ -639,47 +667,87 @@ class SingleCloneLifecycleTests(unittest.TestCase):
         self.assertEqual(config["postCreateCommand"], "bash .devcontainer/verify-tools.sh")
 
     def exercise(self, case: str) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+        import tomllib
+
         with tempfile.TemporaryDirectory(prefix="boxferry single clone ") as temporary:
             fixture = Path(temporary)
             binary = fixture / "bin"
             binary.mkdir()
             log = fixture / "calls.jsonl"
-            cargo = fixture / "cargo"
-            github = fixture / "gh"
+            cargo, github = fixture / "cargo", fixture / "gh"
             cargo.mkdir()
             github.mkdir(mode=0o755)
+            checkout, tooling = fixture / "checkout", fixture / "image-tooling"
+            for name in (
+                ".github/automation.json",
+                ".devcontainer/Dockerfile",
+                "rust-toolchain.toml",
+            ):
+                target = checkout / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / name).read_bytes())
+            manifest = json.loads((checkout / ".github/automation.json").read_text())
+            (tooling / ".github").mkdir(parents=True)
+            retained = {**manifest, "revision": "f" * 40} if case == "wrong-authority" else manifest
+            (tooling / ".github/automation.json").write_text(json.dumps(retained))
+            project = tooling / "target/boxferry-automation" / manifest["revision"] / "automation"
+            project.mkdir(parents=True)
+            project.joinpath("pyproject.toml").write_bytes(
+                (ROOT / "automation/pyproject.toml").read_bytes()
+            )
+            metadata = tomllib.loads((project / "pyproject.toml").read_text())
+            versions = {
+                name: next(
+                    item.split("==", 1)[1]
+                    for item in metadata["dependency-groups"]["dev"]
+                    if item.startswith(name + "==")
+                )
+                for name in ("ruff", "ty")
+            }
+            versions["uv"] = metadata["tool"]["uv"]["required-version"][2:]
+            node = re.search(
+                r"FROM docker\.io/library/node:([0-9]+\.[0-9]+\.[0-9]+)-",
+                (checkout / ".devcontainer/Dockerfile").read_text(),
+            )
+            self.assertIsNotNone(node)
+            versions["node"] = node[1]
+            channel = tomllib.loads((checkout / "rust-toolchain.toml").read_text())["toolchain"][
+                "channel"
+            ]
+            versions["rustc"] = channel
             tools = (
                 "actionlint cargo cargo-clippy cargo-deny cargo-llvm-cov cargo-semver-checks "
                 "curl gh git hadolint helm jq kind kubectl kustomize lychee markdownlint-cli2 "
-                "node npm prettier rustc rustfmt rustup shellcheck shfmt "
-                "tombi uv zizmor sudo podman"
+                "node npm prettier ruff rustc rustfmt rustup shellcheck shfmt "
+                "tombi ty uv zizmor sudo podman"
             ).split()
             program = (
                 f"#!{sys.executable}\n"
-                "import json, os, subprocess, sys\n"
+                "import json, os, sys\n"
                 "from pathlib import Path\n"
-                "name = Path(sys.argv[0]).name\n"
-                "args = sys.argv[1:]\n"
+                f"versions = {versions!r}\n"
+                "name, args = Path(sys.argv[0]).name, sys.argv[1:]\n"
+                "case = os.environ['LIFECYCLE_CASE']\n"
                 "with open(os.environ['TOOL_CALLS'], 'a') as stream:\n"
                 "    stream.write(json.dumps([name, *args]) + '\\n')\n"
                 "if name in ('sudo', 'podman'):\n"
                 "    raise SystemExit(99)\n"
-                "if name == 'git':\n"
-                "    if args == ['--version']:\n"
-                "        raise SystemExit(subprocess.run(['/usr/bin/git', *args]).returncode)\n"
+                "if name == 'git' and args != ['--version']:\n"
                 "    if args != ['-C', os.environ['EXPECTED_CHECKOUT'], "
                 "'rev-parse', '--show-toplevel']:\n"
                 "        raise SystemExit(98)\n"
-                "    if os.environ['LIFECYCLE_CASE'] == 'wrong-root':\n"
-                "        print(Path(os.environ['EXPECTED_CHECKOUT']).parent)\n"
-                "        raise SystemExit(0)\n"
-                "    raise SystemExit(subprocess.run(['/usr/bin/git', *args]).returncode)\n"
-                "if name == 'rustup' and args == ['component', 'list', '--installed']:\n"
+                "    if case == 'missing-checkout':\n"
+                "        raise SystemExit(128)\n"
+                "    root = Path(os.environ['EXPECTED_CHECKOUT'])\n"
+                "    print(root.parent if case == 'wrong-root' else root)\n"
+                "elif name == 'rustup' and args == ['component', 'list', '--installed']:\n"
                 "    print('clippy-x86_64-unknown-linux-gnu')\n"
-                "    if os.environ['LIFECYCLE_CASE'] != 'missing-llvm':\n"
+                "    if case != 'missing-llvm':\n"
                 "        print('llvm-tools-preview-x86_64-unknown-linux-gnu')\n"
-                "elif name == 'rustup' and args == ['show', 'active-toolchain']:\n"
-                "    print('1.98.1-x86_64-unknown-linux-gnu')\n"
+                "elif name in versions and args == ['--version']:\n"
+                "    version = '0.0.0' if case == 'wrong-' + name else versions[name]\n"
+                "    actual = ('v' + version) if name == 'node' else name + ' ' + version\n"
+                "    print(actual + (' (fixture)' if name == 'rustc' else ''))\n"
                 "else:\n"
                 "    print('fixture client version')\n"
             )
@@ -687,13 +755,12 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 tool = binary / name
                 tool.write_text(program)
                 tool.chmod(0o755)
-            script = ROOT / ".devcontainer/verify-tools.sh"
-            checkout = ROOT.resolve()
-            if case == "missing-checkout":
-                checkout = fixture / "not-a-checkout"
-                script = checkout / ".devcontainer/verify-tools.sh"
-                script.parent.mkdir(parents=True)
-                script.write_bytes((ROOT / ".devcontainer/verify-tools.sh").read_bytes())
+            script = checkout / ".devcontainer/verify-tools.sh"
+            script.write_text(
+                (ROOT / ".devcontainer/verify-tools.sh")
+                .read_text()
+                .replace('tooling_root="/opt/boxferry-tooling"', f'tooling_root="{tooling}"')
+            )
             environment = {
                 **os.environ,
                 "PATH": str(binary) + ":/usr/bin:/bin",
@@ -719,10 +786,20 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(github.stat().st_mode), 0o700)
             return completed, calls
 
-    def test_own_worktree_passes_without_sibling_clones_or_runtime_commands(self) -> None:
+    def test_own_worktree_passes_without_sibling_clones_or_runtime_commands(
+        self,
+    ) -> None:
         completed, calls = self.exercise("valid")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn(["git", "-C", str(ROOT.resolve()), "rev-parse", "--show-toplevel"], calls)
+        self.assertTrue(
+            any(
+                len(call) == 5
+                and call[0] == "git"
+                and call[2].endswith("/checkout")
+                and call[3:] == ["rev-parse", "--show-toplevel"]
+                for call in calls
+            )
+        )
         self.assertIn("tooling is ready", completed.stdout)
 
     def test_missing_or_misbound_own_checkout_fails(self) -> None:
@@ -736,6 +813,20 @@ class SingleCloneLifecycleTests(unittest.TestCase):
         completed, _calls = self.exercise("missing-llvm")
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("missing Rust component: llvm-tools-preview", completed.stderr)
+
+    def test_wrong_selected_tool_or_retained_authority_requires_rebuild(self) -> None:
+        for case in (
+            "wrong-uv",
+            "wrong-ruff",
+            "wrong-ty",
+            "wrong-node",
+            "wrong-rustc",
+            "wrong-authority",
+        ):
+            with self.subTest(case=case):
+                completed, _calls = self.exercise(case)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("tool verification failed", completed.stderr)
 
 
 if __name__ == "__main__":
