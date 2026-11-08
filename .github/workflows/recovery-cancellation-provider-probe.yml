@@ -1,0 +1,51 @@
+---
+name: 629 recovery cancellation provider probe
+run-name: 629 provider probe ${{ inputs.series }} case ${{ inputs.case }}
+# Inert observation fixture only. Execution requires a separately authorized series.
+on:
+  workflow_dispatch:
+    inputs:
+      case:
+        description: Fixed experiment case A through E.
+        required: true
+        type: choice
+        options: [A, B, C, D, E]
+      series:
+        description: Operator-owned 32 lowercase hexadecimal series identifier.
+        required: true
+        type: string
+      expected_source_sha:
+        description: Recorded immutable default-branch source (40 lowercase hex).
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: boxferry-629-provider-probe-v1-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    name: 629 preparation call
+    if: ${{ github.repository == 'Strukturpiloten/boxferry' && github.event_name == 'workflow_dispatch' && github.event.repository.default_branch == 'main' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/recovery-cancellation-probe-prepare.yml
+    with:
+      case: ${{ inputs.case }}
+      series: ${{ inputs.series }}
+      expected_source_sha: ${{ inputs.expected_source_sha }}
+  effect:
+    name: 629 inert effect call
+    needs: prepare
+    if: ${{ github.repository == 'Strukturpiloten/boxferry' && github.event_name == 'workflow_dispatch' && github.event.repository.default_branch == 'main' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/recovery-cancellation-probe-effect.yml
+    with:
+      case: ${{ inputs.case }}
+      series: ${{ inputs.series }}
+      expected_source_sha: ${{ inputs.expected_source_sha }}
+      preparation_artifact_id: ${{ needs.prepare.outputs.artifact_id }}
+      preparation_artifact_digest: ${{ needs.prepare.outputs.artifact_digest }}
+      preparation_marker: ${{ needs.prepare.outputs.marker }}
+      caller_prerequisite_result: ${{ needs.prepare.result }}
