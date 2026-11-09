@@ -205,12 +205,40 @@ class DependencySnapshots(unittest.TestCase):
                 eligibility.snapshot(api, BASE, root, [OLD], self.cache)
         self.assertEqual(list(root.iterdir()), [])
 
+    def test_canonical_blob_extension_preserves_default_ownership_and_safe_paths(self) -> None:
+        from boxferry_ci.operational import inventory_blobs
+
+        path = "automation/tool-artifacts.json"
+        document = {
+            "truncated": False,
+            "tree": [
+                {"path": path, "type": "blob", "mode": "100644", "sha": SHA},
+                {"path": OLD, "type": "blob", "mode": "100644", "sha": SHA},
+            ],
+        }
+        self.assertEqual(inventory_blobs(document), {OLD: SHA})
+        self.assertEqual(inventory_blobs(document, extra_paths=(path,)), {path: SHA, OLD: SHA})
+        for unsafe in ("", "/absolute", "../escape", "a/./b", "a\\b", "a/../b", "a\0b"):
+            with self.subTest(unsafe=unsafe), self.assertRaisesRegex(OperationalError, "unsafe"):
+                inventory_blobs(document, extra_paths=(unsafe,))
+        duplicate = {"truncated": False, "tree": document["tree"] * 2}
+        with self.assertRaisesRegex(OperationalError, "regular immutable blob"):
+            inventory_blobs(duplicate, extra_paths=(path,))
+
     def test_acquisition_module_has_no_service_or_execution_import(self) -> None:
         tree = ast.parse(Path(subject.__file__).read_text())
         imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
         self.assertEqual(
             imports,
-            {"__future__", "collections.abc", "dataclasses", "pathlib", "typing", "operational"},
+            {
+                "__future__",
+                "collections.abc",
+                "dataclasses",
+                "pathlib",
+                "typing",
+                "git_source",
+                "operational",
+            },
         )
         self.assertEqual(
             {

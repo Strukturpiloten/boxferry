@@ -555,5 +555,247 @@ wheels = [
             check_dependencies(self.base, self.head, now=datetime(2026, 11, 3))
 
 
+class GitSourceAdmission(unittest.TestCase):
+    """Synthetic canonical inventory independent of operational binary pins."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base, self.head = Path(temporary.name) / "base", Path(temporary.name) / "head"
+        self.base.mkdir()
+        self.head.mkdir()
+        self.row = {
+            "tool": "git",
+            "provider": "kernel.org",
+            "currentVersion": "2.50.9",
+            "filename": "git-2.50.9.tar.xz",
+            "url": "https://www.kernel.org/pub/software/scm/git/git-2.50.9.tar.xz",
+            "sha256": "9" * 64,
+        }
+        self.calls: list[str] = []
+        self.write(self.head)
+
+    def write(self, root: Path, *, source: bool = True) -> None:
+        path = root / "automation/tool-artifacts.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": 2,
+                    "provenance": {},
+                    "assets": [],
+                    "sources": [self.row] if source else [],
+                }
+            )
+        )
+
+    def metadata(self, url: str) -> bytes:
+        self.calls.append(url)
+        if url.startswith("https://crates.io/api/v1/crates/"):
+            return DependencyTests.any_cargo(url)
+        self.assertEqual(url, "https://www.kernel.org/pub/software/scm/git/sha256sums.asc")
+        return (
+            "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n"
+            + self.row["sha256"]
+            + "  "
+            + self.row["filename"]
+            + "\n-----BEGIN PGP SIGNATURE-----\n\nZmFrZQ==\n=abcd\n"
+            "-----END PGP SIGNATURE-----\n"
+        ).encode()
+
+    def check(
+        self,
+        now: datetime = NOW,
+        state: dict[str, Any] | None = None,
+        context: DependencyContext | None = None,
+    ) -> dict[str, Any]:
+        return check_dependencies(
+            self.base, self.head, now=now, state=state, context=context, fetch=self.metadata
+        )
+
+    def test_initial_observation_one_instant_before_and_exact_72_hours(self) -> None:
+        initial = self.check()
+        self.assertEqual(initial["status"], "waiting")
+        result = initial["results"][0]
+        self.assertEqual(
+            (result["ecosystem"], result["age_evidence"], result["integrity"]),
+            ("git-source", "artifact-first-seen", ["9" * 64]),
+        )
+        self.assertEqual(result["evidence_at"], "2026-11-03T12:00:00Z")
+        self.assertEqual(result["retry_at"], "2026-11-06T12:00:00Z")
+        before = self.check(NOW + timedelta(hours=72, microseconds=-1), initial["state"])
+        self.assertEqual(before["status"], "waiting")
+        exact = self.check(NOW + timedelta(hours=72), initial["state"])
+        self.assertEqual(exact["status"], "pass")
+        self.assertEqual(exact["state"], initial["state"])
+
+    def test_retry_and_rebase_preserve_observation_new_digest_or_version_resets(self) -> None:
+        initial = self.check()
+        self.write(self.base, source=False)
+        for head_revision in ("b" * 40, "d" * 40):
+            context = DependencyContext(
+                "renovate[bot]",
+                "Bot",
+                "Strukturpiloten/boxferry",
+                "c" * 40,
+                head_revision,
+                ("automation/tool-artifacts.json",),
+            )
+            retry = self.check(NOW + timedelta(hours=48), initial["state"], context)
+            self.assertEqual(retry["state"], initial["state"])
+            self.assertFalse(retry["first_party_exempt"])
+        old_key = initial["results"][0]["artifact_key"]
+        self.row["sha256"] = "8" * 64
+        self.write(self.head)
+        changed = self.check(NOW + timedelta(hours=72), initial["state"])
+        new_key = changed["results"][0]["artifact_key"]
+        self.assertNotEqual(new_key, old_key)
+        self.assertEqual(changed["status"], "waiting")
+        self.assertEqual(changed["state"]["first_seen"][new_key], "2026-11-06T12:00:00Z")
+        self.row.update(
+            currentVersion="2.50.10",
+            filename="git-2.50.10.tar.xz",
+            url="https://www.kernel.org/pub/software/scm/git/git-2.50.10.tar.xz",
+        )
+        self.write(self.head)
+        version = self.check(NOW + timedelta(hours=72), initial["state"])
+        self.assertNotEqual(version["results"][0]["artifact_key"], new_key)
+        self.assertEqual(version["status"], "waiting")
+
+    def test_integrity_failure_and_transient_retry_do_not_create_observation(self) -> None:
+        from unittest.mock import patch
+
+        for body in (
+            b"missing",
+            self.metadata("https://www.kernel.org/pub/software/scm/git/sha256sums.asc").replace(
+                b"9" * 64, b"8" * 64
+            ),
+        ):
+            with patch.object(self, "metadata", return_value=body):
+                failed = self.check()
+            self.assertEqual(failed["status"], "failure")
+            self.assertEqual(failed["state"]["first_seen"], {})
+            self.assertFalse(failed["retry_eligible"])
+        with patch.object(self, "metadata", side_effect=urllib.error.URLError("offline")):
+            failed = self.check()
+        self.assertEqual(failed["status"], "failure")
+        self.assertTrue(failed["retry_eligible"])
+        self.assertEqual(failed["retry_at"], "2026-11-03T13:00:00Z")
+        self.assertEqual(failed["state"]["first_seen"], {})
+        retry = self.check(NOW + timedelta(hours=1), failed["state"])
+        self.assertEqual(retry["results"][0]["evidence_at"], "2026-11-03T13:00:00Z")
+        mature = self.check(NOW + timedelta(hours=73), retry["state"])
+        self.assertEqual(mature["status"], "pass")
+        with patch.object(self, "metadata", return_value=b"missing"):
+            failed_again = self.check(NOW + timedelta(hours=73), mature["state"])
+        self.assertEqual(failed_again["status"], "failure")
+        self.assertEqual(failed_again["state"], mature["state"])
+
+    def test_future_forged_state_and_noncanonical_source_fail_before_fetch(self) -> None:
+        initial = self.check()
+        self.calls.clear()
+        key = initial["results"][0]["artifact_key"]
+        for state in (
+            {"schema_version": 1, "first_seen": {key: "2026-11-04T12:00:00Z"}},
+            {"schema_version": 1, "first_seen": {"forged": "2026-10-01T00:00:00Z"}},
+            {"schema_version": 1, "first_seen": {}, "candidate_date": OLD},
+        ):
+            with self.subTest(state=state):
+                self.assertEqual(self.check(state=state)["status"], "failure")
+        self.assertEqual(self.calls, [])
+        self.row["url"] = "https://evil.invalid/git-2.50.9.tar.xz"
+        self.write(self.head)
+        self.assertEqual(self.check()["status"], "failure")
+        self.assertEqual(self.calls, [])
+
+    def test_direct_checker_rejects_complete_inventory_removal_and_retains_trusted_state(
+        self,
+    ) -> None:
+        initial = self.check()
+        self.write(self.base)
+        (self.head / "automation/tool-artifacts.json").unlink()
+        self.calls.clear()
+        removed = self.check(state=initial["state"])
+        self.assertEqual(removed["status"], "failure")
+        self.assertIn("canonical tool inventory is missing", removed["error"])
+        self.assertEqual(removed["results"], [])
+        self.assertEqual(removed["state"], initial["state"])
+        self.assertEqual(self.calls, [])
+        fresh = self.check()
+        self.assertEqual(fresh["status"], "failure")
+        self.assertEqual(fresh["state"]["first_seen"], {})
+        self.assertEqual(self.calls, [])
+
+    def test_direct_checker_pair_boundary_preserves_supported_absence_and_row_removal(self) -> None:
+        (self.head / "automation/tool-artifacts.json").unlink()
+        absent = self.check()
+        self.assertEqual(absent["status"], "pass")
+        self.assertEqual(absent["state"]["first_seen"], {})
+        self.assertEqual(self.calls, [])
+        self.write(self.head)
+        introduced = self.check()
+        self.assertEqual(introduced["status"], "waiting")
+        self.assertEqual(introduced["results"][0]["version"], "2.50.9")
+        self.write(self.base)
+        self.write(self.head, source=False)
+        self.calls.clear()
+        optional_removed = self.check()
+        self.assertEqual(optional_removed["status"], "pass")
+        self.assertEqual(optional_removed["state"]["first_seen"], {})
+        self.assertEqual(self.calls, [])
+
+    def test_git_metadata_uses_existing_shared_request_and_byte_budgets(self) -> None:
+        from unittest.mock import patch
+
+        from boxferry_ci import dependencies
+
+        for name, limit, retry in (
+            ("MAX_METADATA_REQUESTS", 0, True),
+            ("MAX_METADATA_BYTES", 1, False),
+            ("MAX_TOTAL_METADATA_BYTES", 1, False),
+        ):
+            with self.subTest(budget=name), patch.object(dependencies, name, limit):
+                result = self.check()
+            self.assertEqual(result["status"], "failure")
+            self.assertEqual(result["retry_eligible"], retry)
+            self.assertEqual(result["state"]["first_seen"], {})
+        self.calls.clear()
+        for package in (
+            dependencies.Package("unsupported", "git", "2.50.9", "kernel.org", ("9" * 64,)),
+            dependencies.Package(
+                "git-source",
+                "git",
+                "2.50.9",
+                "https://evil.invalid/",
+                ("9" * 64, "git-2.50.9.tar.xz"),
+            ),
+        ):
+            with self.assertRaises(ValueError):
+                dependencies._metadata(package, self.metadata, NOW)
+        self.assertEqual(self.calls, [])
+
+    def test_unchanged_inventory_and_optional_source_removal_make_no_metadata_requests(
+        self,
+    ) -> None:
+        self.write(self.base)
+        self.assertEqual(self.check()["status"], "pass")
+        self.write(self.head, source=False)
+        self.assertEqual(self.check()["status"], "pass")
+        self.assertEqual(self.calls, [])
+
+    def test_git_cannot_inherit_valid_whole_closure_first_party_waiver(self) -> None:
+        # Reuse the independently authored Cargo closure, then introduce Git while
+        # presenting an otherwise eligible isolated Cargo context.
+        fixtures = DependencyTests()
+        fixtures.base, fixtures.head = self.base, self.head
+        fixtures.first_party()
+        context = fixtures.context()
+        report = self.check(context=context)
+        self.assertFalse(report["first_party_exempt"])
+        self.assertIn("Git source", report["first_party_reason"])
+        git = next(result for result in report["results"] if result["ecosystem"] == "git-source")
+        self.assertEqual((git["status"], git["age_evidence"]), ("waiting", "artifact-first-seen"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -555,9 +555,45 @@ class RecoveryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     subject.reader_closure(self.api, C)
 
+    def test_git_source_reader_closure_refuses_untrusted_source(self) -> None:
+        root = Path(subject.__file__).resolve().parents[3]
+        files = {path: (root / path).read_bytes() for path in subject.READER_CLOSURE}
+        owned = "automation/src/boxferry_ci/git_source.py"
+        self.assertIn(owned, files)
+        for variant in ("missing", "tampered", "symlink", "wrong-source"):
+            canonical = API()
+            snapshot = dict(files)
+            if variant == "missing":
+                snapshot.pop(owned)
+            if variant == "tampered":
+                snapshot[owned] += b"\n# different reader\n"
+            canonical.files(C, snapshot)
+            if variant == "symlink":
+                tree = canonical.responses[f"git/trees/{C}?recursive=1"]["tree"]
+                next(entry for entry in tree if entry["path"] == owned)["mode"] = "120000"
+            if variant == "wrong-source":
+                value = canonical.responses.pop(f"contents/{owned}?ref={C}")
+                canonical.responses[f"contents/{owned}?ref={B}"] = value
+            with (
+                self.subTest(variant=variant),
+                patch.object(core, "GitHub", return_value=canonical),
+            ):
+                with self.assertRaises(ValueError):
+                    subject.reader_closure(self.api, C)
+
     def test_reader_closure_authenticates_lazy_and_transitive_local_imports(self) -> None:
         root = Path(subject.__file__).resolve().parents[3]
         closure = set(subject.READER_CLOSURE)
+        self.assertTrue(
+            {
+                "automation/src/boxferry_ci/dependencies.py",
+                "automation/src/boxferry_ci/dependency_snapshots.py",
+                "automation/src/boxferry_ci/git_source.py",
+                "automation/src/boxferry_ci/operational.py",
+                "automation/src/boxferry_ci/cargo_tools.py",
+            }
+            <= closure
+        )
         prefix = "automation/src/boxferry_ci/"
         # Walk imports inside function bodies too: dependency and Cargo-tool
         # parsing is lazy, but its imported reader bytes still require custody.
@@ -581,6 +617,37 @@ class RecoveryTests(unittest.TestCase):
                 for name in names:
                     with self.subTest(reader=path, imported=name):
                         self.assertIn(prefix + name.replace(".", "/") + ".py", closure)
+
+    def test_source_aware_inventory_lazy_import_has_authenticated_module_custody(self) -> None:
+        root = Path(subject.__file__).resolve().parents[3]
+        tree = ast.parse((root / "automation/src/boxferry_ci/tooling.py").read_text())
+        lazy = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "git_source"
+        ]
+        self.assertEqual(len(lazy), 1)
+        self.assertIn("automation/src/boxferry_ci/git_source.py", subject.READER_CLOSURE)
+        # The standalone reader loads its exact sibling by path, independently
+        # of module search paths and preloaded module-name authority.
+        standalone = [
+            node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "spec_from_file_location"
+            and len(node.args) == 2
+            and isinstance(node.args[0], ast.Constant)
+        ]
+        self.assertEqual(standalone, ["_boxferry_tooling_git_source"])
+        self.assertFalse(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"import_module", "find_spec"}
+                for node in ast.walk(tree)
+            )
+        )
 
     def test_all_seven_production_caller_shapes_and_changed_aggregate_refuse(self) -> None:
         path = Path(__file__).parent / "fixtures/recovery-callers.json"

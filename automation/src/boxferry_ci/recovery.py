@@ -40,6 +40,7 @@ READER_CLOSURE = (
     "automation/src/boxferry_ci/dependencies.py",
     "automation/src/boxferry_ci/dependency_snapshots.py",
     "automation/src/boxferry_ci/eligibility.py",
+    "automation/src/boxferry_ci/git_source.py",
     "automation/src/boxferry_ci/operational.py",
     "automation/src/boxferry_ci/queue_tree.py",
     "automation/src/boxferry_ci/recovery.py",

@@ -10,7 +10,7 @@ import json
 import tarfile
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -392,3 +392,244 @@ class OperationalSnapshots(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InventoryAPI(SnapshotAPI):
+    def get(self, suffix: str) -> dict[str, Any]:
+        if suffix.startswith("compare/"):
+            self.requests += 1
+            self.seen.append(suffix)
+            return {
+                "merge_base_commit": {"sha": BASE},
+                "files": [
+                    {"filename": path}
+                    for path in sorted(self.files[BASE].keys() | self.files[HEAD].keys())
+                    if self.files[BASE].get(path) != self.files[HEAD].get(path)
+                ],
+            }
+        return super().get(suffix)
+
+
+class GitInventorySnapshots(unittest.TestCase):
+    """Exact Git inventory acquisition precedes every metadata/observation effect."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.path = "automation/tool-artifacts.json"
+        self.row = {
+            "tool": "git",
+            "provider": "kernel.org",
+            "currentVersion": "2.49.8",
+            "filename": "git-2.49.8.tar.xz",
+            "url": "https://www.kernel.org/pub/software/scm/git/git-2.49.8.tar.xz",
+            "sha256": "6" * 64,
+        }
+        self.legacy = json.dumps({"schema": 1, "provenance": {}, "assets": []}).encode()
+        self.future = json.dumps(
+            {
+                "schema": 2,
+                "provenance": {},
+                "assets": [],
+                "sources": [self.row],
+            }
+        ).encode()
+        self.files = {BASE: {self.path: self.legacy}, HEAD: {self.path: self.future}}
+        self.metadata = (
+            "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n"
+            + "6" * 64
+            + "  git-2.49.8.tar.xz\n"
+            "-----BEGIN PGP SIGNATURE-----\n\nZmFrZQ==\n=abcd\n"
+            "-----END PGP SIGNATURE-----\n"
+        ).encode()
+
+    @staticmethod
+    def candidate() -> eligibility.Candidate:
+        return eligibility.Candidate(BASE, HEAD, 17, HEAD, "maintainer", "User", "pull_request")
+
+    def evaluate(self, api: SnapshotAPI) -> dict[str, Any]:
+        return eligibility.evaluate(
+            api, self.candidate(), {"schema_version": 1, "first_seen": {}}, NOW
+        )
+
+    def test_initial_introduction_materializes_both_exact_revisions_before_checksum(self) -> None:
+        api = InventoryAPI(self.files)
+        original = dependencies.check_dependencies
+
+        def inspect(
+            base: Path,
+            head: Path,
+            *,
+            now: datetime,
+            state: dict[str, Any],
+            context: dependencies.DependencyContext,
+            fetch: dependencies.Fetch,
+            fetch_request: dependencies.FetchRequest,
+        ) -> dict[str, Any]:
+            self.assertEqual((base / self.path).read_bytes(), self.legacy)
+            self.assertEqual((head / self.path).read_bytes(), self.future)
+            self.assertEqual(sum(path.startswith("git/trees/") for path in api.seen), 2)
+            return original(
+                base,
+                head,
+                now=now,
+                state=state,
+                context=context,
+                fetch=fetch,
+                fetch_request=fetch_request,
+            )
+
+        with (
+            patch.object(dependencies, "check_dependencies", side_effect=inspect),
+            patch.object(eligibility, "registry_fetch", return_value=self.metadata) as metadata,
+        ):
+            result = self.evaluate(api)
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["results"][0]["age_evidence"], "artifact-first-seen")
+        metadata.assert_called_once_with(
+            api, "https://www.kernel.org/pub/software/scm/git/sha256sums.asc"
+        )
+        for revision in (BASE, HEAD):
+            self.assertIn(f"contents/{self.path}?ref={revision}", api.seen)
+
+    def test_unchanged_inventory_is_authenticated_and_reuses_one_content_blob(self) -> None:
+        for revision in (BASE, HEAD):
+            self.files[revision][self.path] = self.future
+            self.files[revision][OLD] = b"---\njobs:\n  check:\n    runs-on: ubuntu-24.04\n"
+        self.files[HEAD]["README.md"] = b"irrelevant change\n"
+        api = InventoryAPI(self.files)
+        original = dependencies.check_dependencies
+
+        def inspect(
+            base: Path,
+            head: Path,
+            *,
+            now: datetime,
+            state: dict[str, Any],
+            context: dependencies.DependencyContext,
+            fetch: dependencies.Fetch,
+            fetch_request: dependencies.FetchRequest,
+        ) -> dict[str, Any]:
+            for root in (base, head):
+                self.assertEqual((root / self.path).read_bytes(), self.future)
+                self.assertEqual((root / OLD).read_bytes(), self.files[BASE][OLD])
+                self.assertFalse((root / "README.md").exists())
+            return original(
+                base,
+                head,
+                now=now,
+                state=state,
+                context=context,
+                fetch=fetch,
+                fetch_request=fetch_request,
+            )
+
+        with (
+            patch.object(dependencies, "check_dependencies", side_effect=inspect),
+            patch.object(eligibility, "registry_fetch") as metadata,
+        ):
+            self.assertEqual(self.evaluate(api)["status"], "pass")
+        metadata.assert_not_called()
+        self.assertEqual(sum(path.startswith(f"contents/{self.path}?") for path in api.seen), 1)
+        self.assertEqual(sum(path.startswith("git/trees/") for path in api.seen), 2)
+
+    def test_historical_absence_on_both_sides_and_initial_file_addition_are_supported(self) -> None:
+        self.files[BASE] = {}
+        self.files[HEAD] = {}
+        with patch.object(eligibility, "registry_fetch") as metadata:
+            self.assertEqual(self.evaluate(InventoryAPI(self.files))["status"], "pass")
+        metadata.assert_not_called()
+        self.files[HEAD][self.path] = self.future
+        with patch.object(eligibility, "registry_fetch", return_value=self.metadata):
+            self.assertEqual(self.evaluate(InventoryAPI(self.files))["status"], "waiting")
+
+    def test_removed_or_renamed_canonical_file_and_contradictory_comparison_refuse(self) -> None:
+        for renamed in (None, "automation/renamed-tools.json"):
+            self.files[HEAD] = {} if renamed is None else {renamed: self.future}
+            with (
+                self.subTest(renamed=renamed),
+                patch.object(eligibility, "registry_fetch") as metadata,
+                self.assertRaisesRegex(eligibility.EligibilityError, "canonical tool inventory"),
+            ):
+                self.evaluate(InventoryAPI(self.files))
+            metadata.assert_not_called()
+        self.files[BASE] = {}
+        self.files[HEAD] = {}
+        api = InventoryAPI(self.files)
+        original = api.get
+
+        def contradictory(suffix: str) -> dict[str, Any]:
+            if suffix.startswith("compare/"):
+                return {"merge_base_commit": {"sha": BASE}, "files": [{"filename": self.path}]}
+            return original(suffix)
+
+        with (
+            patch.object(api, "get", side_effect=contradictory),
+            patch.object(eligibility, "registry_fetch") as metadata,
+            self.assertRaisesRegex(eligibility.EligibilityError, "canonical tool inventory"),
+        ):
+            self.evaluate(api)
+        metadata.assert_not_called()
+
+    def test_acquisition_failures_never_contact_metadata_or_create_first_seen_state(self) -> None:
+        for fault in (
+            "missing",
+            "tampered",
+            "symlink",
+            "wrong-sha",
+            "truncated",
+            "oversized",
+            "short-content",
+            "encoding",
+            "budget",
+        ):
+            api = InventoryAPI(self.files)
+            original = api.get
+
+            def broken(
+                suffix: str,
+                fault: str = fault,
+                read: Callable[[str], dict[str, Any]] = original,
+            ) -> dict[str, Any]:
+                if fault == "budget":
+                    raise eligibility.EligibilityError("existing request/deadline budget exhausted")
+                value = read(suffix)
+                if suffix == f"git/trees/{HEAD}?recursive=1":
+                    if fault == "truncated":
+                        value["truncated"] = True
+                    entry = next(item for item in value["tree"] if item["path"] == self.path)
+                    if fault == "symlink":
+                        entry["mode"] = "120000"
+                    if fault == "wrong-sha":
+                        entry["sha"] = "f" * 40
+                if suffix == f"contents/{self.path}?ref={HEAD}":
+                    if fault == "missing":
+                        raise eligibility.MissingResource(suffix)
+                    if fault == "tampered":
+                        data = self.future + b" "
+                        value.update(size=len(data), content=base64.b64encode(data).decode())
+                    if fault == "oversized":
+                        value["size"] = 2 * 1024 * 1024 + 1
+                    if fault == "short-content":
+                        value["size"] += 1
+                    if fault == "encoding":
+                        value["encoding"] = "none"
+                return value
+
+            with (
+                self.subTest(fault=fault),
+                patch.object(api, "get", side_effect=broken),
+                patch.object(eligibility, "registry_fetch") as metadata,
+                self.assertRaises(ValueError),
+            ):
+                self.evaluate(api)
+            metadata.assert_not_called()
+        api = InventoryAPI(self.files)
+        with (
+            patch.object(eligibility, "MAX_SNAPSHOT_BYTES", 1),
+            patch.object(eligibility, "registry_fetch") as metadata,
+            self.assertRaisesRegex(ValueError, "size budget"),
+        ):
+            self.evaluate(api)
+        metadata.assert_not_called()

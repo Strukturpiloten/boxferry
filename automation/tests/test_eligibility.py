@@ -1262,6 +1262,7 @@ class EligibilityTests(unittest.TestCase):
         }
 
     def test_snapshot_only_downloads_inert_dependency_paths_never_candidate_scripts(self) -> None:
+        self.api.responses[f"git/trees/{HEAD}?recursive=1"] = {"truncated": False, "tree": []}
         self.contents("Cargo.lock", HEAD, b"version = 4\n")
         cli_lock = (
             b'{"lockfileVersion":3,"packages":{'

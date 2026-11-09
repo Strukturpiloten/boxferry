@@ -72,6 +72,10 @@ Provider/image updates retain provenance, license, resource-budget and native-be
 Unreliable publication times require trusted first-seen delay; malformed/future times fail.
 Main/manual/release validation remains complete without restarting admission waits.
 
+Future schema-2 Git source reading requires canonical kernel.org identity/checksum matching
+before the trusted 72-hour hold. It supplies no publication date, PGP verification,
+operational pin, archive download or installation.
+
 Rollout remains incomplete. Adopt immutable common and Rust presets, manifest, workflow references,
 explicit implementation inputs and annotated checkout refs together. Native GitHub Actions own
 reusable references; shared regex managers own other declarations once. Fixed workload, runtime
