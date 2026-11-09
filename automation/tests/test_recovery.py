@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import io
@@ -527,6 +528,59 @@ class RecoveryTests(unittest.TestCase):
             canonical.files(C, files)
             with self.assertRaises(ValueError):
                 subject.reader_closure(self.api, C)
+
+    def test_snapshot_reader_closure_refuses_untrusted_source(self) -> None:
+        root = Path(subject.__file__).resolve().parents[3]
+        files = {path: (root / path).read_bytes() for path in subject.READER_CLOSURE}
+        owned = "automation/src/boxferry_ci/dependency_snapshots.py"
+        self.assertIn(owned, files)
+        for variant in ("missing", "tampered", "symlink", "wrong-source"):
+            canonical = API()
+            snapshot = dict(files)
+            if variant == "missing":
+                snapshot.pop(owned)
+            if variant == "tampered":
+                snapshot[owned] += b"\n# different reader\n"
+            canonical.files(C, snapshot)
+            if variant == "symlink":
+                tree = canonical.responses[f"git/trees/{C}?recursive=1"]["tree"]
+                next(entry for entry in tree if entry["path"] == owned)["mode"] = "120000"
+            if variant == "wrong-source":
+                value = canonical.responses.pop(f"contents/{owned}?ref={C}")
+                canonical.responses[f"contents/{owned}?ref={B}"] = value
+            with (
+                self.subTest(variant=variant),
+                patch.object(core, "GitHub", return_value=canonical),
+            ):
+                with self.assertRaises(ValueError):
+                    subject.reader_closure(self.api, C)
+
+    def test_reader_closure_authenticates_lazy_and_transitive_local_imports(self) -> None:
+        root = Path(subject.__file__).resolve().parents[3]
+        closure = set(subject.READER_CLOSURE)
+        prefix = "automation/src/boxferry_ci/"
+        # Walk imports inside function bodies too: dependency and Cargo-tool
+        # parsing is lazy, but its imported reader bytes still require custody.
+        for path in sorted(closure):
+            if not path.endswith(".py"):
+                continue
+            tree = ast.parse((root / path).read_text())
+            for node in ast.walk(tree):
+                names: list[str] = []
+                if isinstance(node, ast.ImportFrom):
+                    if node.level == 1:
+                        names = [node.module] if node.module else [a.name for a in node.names]
+                    elif node.module and node.module.startswith("boxferry_ci."):
+                        names = [node.module.removeprefix("boxferry_ci.")]
+                elif isinstance(node, ast.Import):
+                    names = [
+                        a.name.removeprefix("boxferry_ci.")
+                        for a in node.names
+                        if a.name.startswith("boxferry_ci.")
+                    ]
+                for name in names:
+                    with self.subTest(reader=path, imported=name):
+                        self.assertIn(prefix + name.replace(".", "/") + ".py", closure)
 
     def test_all_seven_production_caller_shapes_and_changed_aggregate_refuse(self) -> None:
         path = Path(__file__).parent / "fixtures/recovery-callers.json"

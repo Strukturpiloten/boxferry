@@ -1355,26 +1355,13 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
 
 
 def changed_paths(api: GitHub, candidate: Candidate) -> list[str]:
-    comparison = api.get(f"compare/{candidate.base}...{candidate.head}?per_page=100")
-    if comparison.get("merge_base_commit", {}).get("sha") != candidate.base:
-        raise EligibilityError("candidate comparison does not bind the exact expected base")
-    files = comparison.get("files")
-    if not isinstance(files, list) or len(files) >= 300:
-        raise EligibilityError("candidate changed-file metadata is missing or may be truncated")
-    paths: set[str] = set()
-    for item in files:
-        for key in ("filename", "previous_filename"):
-            path = item.get(key)
-            if path is not None:
-                if (
-                    not isinstance(path, str)
-                    or path.startswith("/")
-                    or ".." in path.split("/")
-                    or "\\" in path
-                ):
-                    raise EligibilityError("candidate metadata contains an unsafe repository path")
-                paths.add(path)
-    return sorted(paths)
+    from .dependency_snapshots import AcquisitionError
+    from .dependency_snapshots import changed_paths as acquire_paths
+
+    try:
+        return list(acquire_paths(candidate.base, candidate.head, api.get))
+    except AcquisitionError as error:
+        raise EligibilityError(str(error)) from error
 
 
 def file_bytes(api: GitHub, path: str, head: str) -> bytes | None:
@@ -1406,45 +1393,23 @@ def snapshot(
     paths: list[str],
     cache: SnapshotCache | None = None,
 ) -> None:
-    from .operational import SnapshotCache, inventory_blobs, snapshot_paths
+    from .dependency_snapshots import AcquisitionError, materialize
+    from .operational import SnapshotCache
 
     revision(head)
-    manifests = {
-        path
-        for path in paths
-        if path == "Cargo.toml" or re.fullmatch(r"crates/[^/]+/Cargo.toml", path)
-    }
-    operational = snapshot_paths(paths)
-    blobs: dict[str, str] = {}
-    if operational:
-        # Inventory immutable trees, never candidate code/configuration. Loading
-        # the complete base inventory avoids re-holding an existing label/digest
-        # merely because another workflow or declaration starts using it.
-        blobs = inventory_blobs(api.get(f"git/trees/{head}?recursive=1"))
-        operational.update(snapshot_paths(list(blobs)))
-    content_cache = cache if cache is not None else SnapshotCache()
-    total = 0
-    for path in sorted(set(LOCK_PATHS) | manifests | {"Cargo.toml"} | operational):
-        sha = blobs.get(path)
-        if path in operational and sha is None:
-            continue
-        data = content_cache.get(sha) if sha is not None else None
-        if data is None:
-            data = file_bytes(api, path, head)
-            if data is None:
-                if sha is not None:
-                    raise EligibilityError(
-                        "owned operational blob is missing from its exact snapshot"
-                    )
-                continue
-            if sha is not None:
-                content_cache.put(sha, data)
-        total += len(data)
-        if total > MAX_SNAPSHOT_BYTES:
-            raise EligibilityError("candidate dependency snapshot exceeds its size budget")
-        target = destination / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+    try:
+        materialize(
+            head,
+            destination,
+            paths,
+            read_json=api.get,
+            read_regular_file=lambda path, revision: file_bytes(api, path, revision),
+            cache=cache if cache is not None else SnapshotCache(),
+            lock_paths=LOCK_PATHS,
+            max_bytes=MAX_SNAPSHOT_BYTES,
+        )
+    except AcquisitionError as error:
+        raise EligibilityError(str(error)) from error
 
 
 def registry_fetch(api: GitHub, url: str, headers: dict[str, str] | None = None) -> bytes:

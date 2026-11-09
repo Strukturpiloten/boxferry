@@ -291,6 +291,39 @@ class OperationalSnapshots(unittest.TestCase):
         self.assertEqual(api.requests, len(api.seen) + len(self.http_calls))
         self.assertEqual(len(self.http_calls), 8)
 
+    def test_invalid_comparison_never_reaches_dependency_policy_or_registry(self) -> None:
+        for document in (
+            {"merge_base_commit": {"sha": HEAD}, "files": []},
+            {"merge_base_commit": {"sha": BASE}, "files": [{}] * 300},
+            {"merge_base_commit": {"sha": BASE}, "files": [{"previous_filename": "../escape"}]},
+            {"merge_base_commit": {"sha": BASE}, "files": [{}]},
+            {"merge_base_commit": {"sha": BASE}, "files": [{"filename": None}]},
+            {"merge_base_commit": {"sha": BASE}, "files": [{"filename": ""}]},
+            {"merge_base_commit": {"sha": BASE}, "files": [{"previous_filename": OLD}]},
+            {
+                "merge_base_commit": {"sha": BASE},
+                "files": [
+                    {
+                        "filename": NEW,
+                        "previous_filename": None,
+                    }
+                ],
+            },
+        ):
+            api = SnapshotAPI(self.files)
+            with (
+                self.subTest(document=document),
+                patch.object(api, "get", return_value=document),
+                patch.object(dependencies, "check_dependencies") as policy,
+                patch.object(dependencies, "fetch_metadata") as registry,
+            ):
+                with self.assertRaises(eligibility.EligibilityError):
+                    eligibility.evaluate(
+                        api, self.candidate(), {"schema_version": 1, "first_seen": {}}, NOW
+                    )
+                policy.assert_not_called()
+                registry.assert_not_called()
+
     def test_api_existing_selector_reused_and_renamed_is_not_new(self) -> None:
         self.files[HEAD][NEW] = self.files[BASE][OLD]
         self.files[HEAD][".github/workflows/another.yml"] = self.files[BASE][OLD]
