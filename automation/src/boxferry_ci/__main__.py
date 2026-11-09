@@ -22,7 +22,7 @@ from boxferry_ci.runner import RunCancelled, RunResult, protected_values, redact
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("plan", "gate", "run", "run-local"):
+    for name in ("plan", "gate", "run", "run-local", "check-task"):
         command = sub.add_parser(name)
         command.add_argument("--repository-root", type=Path, required=True)
         location = command.add_mutually_exclusive_group(required=True)
@@ -49,8 +49,10 @@ def _parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Require reviewed Dev Container seed/selected exact-candidate evidence.",
             )
-        elif name == "run":
+        elif name in {"run", "check-task"}:
             command.add_argument("--task", required=True)
+            if name == "run":
+                command.add_argument("--require-configured-task", action="store_true")
         else:
             command.add_argument("--docs-only", action="store_true")
     dependencies = sub.add_parser("dependencies")
@@ -66,12 +68,18 @@ def _parser() -> argparse.ArgumentParser:
 def _policy(args: argparse.Namespace) -> Policy:
     config = args.config or args.policy_root / "scripts/validation-policy.json"
     policy = load_policy(config)
-    if args.automation_sha:
+    strict = args.command == "check-task" or getattr(args, "require_configured_task", False)
+    if strict or args.automation_sha:
         from boxferry_ci.bootstrap import automation_identity
 
         expected = exact_sha(args.automation_sha, "automation SHA")
-        automation_identity(args.repository_root, expected, allow_dirty_self=True)
-    if args.command in {"run", "run-local"}:
+        automation_identity(args.repository_root, expected, allow_dirty_self=not strict)
+    if args.command in {"run", "run-local", "check-task"}:
+        if strict:
+            exact_sha(args.tested_sha, "tested SHA")
+            expected_policy = exact_sha(args.policy_sha, "trusted policy SHA")
+            if git_text(policy.path.parent, "rev-parse", "HEAD") != expected_policy:
+                raise ContractError("policy checkout does not match the trusted policy SHA")
         if args.tested_sha and git_text(args.repository_root, "rev-parse", "HEAD") != exact_sha(
             args.tested_sha, "tested SHA"
         ):
@@ -87,10 +95,31 @@ def _policy(args: argparse.Namespace) -> Policy:
                     exact_sha(args.tested_sha, "tested SHA"),
                 ),
             )
+        elif strict:
+            # Shared source admission selects trusted policy independently of the candidate.
+            # Recheck its immutable bytes at preflight and again at execution.
+            verify_policy_revision(
+                policy,
+                args.policy_sha,
+                Comparison(
+                    args.event,
+                    exact_sha(args.policy_sha, "trusted policy SHA"),
+                    exact_sha(args.tested_sha, "tested SHA"),
+                    exact_sha(args.tested_sha, "tested SHA"),
+                ),
+            )
     return policy
 
 
 def _task(args: argparse.Namespace, policy: Policy) -> Task:
+    if getattr(args, "command", "") == "check-task" or getattr(
+        args, "require_configured_task", False
+    ):
+        if args.task not in policy.tasks:
+            raise ContractError(
+                f"task {args.task!r} is not explicitly configured for {policy.repository}"
+            )
+        return policy.tasks[args.task]
     if args.task != "rust-quality" or args.task in policy.tasks:
         return policy.task(args.task)
     # Optional aliases are selected from trusted policy history, never PR source.
@@ -317,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
             gate_report: dict[str, object] = {"status": "success", "results": results}
             print(json.dumps(gate_report, sort_keys=True))
             _write_report(args, gate_report)
+        elif args.command == "check-task":
+            _task(args, policy)
+            # Selection is read-only and cannot attest successful command execution.
+            return 0
         elif args.command == "run":
             task = _task(args, policy)
             return _execute(args, task.commands, task.timeout_seconds)

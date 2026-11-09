@@ -78,6 +78,30 @@ protection and approval rules. Existing external Action pins keep exact release
 tags and integrity. A later authorized tagged version can replace the bootstrap
 through the same coordinated pin update.
 
+### Explicit trusted task opt-in (2026-11-09)
+
+Shared Rust callers may set the typed `require_configured_task` input to `true`.
+After shared-source admission and locked Python setup, but before Rust setup,
+Cargo metadata or coverage-tool installation, the read-only `check-task` CLI
+requires an explicit task in the trusted policy. It verifies the exact tested
+checkout, immutable automation source and trusted policy bytes using their
+separate supplied revisions. It runs no task commands and emits no successful
+task-execution receipt. Final execution repeats this strict selection and
+identity verification with `run --require-configured-task`.
+
+Strict selection preserves configured argv order, coverage thresholds and task
+timeout; missing or malformed tasks refuse without reconstructing Cargo aliases
+or defaults. The input defaults to `false`: legacy callers retain the existing
+trusted-alias quality fallback and MSRV defaults. This additive contract does
+not change snapshot acquisition, dependency-age policy or infrastructure bootstrap.
+
+No software version, integrity pin, extraction location or Renovate manager changes
+are needed for this interface. Existing native Action ownership and shared-source
+pin managers remain authoritative. Consumer adoption is separate: consumers may
+opt in and advance matching references only after an actual admitted immutable
+producer successor and distribution have been observed. This decision does not
+claim that rollout or native/App acceptance has completed.
+
 ## Consequences
 
 Common fixes and version upgrades have one reviewed source. Consumers still need

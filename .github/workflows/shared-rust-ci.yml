@@ -24,6 +24,10 @@ on:
         description: One of rust-quality, msrv, coverage, release-metadata, release-metadata-strict.
         required: true
         type: string
+      require_configured_task:
+        description: Require an explicit trusted policy task before Rust setup and at execution.
+        type: boolean
+        default: false
     outputs:
       candidate_sha:
         description: Exact candidate whose selected task succeeded.
@@ -60,6 +64,31 @@ jobs:
           config-path: ${{ inputs.config_path }}
       - name: Install the locked shared Python project
         uses: ./_automation/.github/actions/shared-python
+      - name: Validate shared Rust task selector
+        shell: bash
+        env:
+          TASK: ${{ inputs.task }}
+        run: |
+          set -euo pipefail
+          case "${TASK}" in
+            rust-quality|msrv|coverage|release-metadata|release-metadata-strict) ;;
+            *) echo 'Unsupported shared Rust task.' >&2; exit 1 ;;
+          esac
+      - name: Require explicit trusted policy task
+        if: inputs.require_configured_task
+        shell: bash
+        env:
+          TASK: ${{ inputs.task }}
+          POLICY_CONFIG: ${{ steps.source.outputs.config }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci check-task \
+            --repository-root source --config "${POLICY_CONFIG}" --task "${TASK}" \
+            --tested-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --policy-sha "${POLICY_SHA}"
       - name: Select the configured Rust toolchain
         working-directory: source
         run: rustup show active-toolchain
@@ -109,16 +138,21 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           AUTOMATION_SHA: ${{ inputs.automation_sha }}
           RUST_MSRV: ${{ steps.msrv.outputs.version }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          REQUIRE_CONFIGURED_TASK: ${{ inputs.require_configured_task }}
         run: |
           set -euo pipefail
           case "${TASK}" in
             rust-quality|msrv|coverage|release-metadata|release-metadata-strict) ;;
             *) echo 'Unsupported shared Rust task.' >&2; exit 1 ;;
           esac
+          strict=()
+          if [[ "${REQUIRE_CONFIGURED_TASK}" == true ]]; then strict=(--require-configured-task); fi
           if [[ "${TASK}" == msrv ]]; then export RUSTUP_TOOLCHAIN="${RUST_MSRV}"; fi
           uv run --locked --project _automation/automation python -m boxferry_ci run \
             --repository-root source --config "${POLICY_CONFIG}" --task "${TASK}" \
             --tested-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --policy-sha "${POLICY_SHA}" "${strict[@]}" \
             --report-json source/target/automation-task-report.json
       - name: Retain the structured task outcome
         if: always()

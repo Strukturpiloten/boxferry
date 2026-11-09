@@ -168,12 +168,19 @@ class CoverageTools(unittest.TestCase):
             self.assertEqual(cargo_tools.main(argv), 1)
         install.assert_not_called()
 
-    def test_workflow_uses_verified_candidate_environment_without_new_inputs(self) -> None:
+    def test_workflow_uses_verified_candidate_environment(self) -> None:
         workflow = (ROOT / ".github/workflows/shared-rust-ci.yml").read_text()
         inputs = workflow.split("    inputs:\n", 1)[1].split("    outputs:\n", 1)[0]
         self.assertEqual(
             re.findall(r"(?m)^      ([a-z_]+):$", inputs),
-            ["candidate_sha", "automation_sha", "policy_sha", "config_path", "task"],
+            [
+                "candidate_sha",
+                "automation_sha",
+                "policy_sha",
+                "config_path",
+                "task",
+                "require_configured_task",
+            ],
         )
         self.assertIn("timeout-minutes: 30", workflow)
         self.assertIn("RUSTDOCFLAGS: -D warnings", workflow)
@@ -198,6 +205,49 @@ class CoverageTools(unittest.TestCase):
         self.assertLess(workflow.index(verify), workflow.index("python -m boxferry_ci run"))
         self.assertIn("RUST_CHANNEL: ${{ steps.coverage-tool.outputs.rust_channel }}", workflow)
         self.assertIn('--toolchain "${RUST_CHANNEL}"', workflow)
+
+    def test_strict_preflight_precedes_rust_effects_and_reaches_execution(self) -> None:
+        workflow = (ROOT / ".github/workflows/shared-rust-ci.yml").read_text()
+        strict_input = workflow.split("      require_configured_task:\n", 1)[1].split(
+            "    outputs:", 1
+        )[0]
+        self.assertIn("type: boolean", strict_input)
+        self.assertIn("default: false", strict_input)
+        blocks = re.split(r"(?m)^      - name: ", workflow)[1:]
+        selector = next(block for block in blocks if block.startswith("Validate shared Rust"))
+        preflight = next(block for block in blocks if block.startswith("Require explicit trusted"))
+        execute = next(block for block in blocks if "python -m boxferry_ci run" in block)
+        self.assertIn("if: inputs.require_configured_task", preflight)
+        self.assertIn("python -m boxferry_ci check-task", preflight)
+        self.assertNotIn("--report-json", preflight)
+        self.assertIn("--policy-sha", preflight)
+        self.assertIn("POLICY_CONFIG: ${{ steps.source.outputs.config }}", preflight)
+        for identity in ("policy_sha", "candidate_sha", "automation_sha"):
+            self.assertIn("${{ inputs." + identity + " }}", preflight)
+        self.assertLess(
+            workflow.index("./_automation/.github/actions/shared-source"), workflow.index(preflight)
+        )
+        self.assertLess(
+            workflow.index("./_automation/.github/actions/shared-python"), workflow.index(selector)
+        )
+        self.assertLess(workflow.index(selector), workflow.index(preflight))
+        rust_effects = [
+            block
+            for block in blocks
+            if any(
+                effect in block
+                for effect in ("rustup ", "cargo metadata", "cargo_tools", "boxferry_ci run")
+            )
+        ]
+        self.assertGreaterEqual(len(rust_effects), 7)
+        for block in rust_effects:
+            self.assertLess(workflow.index(preflight), workflow.index(block))
+        self.assertIn("REQUIRE_CONFIGURED_TASK: ${{ inputs.require_configured_task }}", execute)
+        self.assertIn("strict=()", execute)
+        self.assertIn('"${REQUIRE_CONFIGURED_TASK}" == true', execute)
+        self.assertIn("strict=(--require-configured-task)", execute)
+        self.assertIn('"${strict[@]}"', execute)
+        self.assertIn('--policy-sha "${POLICY_SHA}"', execute)
 
     def test_static_coverage_owner_is_unique_automatic_and_other_image_holds_remain(self) -> None:
         config = presets.consumer_config(ROOT / ".github/renovate.json")
