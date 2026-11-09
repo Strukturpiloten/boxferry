@@ -14,6 +14,7 @@ import argparse
 import base64
 import gzip
 import hashlib
+import importlib.util
 import json
 import lzma
 import os
@@ -134,13 +135,50 @@ def load_manifest(path: Path = MANIFEST) -> dict[tuple[str, str], Asset]:
         if len(raw) > MAX_MANIFEST:
             raise ToolError("canonical tool metadata exceeded its read budget")
         document = json.loads(raw, object_pairs_hook=_unique)
+        if isinstance(document, dict) and document.get("schema") == 2:
+            # Existing schema-1 standalone consumers copy only this reader.
+            # Future source-aware consumers must include the pure source module.
+            try:
+                if __package__:
+                    from .git_source import inventory as read_source_inventory
+                else:
+                    sibling = Path(__file__).with_name("git_source.py")
+                    if sibling.is_symlink() or not sibling.is_file():
+                        raise ImportError("required sibling reader is missing or nonregular")
+                    spec = importlib.util.spec_from_file_location(
+                        "_boxferry_tooling_git_source", sibling
+                    )
+                    if spec is None or spec.loader is None:
+                        raise ImportError("required sibling reader cannot be loaded")
+                    if spec.name in sys.modules:
+                        raise ImportError("source reader module name is already occupied")
+                    source_module = importlib.util.module_from_spec(spec)
+                    # Dataclasses need their defining module during execution.
+                    # Register only this exact regular sibling, never a searched
+                    # or preloaded module, and retain no import-cache authority.
+                    sys.modules[spec.name] = source_module
+                    try:
+                        spec.loader.exec_module(source_module)
+                    finally:
+                        del sys.modules[spec.name]
+                    read_source_inventory = source_module.inventory
+                document, _sources = read_source_inventory(raw)
+            except (ImportError, ValueError) as error:
+                raise ToolError(
+                    f"source-aware inventory requires its valid git_source.py reader: {error}"
+                ) from error
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ToolError("cannot read canonical tool metadata as bounded UTF-8 JSON") from error
     if (
         not isinstance(document, dict)
-        or set(document) != {"schema", "provenance", "assets"}
+        or set(document)
+        != (
+            {"schema", "provenance", "assets", "sources"}
+            if document.get("schema") == 2
+            else {"schema", "provenance", "assets"}
+        )
         or type(document["schema"]) is not int
-        or document["schema"] != 1
+        or document["schema"] not in {1, 2}
         or not isinstance(document["provenance"], dict)
         or not isinstance(document["assets"], list)
         or len(document["assets"]) != len(REPOSITORIES) * len(ARCHITECTURES)

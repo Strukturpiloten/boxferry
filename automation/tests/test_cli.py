@@ -232,6 +232,136 @@ class Cli(unittest.TestCase):
         self.assertEqual(msrv.commands, (("cargo", "ci-check"), ("cargo", "ci-policy")))
         self.assertEqual(msrv.timeout_seconds, 900)
 
+    def test_source_inventory_snapshot_is_exact_regular_and_inert(self) -> None:
+        import hashlib
+
+        revision = "a" * 40
+        name = "automation/tool-artifacts.json"
+        body = b'{"schema":2,"provenance":{},"assets":[],"sources":[]}'
+        digest = hashlib.sha1(
+            b"blob " + str(len(body)).encode() + b"\0" + body, usedforsecurity=False
+        ).hexdigest()
+        calls: list[tuple[str, ...]] = []
+
+        def git(_root: Path, *args: str) -> bytes | None:
+            calls.append(args)
+            if args == ("ls-tree", "-r", "-z", revision):
+                return f"100644 blob {digest}\t{name}\0".encode()
+            if args == ("show", revision + ":" + name):
+                return body
+            raise AssertionError("unexpected source acquisition")
+
+        target = self.root / "source-snapshot"
+        target.mkdir()
+        with patch("boxferry_ci.__main__.git", side_effect=git):
+            _snapshot(self.root, revision, target)
+        self.assertEqual((target / name).read_bytes(), body)
+        self.assertEqual(
+            calls, [("ls-tree", "-r", "-z", revision), ("show", revision + ":" + name)]
+        )
+        for fault in ("missing", "tampered", "symlink"):
+            other = self.root / fault
+            other.mkdir()
+
+            def broken(_root: Path, *args: str, fault: str = fault) -> bytes | None:
+                value = git(_root, *args)
+                if args[0] == "ls-tree" and fault == "symlink":
+                    return value.replace(b"100644", b"120000") if value else value
+                if args[0] == "show":
+                    if fault == "missing":
+                        return None
+                    if fault == "tampered":
+                        return body + b" "
+                return value
+
+            with (
+                self.subTest(fault=fault),
+                patch("boxferry_ci.__main__.git", side_effect=broken),
+                self.assertRaises(ValueError),
+            ):
+                _snapshot(self.root, revision, other)
+            self.assertFalse((other / name).exists())
+
+    def test_source_inventory_removal_in_local_pair_blocks_before_dependency_check(self) -> None:
+        revision, tested = "a" * 40, "b" * 40
+
+        def snapshot(_root: Path, selected: str, target: Path) -> None:
+            if selected == revision:
+                path = target / "automation/tool-artifacts.json"
+                path.parent.mkdir()
+                path.write_bytes(b'{"schema":1,"provenance":{},"assets":[]}')
+
+        with (
+            patch("boxferry_ci.__main__._snapshot", side_effect=snapshot),
+            patch("boxferry_ci.dependencies.check_dependencies") as checker,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = main(
+                [
+                    "dependencies",
+                    "--repository-root",
+                    str(self.root),
+                    "--base",
+                    revision,
+                    "--head",
+                    tested,
+                    "--output",
+                    str(self.root / "dependencies.json"),
+                ]
+            )
+        self.assertEqual(code, 1)
+        checker.assert_not_called()
+
+    def test_directory_checker_refuses_inventory_deletion_and_keeps_supported_pairs(self) -> None:
+        source = {
+            "tool": "git",
+            "provider": "kernel.org",
+            "currentVersion": "2.46.9",
+            "filename": "git-2.46.9.tar.xz",
+            "url": "https://www.kernel.org/pub/software/scm/git/git-2.46.9.tar.xz",
+            "sha256": "3" * 64,
+        }
+        future = {"schema": 2, "provenance": {}, "assets": [], "sources": [source]}
+        empty = future | {"sources": []}
+        for label, before, after, expected in (
+            ("removed", future, None, "failure"),
+            ("historical", None, None, "pass"),
+            ("introduced-inventory", None, empty, "pass"),
+            ("removed-source-row", future, empty, "pass"),
+        ):
+            base, head = self.root / (label + "-base"), self.root / (label + "-head")
+            for root, document in ((base, before), (head, after)):
+                root.mkdir()
+                if document is not None:
+                    path = root / "automation/tool-artifacts.json"
+                    path.parent.mkdir()
+                    path.write_text(json.dumps(document))
+            output = self.root / (label + ".json")
+            with (
+                self.subTest(pair=label),
+                patch("boxferry_ci.dependencies.fetch_metadata") as metadata,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = main(
+                    [
+                        "dependencies",
+                        "--base",
+                        str(base),
+                        "--head",
+                        str(head),
+                        "--output",
+                        str(output),
+                    ]
+                )
+            report = json.loads(output.read_text())
+            self.assertEqual(report["status"], expected)
+            self.assertEqual(code, 1 if expected == "failure" else 0)
+            self.assertEqual(report["state"]["first_seen"], {})
+            self.assertEqual(report["results"], [])
+            metadata.assert_not_called()
+            if expected == "failure":
+                self.assertIn("canonical tool inventory is missing", report["error"])
+
     def test_dependency_snapshot_is_exact_and_copies_only_metadata(self) -> None:
         self.command("init", "--initial-branch=main")
         self.command("config", "user.email", "fixture@example.invalid")

@@ -121,8 +121,20 @@ def snapshot_paths(paths: Sequence[str]) -> set[str]:
     return result
 
 
-def inventory_blobs(document: Mapping[str, Any]) -> dict[str, str]:
+def inventory_blobs(
+    document: Mapping[str, Any], *, extra_paths: Sequence[str] = ()
+) -> dict[str, str]:
     """Select regular owned blobs from one complete immutable Git tree response."""
+    additional = set(extra_paths)
+    if any(
+        not isinstance(path, str)
+        or not path
+        or "\\" in path
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
+        for path in additional
+    ):
+        raise OperationalError("additional snapshot input has an unsafe repository path")
     entries = document.get("tree")
     if document.get("truncated") is not False or not isinstance(entries, list):
         raise OperationalError("operational Git tree is incomplete or truncated")
@@ -133,7 +145,7 @@ def inventory_blobs(document: Mapping[str, Any]) -> dict[str, str]:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             raise OperationalError("operational Git tree entry is malformed")
         path = entry["path"]
-        if path not in FIXED_PATHS and WORKFLOW.fullmatch(path) is None:
+        if path not in additional and path not in FIXED_PATHS and WORKFLOW.fullmatch(path) is None:
             continue
         if (
             entry.get("type") != "blob"

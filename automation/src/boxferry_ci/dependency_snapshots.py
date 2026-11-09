@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .git_source import INVENTORY
 from .operational import MAX_FILE_BYTES, SnapshotCache, inventory_blobs, snapshot_paths
 
 ReadJSON = Callable[[str], dict[str, Any]]
@@ -90,11 +91,12 @@ def materialize(
         if path == "Cargo.toml" or re.fullmatch(r"crates/[^/]+/Cargo.toml", path)
     }
     operational = snapshot_paths(validated)
-    blobs: dict[str, str] = {}
-    if operational:
-        # Complete inventory preserves reused identities outside the changed paths.
-        blobs = inventory_blobs(read_json(f"git/trees/{head}?recursive=1"))
-        operational.update(snapshot_paths(list(blobs)))
+    # Always acquire the canonical inventory, including unchanged rows. The full
+    # tree shares the caller's existing run-wide request/deadline budget.
+    blobs = inventory_blobs(read_json(f"git/trees/{head}?recursive=1"), extra_paths=(INVENTORY,))
+    operational.update(snapshot_paths(list(blobs)))
+    if INVENTORY in blobs:
+        operational.add(INVENTORY)
     pending: dict[str, bytes] = {}
     total = 0
     selected = {_path(path) for path in lock_paths} | manifests | {"Cargo.toml"} | operational
@@ -137,3 +139,10 @@ def materialize(
         with target.open("xb") as output:
             output.write(data)
     return Materialization(tuple(pending), total)
+
+
+def validate_pair(base: Path, tested: Path, paths: Sequence[str]) -> None:
+    """Distinguish historical absence from a removed/contradictory current input."""
+    before, after = (base / INVENTORY).is_file(), (tested / INVENTORY).is_file()
+    if (before and not after) or (INVENTORY in paths and not before and not after):
+        raise AcquisitionError("canonical tool inventory is missing from the tested snapshot")

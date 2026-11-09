@@ -161,7 +161,9 @@ def _snapshot(root: Path, revision: str, target: Path) -> None:
                 "path": relative_path(raw_path.decode("utf-8"), "dependency metadata path"),
             }
         )
-    operational = inventory_blobs({"truncated": False, "tree": entries})
+    from .git_source import INVENTORY
+
+    operational = inventory_blobs({"truncated": False, "tree": entries}, extra_paths=(INVENTORY,))
     cache = SnapshotCache()
     started = time.monotonic()
     count, total = 0, 0
@@ -309,6 +311,9 @@ def main(argv: list[str] | None = None) -> int:
                     head.mkdir()
                     _snapshot(args.repository_root, str(args.base), base)
                     _snapshot(args.repository_root, str(args.head), head)
+                    from .dependency_snapshots import validate_pair
+
+                    validate_pair(base, head, ())
                     report = check_dependencies(base, head, state=state)
             else:
                 report = check_dependencies(args.base, args.head, state=state)

@@ -26,6 +26,8 @@ from email.message import Message
 from pathlib import Path
 from typing import IO, Any
 
+from .git_source import CHECKSUMS, INVENTORY, inventory, match_checksums, source_record
+
 SCHEMA_VERSION = 1
 HOLD = timedelta(hours=72)
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -271,6 +273,15 @@ def _packages(root: Path) -> set[Package]:
             Package("cargo-tool", name, version, CRATES_SOURCE, ())
             for name, version in declarations(root).items()
         )
+    source_path = root / INVENTORY
+    if source_path.exists() or source_path.is_symlink():
+        _document, sources = inventory(_read(source_path))
+        result.update(
+            Package(
+                "git-source", "git", source.version, source.url, (source.sha256, source.filename)
+            )
+            for source in sources
+        )
     if len(result) > MAX_PACKAGES:
         raise DependencyError("lock graph and standalone Cargo tools exceed package bound")
     return result
@@ -412,6 +423,25 @@ def fetch_metadata(url: str, headers: Mapping[str, str] | None = None) -> bytes:
 def _metadata(
     package: Package, fetch: Fetch, now: datetime
 ) -> tuple[str, list[datetime], tuple[str, ...]]:
+    if package.ecosystem == "git-source":
+        if package.name != "git" or len(package.integrity) != 2:
+            raise DependencyError("unsupported Git source identity")
+        source = source_record(
+            {
+                "tool": package.name,
+                "provider": "kernel.org",
+                "currentVersion": package.version,
+                "filename": package.integrity[1],
+                "url": package.source,
+                "sha256": package.integrity[0],
+            }
+        )
+        # No publication time is supplied by this metadata. Integrity must pass
+        # before the existing trusted first-seen ledger can observe the identity.
+        digest = match_checksums(source, fetch(CHECKSUMS))
+        return CHECKSUMS, [], (digest,)
+    if package.ecosystem not in {"cargo", "cargo-tool", "npm", "python"}:
+        raise DependencyError("unsupported dependency metadata provider")
     name = urllib.parse.quote(package.name, safe="")
     version = urllib.parse.quote(package.version, safe="")
     if package.ecosystem in {"cargo", "cargo-tool"}:
@@ -527,6 +557,10 @@ def _first_party_scope(
         p for p in after if p.ecosystem == "cargo-tool"
     }:
         return False, "standalone Cargo tool changes retain their own third-party age hold"
+    if {p for p in before if p.ecosystem == "git-source"} != {
+        p for p in after if p.ecosystem == "git-source"
+    }:
+        return False, "Git source changes retain their own third-party age hold"
     if context is None:
         return False, "no trusted isolated pull-request context"
     if context.actor_login != "renovate[bot]" or context.actor_type != "Bot":
@@ -638,6 +672,9 @@ def check_dependencies(
                 _sha256(key)
                 _instant(value, instant)
                 ledger[key] = value
+        from .dependency_snapshots import validate_pair
+
+        validate_pair(base, head, context.changed_paths if context is not None else ())
         before, after = _packages(base), _packages(head)
         introduced = sorted(after - before)
         if len(introduced) > MAX_INTRODUCED:

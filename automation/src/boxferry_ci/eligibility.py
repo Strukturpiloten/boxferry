@@ -1449,6 +1449,12 @@ def evaluate(
         cache = SnapshotCache()
         snapshot(api, candidate.base, base, paths, cache)
         snapshot(api, candidate.head, head, paths, cache)
+        from .dependency_snapshots import AcquisitionError, validate_pair
+
+        try:
+            validate_pair(base, head, paths)
+        except AcquisitionError as error:
+            raise EligibilityError(str(error)) from error
         result = check_dependencies(
             base,
             head,

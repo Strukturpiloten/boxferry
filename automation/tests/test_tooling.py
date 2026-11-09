@@ -291,6 +291,38 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(subject.ToolError):
                 self.load(document)
 
+    def test_future_git_sources_leave_all_six_binary_tools_and_profiles_identical(self) -> None:
+        legacy = self.document()
+        expected = self.load(legacy)
+        row = {
+            "tool": "git",
+            "provider": "kernel.org",
+            "currentVersion": "2.48.9",
+            "filename": "git-2.48.9.tar.xz",
+            "url": "https://www.kernel.org/pub/software/scm/git/git-2.48.9.tar.xz",
+            "sha256": "5" * 64,
+        }
+        for sources in ([], [row]):
+            future = legacy | {"schema": 2, "sources": sources}
+            self.assertEqual(self.load(future), expected)
+        self.assertEqual(
+            set(subject.REPOSITORIES),
+            {"tombi", "shfmt", "shellcheck", "hadolint", "actionlint", "lychee"},
+        )
+        self.assertEqual(subject.CORE, ("tombi", "shfmt", "shellcheck", "hadolint"))
+        self.assertEqual(
+            subject.WEBSITE, ("tombi", "shfmt", "shellcheck", "hadolint", "actionlint", "lychee")
+        )
+        for future in (
+            legacy | {"sources": [row]},
+            legacy | {"schema": 2, "sources": [row | {"architecture": "x86_64"}]},
+            legacy | {"schema": 2, "sources": [row | {"provider": "github"}]},
+            legacy | {"schema": 2, "sources": [row, row]},
+            legacy | {"schema": 2, "sources": [row], "assets": legacy["assets"][:-1]},
+        ):
+            with self.subTest(future=future), self.assertRaises(subject.ToolError):
+                self.load(future)
+
     def test_template_paths_fields_and_format_access_are_rejected(self) -> None:
         for value in (
             "../outside",
@@ -1203,6 +1235,153 @@ class ConsumerContractTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "12")
+
+    def test_standalone_future_inventory_requires_its_exact_source_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.closure(root)
+            path = root / "automation/tool-artifacts.json"
+            document: dict[str, Any] = manifest_fixture() | {
+                "schema": 2,
+                "sources": [
+                    {
+                        "tool": "git",
+                        "provider": "kernel.org",
+                        "currentVersion": "2.47.9",
+                        "filename": "git-2.47.9.tar.xz",
+                        "url": "https://www.kernel.org/pub/software/scm/git/git-2.47.9.tar.xz",
+                        "sha256": "4" * 64,
+                    }
+                ],
+            }
+            path.write_text(json.dumps(document))
+            directory = root / "automation/src/boxferry_ci"
+            probe = directory / "probe.py"
+            probe.write_text(
+                "import runpy\n"
+                "reader = runpy.run_path(str(__file__).replace('probe.py', 'tooling.py'))\n"
+                "print(len(reader['load_manifest']()))\n"
+            )
+            environment = dict(os.environ, PYTHONPATH="")
+
+            def run() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(probe)],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+
+            missing = run()
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn(
+                "source-aware inventory requires its valid git_source.py reader", missing.stderr
+            )
+            wrong = root / "wrong-source"
+            wrong.mkdir()
+            marker = root / "unexpected-helper-execution"
+            (wrong / "git_source.py").write_text(
+                "from pathlib import Path\n" + f"Path({str(marker)!r}).touch()\n"
+            )
+            environment["PYTHONPATH"] = str(wrong)
+            refused = run()
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertFalse(marker.exists())
+            environment["PYTHONPATH"] = ""
+            shutil.copyfile(
+                Path(subject.__file__).with_name("git_source.py"), directory / "git_source.py"
+            )
+            supported = run()
+            self.assertEqual(supported.returncode, 0, supported.stderr)
+            self.assertEqual(supported.stdout.strip(), "12")
+            selected = directory / "git_source.py"
+            selected.unlink()
+            selected.symlink_to(Path(subject.__file__).with_name("git_source.py"))
+            linked = run()
+            self.assertNotEqual(linked.returncode, 0)
+            self.assertIn("missing or nonregular", linked.stderr)
+            selected.unlink()
+            shutil.copyfile(Path(subject.__file__).with_name("git_source.py"), selected)
+            document["sources"][0]["provider"] = "github"
+            path.write_text(json.dumps(document))
+            invalid = run()
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("canonical provider", invalid.stderr)
+
+    def test_isolated_runpy_loads_exact_schema2_sibling_outside_search_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.closure(root)
+            source = root / "automation/src/boxferry_ci/tooling.py"
+            sibling = source.with_name("git_source.py")
+            shutil.copyfile(Path(subject.__file__).with_name("git_source.py"), sibling)
+            elsewhere = root / "unrelated-working-directory"
+            elsewhere.mkdir()
+            marker = root / "unselected-reader-ran"
+            (elsewhere / "git_source.py").write_text(
+                "from pathlib import Path\n" + f"Path({str(marker)!r}).touch()\n"
+            )
+            row = {
+                "tool": "git",
+                "provider": "kernel.org",
+                "currentVersion": "2.45.9",
+                "filename": "git-2.45.9.tar.xz",
+                "url": "https://www.kernel.org/pub/software/scm/git/git-2.45.9.tar.xz",
+                "sha256": "2" * 64,
+            }
+            check = (
+                "import runpy,sys; "
+                "sys.path.insert(0, sys.argv[2]); "
+                "reader = runpy.run_path(sys.argv[1]); "
+                "print(len(reader['load_manifest']())); "
+                "assert '_boxferry_tooling_git_source' not in sys.modules"
+            )
+            for sources in ([], [row]):
+                document = manifest_fixture() | {"schema": 2, "sources": sources}
+                (root / "automation/tool-artifacts.json").write_text(json.dumps(document))
+                isolated = (
+                    "import runpy,sys; print(len(runpy.run_path(sys.argv[1])['load_manifest']()))"
+                )
+                for invocation in (isolated, check):
+                    result = subprocess.run(
+                        [sys.executable, "-I", "-c", invocation, str(source), str(elsewhere)],
+                        cwd=elsewhere,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10,
+                    )
+                    with self.subTest(sources=sources, invocation=invocation):
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout.strip(), "12")
+                        self.assertFalse(marker.exists())
+            # A preloaded private module cannot become authority or be replaced.
+            poisoned = (
+                "import runpy,sys,types\n"
+                "poison = types.ModuleType('_boxferry_tooling_git_source')\n"
+                "sys.modules[poison.__name__] = poison\n"
+                "reader = runpy.run_path(sys.argv[1])\n"
+                "try:\n"
+                "    reader['load_manifest']()\n"
+                "except ValueError as error:\n"
+                "    assert 'module name is already occupied' in str(error)\n"
+                "    assert sys.modules[poison.__name__] is poison\n"
+                "    print('refused poisoned module')\n"
+                "else:\n"
+                "    raise AssertionError('preloaded reader accepted')\n"
+            )
+            refused = subprocess.run(
+                [sys.executable, "-I", "-c", poisoned, str(source)],
+                cwd=elsewhere,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            self.assertEqual(refused.returncode, 0, refused.stderr)
+            self.assertEqual(refused.stdout.strip(), "refused poisoned module")
 
     def test_devcontainer_minimal_closure_has_no_duplicate_version_authorities(self) -> None:
         source = (CONSUMERS / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
