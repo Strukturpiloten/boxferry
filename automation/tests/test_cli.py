@@ -227,6 +227,10 @@ class Cli(unittest.TestCase):
             argparse.Namespace(task="rust-quality", policy_sha=base), load_policy(self.config)
         )
         self.assertIn(("cargo", "ci-package"), task.commands)
+        self.assertEqual(task.timeout_seconds, 900)
+        msrv = _task(argparse.Namespace(task="msrv", policy_sha=base), load_policy(self.config))
+        self.assertEqual(msrv.commands, (("cargo", "ci-check"), ("cargo", "ci-policy")))
+        self.assertEqual(msrv.timeout_seconds, 900)
 
     def test_dependency_snapshot_is_exact_and_copies_only_metadata(self) -> None:
         self.command("init", "--initial-branch=main")
@@ -252,6 +256,278 @@ class Cli(unittest.TestCase):
         self.assertEqual((target / "Cargo.lock").read_text(), "locked baseline\n")
         self.assertFalse((target / "private.txt").exists())
         self.assertEqual((target / ".devcontainer/Dockerfile").read_text(), declared)
+
+
+class StrictTaskCli(unittest.TestCase):
+    # Independent expected task data from Quadlet's trusted policy at
+    # 99d4c8a0555adf310ecc25383f131f3a98ebc612, not reconstructed from Cargo aliases.
+    QUALITY = (
+        ("cargo", "fmt", "--all", "--", "--check"),
+        ("cargo", "ci-check"),
+        ("cargo", "ci-application"),
+        ("cargo", "ci-policy"),
+        ("cargo", "ci-clippy"),
+        ("cargo", "ci-test"),
+        ("cargo", "ci-doctest"),
+        ("cargo", "ci-doc"),
+        ("cargo", "ci-package"),
+    )
+    COVERAGE = (
+        ("cargo", "llvm-cov", "clean", "--locked"),
+        (
+            "cargo",
+            "llvm-cov",
+            "--locked",
+            "--no-clean",
+            "--workspace",
+            "--all-features",
+            "--all-targets",
+            "--summary-only",
+            "--fail-under-regions",
+            "91",
+            "--fail-under-functions",
+            "92",
+            "--fail-under-lines",
+            "92",
+        ),
+    )
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.candidate = self.root / "source"
+        self.trusted = self.root / "_policy"
+        for root in (self.candidate, self.trusted):
+            root.mkdir()
+            self.git(root, "init", "-q", "--initial-branch=main", "--template=")
+            self.git(root, "config", "user.name", "Strict task fixture")
+            self.git(root, "config", "user.email", "strict@example.invalid")
+        self.config = self.trusted / "scripts/validation-policy.json"
+        self.config.parent.mkdir()
+        self.raw = {
+            "schema": 2,
+            "repository": "Strukturpiloten/quadlet-lens",
+            "jobs": [
+                "rust",
+                "coverage",
+                "msrv",
+                "dependencies",
+                "api",
+                "documentation",
+                "lockfile-release-age",
+                "devcontainer-validation",
+            ],
+            "profile_jobs": {
+                "prose": ["documentation", "lockfile-release-age"],
+                "executable-docs": [
+                    "rust",
+                    "coverage",
+                    "msrv",
+                    "dependencies",
+                    "api",
+                    "documentation",
+                    "lockfile-release-age",
+                ],
+            },
+            "public_documentation_root": "docs/public/",
+            "full_documentation_roots": [],
+            "executable_documentation_roots": [],
+            "executable_documentation_paths": [],
+            "documentation_examples_manifest": None,
+            "local_commands": {
+                "prose": [
+                    ["bash", "scripts/check-files.sh", "--check"],
+                    [
+                        "lychee",
+                        "--config",
+                        "lychee.toml",
+                        "--root-dir",
+                        ".",
+                        "--offline",
+                        "./**/*.md",
+                    ],
+                ],
+                "executable-docs": [["bash", "scripts/check-all.sh", "--check"]],
+                "full": [["bash", "scripts/check-all.sh", "--check"]],
+            },
+            "tasks": {
+                "rust-quality": {"commands": self.QUALITY, "timeout_seconds": 1800},
+                "coverage": {"commands": self.COVERAGE, "timeout_seconds": 1800},
+            },
+        }
+        self.config.write_text(json.dumps(self.raw))
+        # Actual trusted aliases would have triggered legacy reconstruction when quality is absent.
+        aliases = self.trusted / ".cargo/config.toml"
+        aliases.parent.mkdir()
+        aliases.write_text(
+            "[alias]\n" + "\n".join(f'{call[1]} = "check"' for call in self.QUALITY[1:])
+        )
+        self.policy_sha = self.commit(self.trusted)
+        # Candidate policy differs: selection must use the supplied trusted root.
+        (self.candidate / "scripts").mkdir()
+        (self.candidate / "scripts/validation-policy.json").write_text("{}")
+        self.tested_sha = self.commit(self.candidate)
+        self.automation_sha = "a" * 40
+
+    def git(self, root: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def commit(self, root: Path) -> str:
+        self.git(root, "add", ".")
+        self.git(root, "commit", "-qm", "trusted fixture")
+        return self.git(root, "rev-parse", "HEAD")
+
+    def arguments(self, command: str, task: str) -> list[str]:
+        return [
+            command,
+            "--repository-root",
+            str(self.candidate),
+            "--config",
+            str(self.config),
+            "--task",
+            task,
+            "--tested-sha",
+            self.tested_sha,
+            "--automation-sha",
+            self.automation_sha,
+            "--policy-sha",
+            self.policy_sha,
+            *(["--require-configured-task"] if command == "run" else []),
+        ]
+
+    def test_configured_tasks_retain_original_argv_order_and_1800_second_budget(self) -> None:
+        for task, expected in (("rust-quality", self.QUALITY), ("coverage", self.COVERAGE)):
+            with (
+                self.subTest(task=task),
+                patch("boxferry_ci.bootstrap.automation_identity") as identity,
+                patch("boxferry_ci.__main__._execute", return_value=0) as execute,
+            ):
+                self.assertEqual(main(self.arguments("run", task)), 0)
+                self.assertEqual(execute.call_args.args[1:], (expected, 1800))
+                identity.assert_called_once_with(
+                    self.candidate, self.automation_sha, allow_dirty_self=False
+                )
+
+    def test_preflight_is_read_only_and_does_not_create_execution_receipt(self) -> None:
+        report, summary = self.root / "report.json", self.root / "summary.md"
+        for task in ("rust-quality", "coverage"):
+            with (
+                self.subTest(task=task),
+                patch("boxferry_ci.bootstrap.automation_identity"),
+                patch("boxferry_ci.__main__._execute") as execute,
+                patch("boxferry_ci.__main__.run") as runner,
+                patch("boxferry_ci.cargo_tools.install") as install,
+                patch("boxferry_ci.cargo_tools.verify") as verify,
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            *self.arguments("check-task", task),
+                            "--report-json",
+                            str(report),
+                            "--summary",
+                            str(summary),
+                        ]
+                    ),
+                    0,
+                )
+                for effect in (execute, runner, install, verify):
+                    effect.assert_not_called()
+                self.assertFalse(report.exists())
+                self.assertFalse(summary.exists())
+
+    def test_stale_policy_checkout_refuses_even_when_policy_bytes_match(self) -> None:
+        (self.trusted / "unrelated.txt").write_text("new checkout identity, same policy bytes")
+        self.assertNotEqual(self.commit(self.trusted), self.policy_sha)
+        for command in ("check-task", "run"):
+            with (
+                self.subTest(command=command),
+                patch("boxferry_ci.bootstrap.automation_identity"),
+                patch("boxferry_ci.__main__._execute") as execute,
+                contextlib.redirect_stderr(io.StringIO()) as errors,
+            ):
+                self.assertEqual(main(self.arguments(command, "rust-quality")), 1)
+                self.assertIn("policy checkout does not match", errors.getvalue())
+                execute.assert_not_called()
+
+    def test_missing_quality_and_coverage_refuse_instead_of_using_trusted_aliases(self) -> None:
+        for task in ("rust-quality", "coverage"):
+            raw = json.loads(json.dumps(self.raw))
+            del raw["tasks"][task]
+            self.config.write_text(json.dumps(raw))
+            self.policy_sha = self.commit(self.trusted)
+            for command in ("check-task", "run"):
+                with (
+                    self.subTest(task=task, command=command),
+                    patch("boxferry_ci.bootstrap.automation_identity"),
+                    patch("boxferry_ci.__main__.git", side_effect=AssertionError("alias fallback")),
+                    patch("boxferry_ci.__main__._execute") as execute,
+                    contextlib.redirect_stderr(io.StringIO()) as errors,
+                ):
+                    self.assertEqual(main(self.arguments(command, task)), 1)
+                    self.assertIn("not explicitly configured", errors.getvalue())
+                    execute.assert_not_called()
+
+    def test_invalid_policy_task_and_identities_refuse_before_effects(self) -> None:
+        original = self.config.read_text()
+        for command in ("check-task", "run"):
+            for invalid in (
+                "missing",
+                "malformed",
+                "task-malformed",
+                "unknown",
+                "changed-policy",
+                "tested-sha",
+                "policy-sha",
+                "automation-sha",
+                "wrong-source",
+                "missing-tested",
+                "missing-policy",
+                "missing-automation",
+            ):
+                with self.subTest(command=command, invalid=invalid):
+                    self.config.write_text(original)
+                    args = self.arguments(
+                        command, "unknown" if invalid == "unknown" else "rust-quality"
+                    )
+                    if invalid == "missing":
+                        self.config.unlink()
+                    elif invalid == "malformed":
+                        self.config.write_text("{")
+                    elif invalid == "task-malformed":
+                        raw = json.loads(original)
+                        raw["tasks"]["rust-quality"] = {"commands": [["bash", "-c", "false"]]}
+                        self.config.write_text(json.dumps(raw))
+                    elif invalid == "changed-policy":
+                        self.config.write_text(original + "\n")
+                    elif invalid in {"tested-sha", "policy-sha", "automation-sha"}:
+                        args[args.index("--" + invalid) + 1] = (
+                            "f" * 40 if invalid != "automation-sha" else "bad"
+                        )
+                    elif invalid.startswith("missing-"):
+                        offset = args.index("--" + invalid.removeprefix("missing-") + "-sha")
+                        del args[offset : offset + 2]
+                    with (
+                        patch(
+                            "boxferry_ci.bootstrap.automation_identity",
+                            side_effect=(
+                                ContractError("automation checkout mismatch")
+                                if invalid == "wrong-source"
+                                else None
+                            ),
+                        ),
+                        patch("boxferry_ci.__main__._execute") as execute,
+                        patch("boxferry_ci.__main__.run") as runner,
+                        patch("boxferry_ci.cargo_tools.install") as install,
+                        contextlib.redirect_stderr(io.StringIO()),
+                    ):
+                        self.assertEqual(main(args), 1)
+                        for effect in (execute, runner, install):
+                            effect.assert_not_called()
+        self.config.write_text(original)
 
 
 class ArchiveIdentityCli(unittest.TestCase):
@@ -479,7 +755,7 @@ class ArchiveIdentityCli(unittest.TestCase):
         self.git(root, "commit", "-qm", message)
         return self.git(root, "rev-parse", "HEAD")
 
-    def task(self, name: str, *, bind: bool = False) -> tuple[int, str]:
+    def task(self, name: str, *, bind: bool = False, preflight: bool = False) -> tuple[int, str]:
         captured = []
 
         def execute(argv: list[str], env: dict[str, str]) -> int:
@@ -488,14 +764,26 @@ class ArchiveIdentityCli(unittest.TestCase):
             return result.returncode
 
         args = [
-            "run",
+            "check-task" if preflight else "run",
             "--task",
             name,
             "--report-json",
             str(self.consumer / "target/task-report.json"),
         ]
-        if bind:
+        if bind or preflight:
             args += ["--automation-sha", self.automation]
+        if preflight:
+            candidate = self.git(self.consumer, "rev-parse", "HEAD")
+            args += [
+                "--repository-root",
+                str(self.consumer),
+                "--config",
+                str(self.consumer / "scripts/validation-policy.json"),
+                "--tested-sha",
+                candidate,
+                "--policy-sha",
+                candidate,
+            ]
         with (
             patch.dict(os.environ, self.environment, clear=True),
             patch.object(self.bootstrap, "ensure_uv", return_value=self.uv),
@@ -503,6 +791,22 @@ class ArchiveIdentityCli(unittest.TestCase):
         ):
             result = self.bootstrap.run_project(self.consumer, self.project, args)
         return result, "".join(captured)
+
+    def test_locked_archive_preflight_verifies_source_without_execution_receipt(self) -> None:
+        result, output = self.task("source-probe", preflight=True)
+        self.assertEqual(result, 0, output)
+        self.assertNotIn("verified source task", output)
+        self.assertFalse((self.consumer / "target/task-report.json").exists())
+        self.automation, previous = "f" * 40, self.automation
+        result, output = self.task("source-probe", preflight=True)
+        self.assertEqual(result, 1, output)
+        self.assertIn("differs from the consumer manifest", output)
+        self.automation = previous
+        source = self.project / "src/boxferry_ci/__init__.py"
+        source.write_bytes(source.read_bytes() + b"\n")
+        result, output = self.task("source-probe", preflight=True)
+        self.assertEqual(result, 1, output)
+        self.assertIn("differs from its commit", output)
 
     def test_locked_archive_resolves_A_and_executes_real_private_positive_success_and_failure(
         self,
