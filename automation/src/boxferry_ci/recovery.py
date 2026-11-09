@@ -401,6 +401,67 @@ def reader_closure(api: core.GitHub, implementation: str) -> None:
         api.requests += canonical.requests
 
 
+def ruleset_bypasses(
+    api: core.GitHub, identifier: int, rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Require visible, bounded bypass facts; a filtered field is not an empty list."""
+    owner = api.repository.split("/", 1)[0]
+    sources = {
+        f"{kind} {source}"
+        for rule in rules
+        if rule.get("ruleset_id") == identifier
+        for kind, source in (("Organization", owner), ("Repository", api.repository))
+        if rule.get("ruleset_source_type") == kind and rule.get("ruleset_source") == source
+    }
+    source = next(iter(sources)) if len(sources) == 1 else f"via {api.repository}"
+    label = f"ruleset {identifier} ({source})"
+    try:
+        detail = api.get(f"rulesets/{identifier}?includes_parents=true")
+    except core.EligibilityError as error:
+        # The client exposes errors as text. Only recognize fixed client messages;
+        # never copy provider bodies, exception text or candidate metadata to the report.
+        reason = "inaccessible; bypass proof unavailable"
+        if str(error) in {
+            "GitHub metadata response is not valid JSON",
+            "GitHub metadata response must be an object",
+        }:
+            reason = "malformed detail response"
+        elif str(error) == "GitHub metadata response exceeds its size budget":
+            reason = "oversized detail response"
+        elif str(error).startswith("GitHub metadata transport failed:"):
+            reason = "transport failed; bypass proof unavailable"
+        raise RecoveryRefused(f"{label}: {reason}") from None
+    if not isinstance(detail, dict):
+        raise RecoveryRefused(f"{label}: malformed detail response")
+    if type(detail.get("id")) is not int or detail["id"] != identifier:
+        raise RecoveryRefused(f"{label}: wrong-identity detail response")
+    if "bypass_actors" not in detail:
+        raise RecoveryRefused(
+            f"{label}: bypass_actors not returned; bypass proof unavailable "
+            "(GitHub requires ruleset write access to expose this field)"
+        )
+    actors = detail["bypass_actors"]
+    if not isinstance(actors, list):
+        raise RecoveryRefused(f"{label}: malformed bypass_actors; expected a list")
+    if len(actors) > 20:
+        raise RecoveryRefused(f"{label}: oversized bypass_actors; limit is 20")
+    for actor in actors:
+        if not isinstance(actor, dict) or "actor_id" not in actor:
+            raise RecoveryRefused(f"{label}: malformed bypass actor")
+        actor_id = actor["actor_id"]
+        # GitHub ignores OrganizationAdmin IDs and returns explicit null. Other
+        # actor types still require their exact reviewed integer identity.
+        admin = actor.get("actor_type") == "OrganizationAdmin" and (
+            actor_id is None or type(actor_id) is int
+        )
+        role = (
+            actor.get("actor_type") == "RepositoryRole" and type(actor_id) is int and actor_id == 5
+        )
+        if actor.get("bypass_mode") != "always" or not (admin or role):
+            raise RecoveryRefused(f"{label}: unsupported or integration bypass actor")
+    return actors
+
+
 def protection(api: core.GitHub, branch: str) -> dict[str, Any]:
     core.require_single_entry_queue(api, branch)
     rules = api.items(f"rules/branches/{quote(branch, safe='')}?per_page=100&page=1")
@@ -449,19 +510,7 @@ def protection(api: core.GitHub, branch: str) -> dict[str, Any]:
         raise RecoveryRefused("effective protection lacks dereferenceable ruleset identities")
     bypasses: list[dict[str, Any]] = []
     for identifier in sorted(identifier for identifier in rulesets if isinstance(identifier, int)):
-        detail = api.get(f"rulesets/{identifier}?includes_parents=true")
-        actors = detail.get("bypass_actors")
-        if detail.get("id") != identifier or not isinstance(actors, list) or len(actors) > 20:
-            raise RecoveryRefused("ruleset bypass facts are incomplete")
-        for actor in actors:
-            if (
-                not isinstance(actor, dict)
-                or actor.get("bypass_mode") != "always"
-                or (actor.get("actor_type"), actor.get("actor_id"))
-                not in {("OrganizationAdmin", 1), ("RepositoryRole", 5)}
-            ):
-                raise RecoveryRefused("ruleset has unsupported or integration bypass actors")
-            bypasses.append(actor)
+        bypasses.extend(ruleset_bypasses(api, identifier, rules))
     return {
         "required_ci_binding": "any-app"
         if any(check.get("integration_id") is None for check in checks)

@@ -293,7 +293,7 @@ class RecoveryTests(unittest.TestCase):
         self.api.responses["rulesets/9?includes_parents=true"] = {
             "id": 9,
             "bypass_actors": [
-                {"actor_type": "OrganizationAdmin", "actor_id": 1, "bypass_mode": "always"}
+                {"actor_type": "OrganizationAdmin", "actor_id": None, "bypass_mode": "always"}
             ],
         }
         self.api.responses["labels/rebase"] = {"name": "rebase"}
@@ -419,6 +419,244 @@ class RecoveryTests(unittest.TestCase):
         ]
         with self.assertRaises(ValueError):
             subject.protection(self.api, "main")
+
+    def two_level_rulesets(self) -> tuple[str, str]:
+        """Recorded API 2022-11-28 shape; authored minimal protection context."""
+        organization = "rulesets/17023551?includes_parents=true"
+        repository = "rulesets/26438263?includes_parents=true"
+        self.rules[0].update(
+            ruleset_id=26438263,
+            ruleset_source_type="Repository",
+            ruleset_source=REPOSITORY,
+        )
+        self.rules[1].update(
+            ruleset_id=17023551,
+            ruleset_source_type="Organization",
+            ruleset_source="Strukturpiloten",
+        )
+        for path, identifier in ((organization, 17023551), (repository, 26438263)):
+            self.api.responses[path] = {
+                "id": identifier,
+                "bypass_actors": [
+                    {"actor_type": "OrganizationAdmin", "actor_id": None, "bypass_mode": "always"},
+                    {"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always"},
+                ],
+            }
+        return organization, repository
+
+    def test_visible_two_level_null_admin_and_explicit_empty_facts(self) -> None:
+        organization, repository = self.two_level_rulesets()
+        facts = subject.protection(self.api, "main")
+        self.assertEqual(
+            facts["bypass_actors"],
+            self.api.responses[organization]["bypass_actors"]
+            + self.api.responses[repository]["bypass_actors"],
+        )
+        # The provider ignores OrganizationAdmin's integer ID, rather than
+        # assigning this actor an artificial required ID of one.
+        for identifier in (None, 1, 17):
+            self.api.responses[organization]["bypass_actors"][0]["actor_id"] = identifier
+            with self.subTest(identifier=identifier):
+                subject.protection(self.api, "main")
+        self.api.responses[organization]["bypass_actors"] = [
+            {"actor_type": "OrganizationAdmin", "actor_id": None, "bypass_mode": "always"}
+        ] * 20
+        self.assertEqual(len(subject.protection(self.api, "main")["bypass_actors"]), 22)
+        for path in (organization, repository):
+            self.api.responses[path]["bypass_actors"] = []
+        self.assertEqual(subject.protection(self.api, "main")["bypass_actors"], [])
+
+    def test_unavailable_or_invalid_rulesets_refuse_before_any_recovery_effect(self) -> None:
+        organization, repository = self.two_level_rulesets()
+        cases = (
+            ({"id": 17023551}, "not returned; bypass proof unavailable"),
+            ({"id": 17023551, "bypass_actors": None}, "malformed bypass_actors"),
+            ({"id": 17023551, "bypass_actors": {}}, "malformed bypass_actors"),
+            ({"id": 17023551, "bypass_actors": "SECRET"}, "malformed bypass_actors"),
+            ({"id": 17023551, "bypass_actors": [None] * 21}, "oversized bypass_actors"),
+            ({"id": 26438263, "bypass_actors": []}, "wrong-identity"),
+            ({"id": "17023551", "bypass_actors": []}, "wrong-identity"),
+            ({"id": True, "bypass_actors": []}, "wrong-identity"),
+            ({"bypass_actors": []}, "wrong-identity"),
+            ({"id": 17023551, "bypass_actors": [None]}, "malformed bypass actor"),
+        )
+        for detail, reason in cases:
+            with self.subTest(detail=detail):
+                self.api.responses[organization] = detail
+                with self.assertRaises(subject.RecoveryRefused) as caught:
+                    self.recover()
+                message = str(caught.exception)
+                self.assertIn(reason, message)
+                self.assertIn("ruleset 17023551 (Organization Strukturpiloten)", message)
+                self.assertNotIn("SECRET", message)
+                self.assertEqual(self.reservations, {})
+                self.assertEqual(self.api.posts, [])
+                self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+        # Complete inherited facts cannot compensate for an omitted repository list.
+        self.api.responses[organization] = {"id": 17023551, "bypass_actors": []}
+        self.api.responses[repository] = {"id": 26438263}
+        with self.assertRaisesRegex(
+            subject.RecoveryRefused, "26438263 \(Repository Strukturpiloten/compose-lens\)"
+        ):
+            self.recover()
+        self.assertEqual((self.reservations, self.api.posts), ({}, []))
+        self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+
+    def test_bypass_actor_policy_keeps_type_id_and_mode_controls(self) -> None:
+        organization, _ = self.two_level_rulesets()
+        invalid: list[dict[str, Any]] = [
+            {"actor_type": kind, "actor_id": 5, "bypass_mode": "always"}
+            for kind in ("Integration", "Team", "User", "DeployKey", "Unknown")
+        ]
+        invalid.extend(
+            {"actor_type": kind, "actor_id": identifier, "bypass_mode": mode}
+            for kind, identifier, mode in (
+                ("OrganizationAdmin", None, "pull_request"),
+                ("OrganizationAdmin", None, "exempt"),
+                ("OrganizationAdmin", True, "always"),
+                ("OrganizationAdmin", "1", "always"),
+                ("OrganizationAdmin", [], "always"),
+                ("RepositoryRole", None, "always"),
+                ("RepositoryRole", "5", "always"),
+                ("RepositoryRole", 5.0, "always"),
+                ("RepositoryRole", True, "always"),
+                ("RepositoryRole", 1, "always"),
+                ("RepositoryRole", 5, "pull_request"),
+            )
+        )
+        invalid.extend(
+            [
+                {"actor_type": "OrganizationAdmin", "bypass_mode": "always"},
+                {"actor_type": "RepositoryRole", "actor_id": 5},
+            ]
+        )
+        for actor in invalid:
+            with self.subTest(actor=actor):
+                self.api.responses[organization]["bypass_actors"] = [actor]
+                with self.assertRaises(subject.RecoveryRefused):
+                    self.recover()
+                self.assertEqual((self.reservations, self.api.posts), ({}, []))
+                self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+
+    def test_inaccessible_and_client_failures_are_bounded_without_raw_error_bodies(self) -> None:
+        self.two_level_rulesets()
+        errors = (
+            (core.MissingResource("SECRET"), "inaccessible"),
+            (core.EligibilityError("GitHub metadata request failed with HTTP 403"), "inaccessible"),
+            (core.EligibilityError("GitHub metadata transport failed: SECRET"), "transport failed"),
+            (core.EligibilityError("GitHub metadata response is not valid JSON"), "malformed"),
+            (core.EligibilityError("GitHub metadata response must be an object"), "malformed"),
+            (core.EligibilityError("SECRET" * 1000), "inaccessible"),
+        )
+        original_get = self.api.get
+        for error, reason in errors:
+
+            def unavailable(path: str, failure: core.EligibilityError = error) -> dict[str, Any]:
+                if path.startswith("rulesets/"):
+                    raise failure
+                return original_get(path)
+
+            with (
+                self.subTest(reason=reason),
+                patch.object(self.api, "get", side_effect=unavailable),
+            ):
+                with self.assertRaises(subject.RecoveryRefused) as caught:
+                    self.recover()
+                message = str(caught.exception)
+                self.assertIn(reason, message)
+                self.assertIn("17023551 (Organization Strukturpiloten)", message)
+                self.assertLess(len(message), 250)
+                self.assertNotIn("SECRET", message)
+                self.assertEqual((self.reservations, self.api.posts), ({}, []))
+                self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+
+    def test_actual_client_oversized_detail_refuses_without_recovery_effects(self) -> None:
+        self.two_level_rulesets()
+        provider = core.GitHub(REPOSITORY, "synthetic-token")
+        original_get = self.api.get
+
+        def detail_from_client(path: str) -> dict[str, Any]:
+            if path.startswith("rulesets/"):
+                return provider.get(path)
+            return original_get(path)
+
+        with (
+            patch.object(core, "build_opener") as transport,
+            patch.object(self.api, "get", side_effect=detail_from_client),
+            self.assertRaises(subject.RecoveryRefused) as caught,
+        ):
+            response = transport.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = b"x" * (core.MAX_JSON_BYTES + 1)
+            self.recover()
+        self.assertEqual(
+            str(caught.exception),
+            "ruleset 17023551 (Organization Strukturpiloten): oversized detail response",
+        )
+        response.read.assert_called_once_with(core.MAX_JSON_BYTES + 1)
+        transport.assert_called_once_with(core.NoRedirect)
+        request = transport.return_value.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(
+            request.full_url,
+            "https://api.github.com/repos/Strukturpiloten/compose-lens/"
+            "rulesets/17023551?includes_parents=true",
+        )
+        self.assertEqual(provider.requests, 1)
+        self.assertEqual((self.reservations, self.api.posts), ({}, []))
+        self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+
+    def test_queue_and_provider_refusals_keep_all_recovery_effects_closed(self) -> None:
+        original = deepcopy(self.rules)
+        cases = []
+        cases.append([])
+        cases.append([original[1]])
+        cases.append([*original, deepcopy(original[0])])
+        for field, value in (
+            ("grouping_strategy", "HEADGREEN"),
+            ("max_entries_to_build", 2),
+            ("max_entries_to_merge", 2),
+        ):
+            changed = deepcopy(original)
+            changed[0]["parameters"][field] = value
+            cases.append(changed)
+        changed = deepcopy(original)
+        changed[1]["parameters"]["required_status_checks"][0]["integration_id"] = 7
+        cases.append(changed)
+        for rules in cases:
+            with self.subTest(rules=rules):
+                self.rules[:] = rules
+                with self.assertRaises(ValueError):
+                    self.recover()
+                self.assertEqual((self.reservations, self.api.posts), ({}, []))
+                self.assertEqual(self.reports, {N: passing(CANDIDATE)})
+        self.rules[:] = original
+
+    def test_lost_bypass_visibility_before_consume_cannot_issue_retry_or_label(self) -> None:
+        previous = self.prepared()
+        reservation = next(iter(self.reservations.values()))
+        self.api.responses["rulesets/9?includes_parents=true"] = {"id": 9}
+        before_posts, before_reports = deepcopy(self.api.posts), deepcopy(self.reports)
+        for kind in ("retained-graph", "handoff", "native-legacy-handoff"):
+            reservation["kind"] = kind
+            with (
+                self.subTest(kind=kind),
+                patch.object(subject, "require_effect"),
+                self.assertRaisesRegex(subject.RecoveryRefused, "bypass proof unavailable"),
+            ):
+                subject.consume(
+                    self.api,
+                    self.original,
+                    CANDIDATE,
+                    reservation,
+                    C,
+                    101,
+                    "main",
+                    NOW,
+                    subject.ServiceContext(previous, {"fence": None}, NOW, 101, 1, True, True),
+                )
+            self.assertEqual(reservation["phase"], "prepared")
+            self.assertEqual(self.api.posts, before_posts)
+            self.assertEqual(self.reports, before_reports)
 
     def test_workflow_added_changed_reader_or_truncated_inventory_refuse(self) -> None:
         with patch.object(subject, "reader_closure"):

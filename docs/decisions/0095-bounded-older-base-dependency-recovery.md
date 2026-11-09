@@ -48,6 +48,12 @@ fixed-origin check-run URL resolves to GitHub Actions app 15368, slug
 github-actions, and the run's actual REST head. Explicit wrong providers,
 integration bypasses, incomplete metadata and unsupported shapes refuse recovery.
 This mechanism changes no repository protection settings and uses no admin path.
+A successful ruleset-detail response can omit `bypass_actors` when the caller lacks
+write access to that ruleset. Omission remains unknown and refuses recovery;
+only an explicit visible list, including an empty list, provides bypass facts.
+OrganizationAdmin IDs are ignored by GitHub and can be explicitly null; the
+reviewed RepositoryRole bypass still requires integer ID 5 and mode `always`.
+Diagnostics identify bounded ruleset/source facts without response bodies.
 
 A completed trusted artifact first persists separate reports and a prepared
 reservation. A later completed receipt can authorize one logical effect, keyed
@@ -123,7 +129,14 @@ forged O versus actual X, all seven prepared consumer reader/gate shapes, actual
 run/job/check provenance, immutable source/archive closure and finite effects.
 The native regression executes unmodified Renovate 44.139.0 modules from the
 integrity-pinned runtime recorded in `automation/renovate-runtime.json`; its
-platform effects are mocked. Command:
+platform effects are mocked. A separate native GitHub regression loads the full
+unmodified module with authored synthetic transport fixtures: direct merge success
+returns before enqueue, rejected direct merge can enqueue, and failed queue admission
+remains failure. The higher-level `platform.mergePr` stub establishes reuse/automerge
+behavior only; it does not prove queue-only integration. This direct-merge-capable
+integration is why current unavailable bypass proof must still refuse recovery.
+These fixtures establish neither live bypass visibility nor genuine recovery or
+fresh-queue acceptance. Command:
 `BOXFERRY_RENOVATE_PACKAGE=<verified-runtime> PYTHONPATH=automation/src python3 -m unittest discover -s automation/tests -p test_recovery_renovate.py`.
 Renovate is AGPL-3.0-only; no oracle source is copied or redistributed by this
 change. Existing runtime provenance and integrity records remain authoritative.
