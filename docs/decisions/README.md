@@ -23,6 +23,9 @@ and successful native/App qualification precede activation.
 
 ## Active decisions
 
+[ADR 0099](0099-candidate-coverage-tool-authority.md) selects one candidate-owned coverage
+CLI/compiler pair for local, shared CI and image validation while preserving scoped updater holds.
+
 [ADR 0097](0097-read-only-zero-age-delta-bootstrap.md) defines the exact two-repair read-only
 zero-age-delta proof, preserving exact-A policy, live canonical source custody and normal receipts.
 

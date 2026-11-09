@@ -89,7 +89,7 @@
         "custom.regex",
         "crate",
         "cargo-llvm-cov",
-        ".github/workflows/shared-rust-ci.yml",
+        ".devcontainer/Dockerfile",
         "major",
       ],
       ["Python tool", "pep621", "pypi", "ruff", "automation/pyproject.toml", "major"],
@@ -156,7 +156,6 @@
         ["docker", "docker.io/library/node"],
         ["docker", "mcr.microsoft.com/devcontainers/rust"],
         ["crate", "cargo-deny"],
-        ["crate", "cargo-llvm-cov"],
         ["crate", "cargo-semver-checks"],
         ["crate", "zizmor"],
       ]) {
@@ -303,6 +302,24 @@
       });
       await assert.rejects(() => checkActualPolicy(changed), /cargo major/);
     }
+    // The sole local/CI/image coverage declaration retains ordinary automatic updates.
+    for (const override of [
+      { enabled: false },
+      { minimumReleaseAge: "0 days" },
+      { dependencyDashboardApproval: true },
+      { automerge: false },
+    ]) {
+      const changed = structuredClone(local);
+      changed.packageRules.push({
+        matchManagers: ["custom.regex"],
+        matchDatasources: ["crate"],
+        matchPackageNames: ["cargo-llvm-cov"],
+        matchFileNames: [".devcontainer/Dockerfile"],
+        matchUpdateTypes: ["major"],
+        ...override,
+      });
+      await assert.rejects(() => checkActualPolicy(changed), /Cargo tool/);
+    }
     for (const override of [{ automergeType: "branch" }, { platformAutomerge: true }]) {
       const late = structuredClone(local);
       late.packageRules.push({
@@ -334,7 +351,7 @@
       await assert.rejects(() => checkActualPolicy(changed), /admission/);
     }
     console.log(
-      "Actual native local policy and fifteen late-override/lock/admission counterfactuals passed.",
+      "Actual native local policy and nineteen late-override/lock/admission counterfactuals passed.",
     );
   } finally {
     process.chdir(parent);

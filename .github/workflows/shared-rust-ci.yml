@@ -78,15 +78,29 @@ jobs:
         env:
           RUST_MSRV: ${{ steps.msrv.outputs.version }}
         run: rustup toolchain install "${RUST_MSRV}" --profile minimal --no-self-update
+      - name: Install and verify the exact candidate coverage tool
+        if: inputs.task == 'coverage'
+        id: coverage-tool
+        working-directory: source
+        shell: bash
+        run: |
+          uv run --locked --project ../_automation/automation python -m boxferry_ci.cargo_tools install \
+            --repository-root . --package cargo-llvm-cov --require-candidate \
+            --destination "${RUNNER_TEMP}/boxferry-cargo-tools" \
+            --github-output "${GITHUB_OUTPUT}" --github-path "${GITHUB_PATH}" \
+            --github-env "${GITHUB_ENV}"
       - name: Install LLVM coverage component
         if: inputs.task == 'coverage'
         working-directory: source
-        run: rustup component add llvm-tools-preview
-      - name: Install canonical coverage tool
+        env:
+          RUST_CHANNEL: ${{ steps.coverage-tool.outputs.rust_channel }}
+        run: rustup component add llvm-tools-preview --toolchain "${RUST_CHANNEL}"
+      - name: Verify coverage invocation from the candidate root
         if: inputs.task == 'coverage'
         working-directory: source
-        # renovate: datasource=crate depName=cargo-llvm-cov
-        run: cargo install --locked --version 0.9.0 cargo-llvm-cov
+        run: |
+          uv run --locked --project ../_automation/automation python -m boxferry_ci.cargo_tools verify \
+            --repository-root . --package cargo-llvm-cov --require-candidate
       - name: Run the bounded repository task
         shell: bash
         env:
