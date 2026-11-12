@@ -883,6 +883,27 @@ class InstallationTests(unittest.TestCase):
         with patch.object(subject, "install", side_effect=subject.ToolError("fixture failure")):
             self.assertEqual(subject.main(["--destination", "/tmp/tools", "--tools", "lychee"]), 2)
 
+    def test_git_source_mode_is_explicit_and_separate_from_binary_profiles(self) -> None:
+        from boxferry_ci import git_install
+
+        with (
+            patch.object(subject, "load_manifest"),
+            patch.object(git_install, "load_source", return_value=Mock()) as source,
+            patch.object(
+                git_install, "install", return_value={"source": {"version": "2.56.0"}}
+            ) as build,
+            patch.object(subject, "install") as binary,
+        ):
+            self.assertEqual(subject.main(["--destination", "/tmp/new-prefix", "--git-source"]), 0)
+            build.assert_called_once_with(Path("/tmp/new-prefix"), source.return_value)
+            binary.assert_not_called()
+        for extra in (["--profile", "core"], ["--tools", "lychee"], ["--python-tools"]):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit):
+                subject.main(["--destination", "/tmp/new-prefix", "--git-source", *extra])
+        with patch.object(git_install, "install") as build:
+            self.assertEqual(subject.main(["--destination", "/tmp/new-prefix", "--git-source"]), 2)
+            build.assert_not_called()
+
     def test_shared_cli_dispatches_tools_without_candidate_policy_arguments(self) -> None:
         from boxferry_ci.__main__ import main as shared_main
 

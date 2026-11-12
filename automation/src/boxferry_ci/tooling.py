@@ -4,8 +4,10 @@ Local, CI and Dev Container wrappers call ``boxferry-ci tools --destination DIR
 --profile core`` (Tombi, shfmt, ShellCheck, Hadolint), ``--profile website`` (all
 six tools), or ``--tools lychee`` for an explicit subset. Add ``--python-tools``
 (or select it alone) to copy canonical uv/Ruff/ty from this locked shared Python
-environment as standalone executables. No interpreter is replaced. No shell
-execution, PATH fallback or second version inventory is used.
+environment as standalone executables. No interpreter is replaced. Binary profiles
+use no shell execution or PATH fallback. Explicit ``--git-source`` delegates a
+checksum-verified source build into a new complete prefix; it supplies no pin and
+never joins the binary profiles. All modes retain one canonical inventory.
 """
 
 from __future__ import annotations
@@ -733,15 +735,38 @@ def main(argv: list[str] | None = None) -> int:
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--profile", choices=("core", "website"))
     selection.add_argument("--tools", nargs="+", choices=WEBSITE)
+    selection.add_argument(
+        "--git-source",
+        action="store_true",
+        help="Build the explicitly configured Git source into a new complete runtime prefix.",
+    )
     parser.add_argument(
         "--python-tools",
         action="store_true",
         help="Also export canonical uv/Ruff/ty from the active locked shared environment.",
     )
     options = parser.parse_args(argv)
-    if not options.profile and not options.tools and not options.python_tools:
-        parser.error("select --profile, --tools or --python-tools")
+    if options.git_source and options.python_tools:
+        parser.error("--git-source requires a dedicated runtime prefix, without --python-tools")
+    if (
+        not options.profile
+        and not options.tools
+        and not options.python_tools
+        and not options.git_source
+    ):
+        parser.error("select --profile, --tools, --python-tools or --git-source")
     try:
+        if options.git_source:
+            if not __package__:
+                raise ToolError("Git source mode requires the complete shared Python package")
+            from boxferry_ci import git_install
+
+            load_manifest()
+            evidence = git_install.install(options.destination, git_install.load_source(MANIFEST))
+            print(
+                f"Installed Git {evidence['source']['version']} complete verified runtime prefix."
+            )
+            return 0
         tools = (
             tuple(options.tools)
             if options.tools

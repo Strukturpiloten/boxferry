@@ -31,10 +31,10 @@ jobs:
     permissions:
       contents: read
     # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
-    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-prepare.yml@a87b112d174f249bce12153eb2ae4d72cd531abf # automation-v1 interface v1
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-prepare.yml@7b9ce867e0de8b05ee5d084581cad7de54d06459 # automation-v1 interface v1
     with:
       candidate_sha: ${{ github.sha }}
-      automation_sha: a87b112d174f249bce12153eb2ae4d72cd531abf
+      automation_sha: 7b9ce867e0de8b05ee5d084581cad7de54d06459
       policy_sha: ${{ github.sha }}
       config_path: scripts/shared-validation-policy.json
       app_client_id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
