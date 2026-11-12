@@ -21,6 +21,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "automation/src"))
 
 PIN = json.loads((ROOT / ".github/automation.json").read_text())["revision"]
+OPERATIONAL_CALLERS = (
+    "ci",
+    "dependency-eligibility",
+    "devcontainer-feature-qualification",
+    "release-plz",
+    "release",
+)
 
 
 def workflow() -> str:
@@ -35,29 +42,153 @@ def job(name: str) -> str:
 
 
 class ConsumerContracts(unittest.TestCase):
+    def assert_shared_pin_coherence(
+        self,
+        manifest: dict[str, object],
+        config: dict[str, object],
+        callers: dict[str, str],
+    ) -> None:
+        pin = manifest["revision"]
+        assert isinstance(pin, str)
+        self.assertRegex(pin, r"^[a-f0-9]{40}$")
+        self.assertEqual(set(callers), set(OPERATIONAL_CALLERS))
+        self.assertEqual(
+            config["extends"],
+            [
+                f"github>Strukturpiloten/boxferry//renovate-presets/{name}#{pin}"
+                for name in ("common", "rust")
+            ],
+        )
+
+        def one_pin(raw: str, filename: str) -> None:
+            match = re.fullmatch(r"(?P<quote>['\"]?)(?P<sha>[a-f0-9]{40})(?P=quote)(?: +#.*)?", raw)
+            self.assertIsNotNone(match, filename + " needs an immutable literal source")
+            assert match is not None
+            self.assertEqual(match["sha"], pin, filename + " selects another shared source")
+
+        for name, text in callers.items():
+            filename = ".github/workflows/" + name + ".yml"
+            jobs = re.findall(r"(?ms)^  [\w-]+:\n.*?(?=^  [\w-]+:\n|\Z)", text)
+            producer = next((block for block in jobs if block.startswith("  automation:\n")), "")
+            shared_calls = 0
+            for block in jobs:
+                refs = re.findall(
+                    r"(?m)^    uses: Strukturpiloten/boxferry/\.github/workflows/"
+                    r"[\w-]+\.yml@([^ \n#]+)",
+                    block,
+                )
+                if refs:
+                    self.assertEqual(len(refs), 1, filename)
+                    one_pin(refs[0], filename)
+                    inputs = re.findall(r"(?m)^      automation[_-]sha: ([^\n]+)$", block)
+                    self.assertEqual(
+                        len(inputs), 1, filename + " shared call needs one source input"
+                    )
+                    one_pin(inputs[0], filename)
+                    shared_calls += 1
+            self.assertGreater(shared_calls, 0, filename)
+            steps = re.findall(r"(?ms)^      - .*?(?=^      - |^  [\w-]+:\n|\Z)", text)
+            for step in steps:
+                annotation = (
+                    "# renovate: datasource=github-digest "
+                    "depName=Strukturpiloten/boxferry currentValue=automation-v1"
+                )
+                if annotation in step or (
+                    "repository: Strukturpiloten/boxferry" in step
+                    and re.search(r"(?m)^          path: _automation$", step)
+                ):
+                    self.assertIn("repository: Strukturpiloten/boxferry", step, filename)
+                    self.assertIn(annotation, step, filename)
+                    refs = re.findall(r"(?m)^          ref: ([^\n]+)$", step)
+                    self.assertEqual(len(refs), 1, filename + " checkout needs one immutable ref")
+                    one_pin(refs[0], filename)
+                action = re.search(
+                    r"uses: \./_automation/\.github/actions/"
+                    r"(?P<name>shared-source|shared-crate-publish|shared-node)\b",
+                    step,
+                )
+                if action:
+                    inputs = re.findall(r"(?m)^          automation[_-]sha: ([^\n]+)$", step)
+                    self.assertEqual(len(inputs), 1, filename + " action needs one source input")
+                    if name == "ci" and action["name"] == "shared-node" and step in producer:
+                        self.assertEqual(
+                            inputs[0], "${{ github.sha }}", filename + " producer source"
+                        )
+                    else:
+                        one_pin(inputs[0], filename)
+                if "${AUTOMATION_SHA}" in step:
+                    environment = re.findall(r"(?m)^ +AUTOMATION_SHA: ([^\n]+)$", step)
+                    self.assertEqual(
+                        len(environment), 1, filename + " command needs its held source"
+                    )
+                    one_pin(environment[0], filename)
+
+    def caller_sources(self) -> dict[str, str]:
+        return {
+            name: (ROOT / f".github/workflows/{name}.yml").read_text()
+            for name in OPERATIONAL_CALLERS
+        }
+
     def test_manifest_loader_and_every_operational_caller_pin_align(self) -> None:
-        self.assertRegex(PIN, r"^[a-f0-9]{40}$")
         self.assertEqual(
             (ROOT / "scripts/shared-ci.py").read_bytes(),
             (ROOT / "templates/shared-ci.py").read_bytes(),
         )
-        callers = ("ci", "dependency-eligibility")
-        for name in callers:
-            text = (ROOT / f".github/workflows/{name}.yml").read_text()
-            refs = re.findall(
-                r"Strukturpiloten/boxferry/\.github/workflows/[\w-]+\.yml@([a-f0-9]{40})",
-                text,
-            )
-            self.assertTrue(refs, name)
-            self.assertEqual(set(refs), {PIN}, name)
-        config = json.loads((ROOT / ".github/renovate.json").read_text())
-        self.assertEqual(
-            config["extends"],
-            [
-                f"github>Strukturpiloten/boxferry//renovate-presets/{name}#{PIN}"
-                for name in ("common", "rust")
-            ],
+        self.assert_shared_pin_coherence(
+            json.loads((ROOT / ".github/automation.json").read_text()),
+            json.loads((ROOT / ".github/renovate.json").read_text()),
+            self.caller_sources(),
         )
+
+    def test_pin_coherence_refuses_each_changed_or_missing_caller_binding(self) -> None:
+        manifest = json.loads((ROOT / ".github/automation.json").read_text())
+        config = json.loads((ROOT / ".github/renovate.json").read_text())
+        callers = self.caller_sources()
+        other = "b" * 40 if PIN != "b" * 40 else "c" * 40
+        for name, text in callers.items():
+            for match in re.finditer(
+                r"(?m)^ +(?:automation[_-]sha|AUTOMATION_SHA|ref): " + PIN + r"\n", text
+            ):
+                for replacement in (match[0].replace(PIN, other), ""):
+                    changed = text[: match.start()] + replacement + text[match.end() :]
+                    with self.subTest(caller=name, binding=match[0], removed=not replacement):
+                        with self.assertRaises(AssertionError):
+                            self.assert_shared_pin_coherence(
+                                manifest, config, {**callers, name: changed}
+                            )
+            for match in re.finditer(
+                r"Strukturpiloten/boxferry/\.github/workflows/[\w-]+\.yml@" + PIN, text
+            ):
+                changed = text[: match.start()] + match[0].replace(PIN, other) + text[match.end() :]
+                with (
+                    self.subTest(caller=name, workflow=match[0]),
+                    self.assertRaises(AssertionError),
+                ):
+                    self.assert_shared_pin_coherence(manifest, config, {**callers, name: changed})
+            for match in re.finditer(
+                r"(?m)^ +# renovate: datasource=github-digest "
+                r"depName=Strukturpiloten/boxferry currentValue=automation-v1\n",
+                text,
+            ):
+                changed = text[: match.start()] + text[match.end() :]
+                with self.subTest(caller=name, missing_checkout_owner=True):
+                    with self.assertRaises(AssertionError):
+                        self.assert_shared_pin_coherence(
+                            manifest, config, {**callers, name: changed}
+                        )
+            with self.subTest(missing_caller=name), self.assertRaises(AssertionError):
+                self.assert_shared_pin_coherence(
+                    manifest,
+                    config,
+                    {key: value for key, value in callers.items() if key != name},
+                )
+        with self.subTest(manifest="wrong source"), self.assertRaises(AssertionError):
+            self.assert_shared_pin_coherence({**manifest, "revision": other}, config, callers)
+        for index in range(2):
+            changed_config = copy.deepcopy(config)
+            changed_config["extends"][index] = changed_config["extends"][index].replace(PIN, other)
+            with self.subTest(preset=index), self.assertRaises(AssertionError):
+                self.assert_shared_pin_coherence(manifest, changed_config, callers)
 
     def test_no_missing_trusted_policy_fallback_and_exact_revision_binding(
         self,
@@ -789,6 +920,9 @@ class NativeRenovateContracts(unittest.TestCase):
             ".github/renovate.json",
             ".github/workflows/ci.yml",
             ".github/workflows/dependency-eligibility.yml",
+            ".github/workflows/devcontainer-feature-qualification.yml",
+            ".github/workflows/release-plz.yml",
+            ".github/workflows/release.yml",
             ".github/workflows/shared-rust-dependencies.yml",
             "renovate-presets/common.json",
             "renovate-presets/rust.json",
@@ -932,7 +1066,9 @@ try {
   });
   for (const file of [
     '.github/automation.json','.github/renovate.json','.github/workflows/ci.yml',
-    '.github/workflows/dependency-eligibility.yml','renovate-presets/common.json'
+    '.github/workflows/dependency-eligibility.yml',
+    '.github/workflows/devcontainer-feature-qualification.yml',
+    '.github/workflows/release-plz.yml','.github/workflows/release.yml','renovate-presets/common.json'
   ]) {
     assert.equal(fs.lstatSync(sourceRoot+'/'+file).isSymbolicLink(),false,file);
     fs.mkdirSync(path.dirname(scratch+'/'+file),{recursive:true});
@@ -942,37 +1078,85 @@ try {
     localDir:scratch,baseDir:scratch,cacheDir:scratch+'/cache',presetCachePersistence:false
   });
   await require(runtime+'/dist/logger/index.js').init();
-const {extractPackageFile} =
-    require(runtime + '/dist/modules/manager/custom/regex/index.js');
+  const regex = require(runtime + '/dist/modules/manager/custom/regex/index.js');
+  const actions = require(runtime + '/dist/modules/manager/github-actions/extract.js');
   const {doAutoReplace} =
     require(runtime + '/dist/workers/repository/update/branch/auto-replace.js');
   const common = JSON.parse(fs.readFileSync(scratch + '/renovate-presets/common.json','utf8'));
   const local = JSON.parse(fs.readFileSync(scratch + '/.github/renovate.json','utf8'));
   const pin = JSON.parse(fs.readFileSync(scratch + '/.github/automation.json','utf8')).revision;
+  const next = 'a'.repeat(40);
+  assert.notEqual(pin,next);
+  // Independent literal-declaration inventory: [custom.regex, native github-actions].
+  const expected = new Map([
+    ['.github/automation.json',[1,0]],
+    ['.github/renovate.json',[2,0]],
+    ['.github/workflows/ci.yml',[15,7]],
+    ['.github/workflows/dependency-eligibility.yml',[1,1]],
+    ['.github/workflows/devcontainer-feature-qualification.yml',[1,1]],
+    ['.github/workflows/release-plz.yml',[1,1]],
+    ['.github/workflows/release.yml',[15,1]],
+  ]);
   let count = 0;
-  const files = ['.github/automation.json','.github/renovate.json',
-    '.github/workflows/ci.yml','.github/workflows/dependency-eligibility.yml'];
-  for (const file of files) {
+  for (const [file,counts] of expected) {
     const content = fs.readFileSync(scratch + '/' + file,'utf8');
+    const slots = [...content.matchAll(new RegExp(pin,'g'))].map(match => match.index);
+    assert.equal(slots.length,counts[0]+counts[1],file+' literal declaration inventory');
+    const rows = [];
     for (const manager of [...common.customManagers,...local.customManagers]) {
       if (!manager.managerFilePatterns.some(p => new RegExp(p.slice(1,-1)).test(file))) continue;
-      const extracted = extractPackageFile(content,file,manager);
-      for (const [depIndex, dep] of (extracted?.deps || []).entries()) {
+      const extracted = regex.extractPackageFile(content,file,manager);
+      for (const [depIndex,dep] of (extracted?.deps || []).entries()) {
         if (dep.depName !== 'Strukturpiloten/boxferry') continue;
-        assert.equal(dep.currentDigest,pin);
-        const updated = await doAutoReplace({...manager,...dep,
-          manager:'regex',depIndex,packageFile:file,
-          newValue:dep.currentValue,newDigest:'a'.repeat(40)},content,false);
-        assert.ok(updated && updated.includes('a'.repeat(40)));
-        count++;
-        assert.equal(fs.readFileSync(scratch + '/' + file,'utf8'),updated);
-        if (fault === 'assertion') assert.fail('injected failure after native write');
-        if (fault === 'terminate') process.kill(process.pid,'SIGTERM');
+        rows.push({manager:'regex',definition:manager,extracted,depIndex,dep});
       }
     }
+    if (file.endsWith('.yml')) {
+      const extracted = await actions.extractPackageFile(content,file,{});
+      for (const [depIndex,dep] of (extracted?.deps || []).entries()) {
+        if (dep.currentDigest !== pin) continue;
+        assert.equal(dep.depName,'Strukturpiloten/boxferry');
+        rows.push({manager:'github-actions',definition:{},extracted,depIndex,dep});
+      }
+    }
+    assert.deepEqual(
+      ['regex','github-actions'].map(manager => rows.filter(row => row.manager === manager).length),
+      counts,file+' exact native/custom ownership counts');
+    const owners = new Map(slots.map(position => [position,[]]));
+    for (const row of rows) {
+      assert.equal(row.dep.currentDigest,pin);
+      assert.equal(row.dep.currentValue,'automation-v1');
+      fs.writeFileSync(scratch+'/'+file,content);
+      const updated = await doAutoReplace({...row.definition,...row.extracted,...row.dep,
+        manager:row.manager,depIndex:row.depIndex,packageFile:file,
+        newValue:row.dep.currentValue,newDigest:next,autoReplaceGlobalMatch:false},content,false);
+      const changed = slots.filter(position => updated ===
+        content.slice(0,position)+next+content.slice(position+pin.length));
+      assert.equal(changed.length,1,file+' replaces exactly one complete immutable declaration');
+      owners.get(changed[0]).push(row.manager);
+      const after = row.manager === 'regex'
+        ? regex.extractPackageFile(updated,file,row.definition)
+        : await actions.extractPackageFile(updated,file,{});
+      assert.equal(after.deps[row.depIndex].currentDigest,next);
+      assert.equal(after.deps[row.depIndex].currentValue,'automation-v1');
+      assert.equal(fs.readFileSync(scratch+'/'+file,'utf8'),updated);
+      count++;
+      if (fault === 'assertion') assert.fail('injected failure after native write');
+      if (fault === 'terminate') process.kill(process.pid,'SIGTERM');
+    }
+    for (const [position,managerNames] of owners)
+      assert.equal(managerNames.length,1,file+':'+position+' needs exactly one Renovate owner');
+    let coherent = content;
+    for (const row of rows) {
+      fs.writeFileSync(scratch+'/'+file,coherent);
+      coherent = await doAutoReplace({...row.definition,...row.extracted,...row.dep,
+        manager:row.manager,depIndex:row.depIndex,packageFile:file,
+        newValue:row.dep.currentValue,newDigest:next,autoReplaceGlobalMatch:false},coherent,false);
+    }
+    assert.equal(coherent,content.split(pin).join(next),
+      file+' coherent complete source replacement');
   }
-  assert.ok(count >= 8,
-    'shared presets, manifest and every caller input must have native ownership');
+  assert.equal(count,47,'every operational source declaration has an exclusive tested owner');
 
 } finally {
   process.chdir(parent);
