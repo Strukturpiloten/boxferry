@@ -23,6 +23,9 @@ and successful native/App qualification precede activation.
 
 ## Active decisions
 
+[ADR 0100](0100-git-worktree-source-identity.md) binds the complete Git runtime to
+explicit mounted source/index identity and a verified standalone-clone fallback.
+
 [ADR 0099](0099-candidate-coverage-tool-authority.md) selects one candidate-owned coverage
 CLI/compiler pair for local, shared CI and image validation while preserving scoped updater holds.
 

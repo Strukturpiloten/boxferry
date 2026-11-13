@@ -900,9 +900,21 @@ class InstallationTests(unittest.TestCase):
         for extra in (["--profile", "core"], ["--tools", "lychee"], ["--python-tools"]):
             with self.subTest(extra=extra), self.assertRaises(SystemExit):
                 subject.main(["--destination", "/tmp/new-prefix", "--git-source", *extra])
-        with patch.object(git_install, "install") as build:
-            self.assertEqual(subject.main(["--destination", "/tmp/new-prefix", "--git-source"]), 2)
-            build.assert_not_called()
+        # Absence is an isolated malformed selection, independent of the current
+        # operational inventory now legitimately selecting Git.
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "empty-source.json"
+            manifest.write_text(json.dumps(manifest_fixture() | {"schema": 2, "sources": []}))
+            with (
+                patch.object(subject, "MANIFEST", manifest),
+                patch.object(git_install, "install") as build,
+                patch("sys.stderr", new_callable=io.StringIO) as errors,
+            ):
+                self.assertEqual(
+                    subject.main(["--destination", "/tmp/new-prefix", "--git-source"]), 2
+                )
+                build.assert_not_called()
+                self.assertIn("requires exactly one canonical Git source", errors.getvalue())
 
     def test_shared_cli_dispatches_tools_without_candidate_policy_arguments(self) -> None:
         from boxferry_ci.__main__ import main as shared_main
@@ -1170,7 +1182,7 @@ class PythonToolExportTests(unittest.TestCase):
 
 
 class ConsumerContractTests(unittest.TestCase):
-    def closure(self, root: Path) -> Path:
+    def closure(self, root: Path, *, source_reader: bool = True) -> Path:
         wrapper = (CONSUMERS / "scripts/install-file-tools.sh").read_text(encoding="utf-8")
         self.assertIn(
             'exec python3 "${repository_root}/automation/src/boxferry_ci/tooling.py"',
@@ -1188,6 +1200,11 @@ class ConsumerContractTests(unittest.TestCase):
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+        if source_reader:
+            shutil.copyfile(
+                Path(subject.__file__).with_name("git_source.py"),
+                root / "automation/src/boxferry_ci/git_source.py",
+            )
         return root / "scripts/install-file-tools.sh"
 
     def test_thin_wrapper_preserves_destinations_and_stdlib_only_closure(self) -> None:
@@ -1257,10 +1274,10 @@ class ConsumerContractTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "12")
 
-    def test_standalone_future_inventory_requires_its_exact_source_reader(self) -> None:
+    def test_standalone_source_inventory_requires_its_exact_source_reader(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.closure(root)
+            self.closure(root, source_reader=False)
             path = root / "automation/tool-artifacts.json"
             document: dict[str, Any] = manifest_fixture() | {
                 "schema": 2,
@@ -1406,20 +1423,34 @@ class ConsumerContractTests(unittest.TestCase):
 
     def test_devcontainer_minimal_closure_has_no_duplicate_version_authorities(self) -> None:
         source = (CONSUMERS / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
+        copies = {}
+        for line in source.splitlines():
+            if line.startswith("COPY "):
+                *origins, destination = line.split()[1:]
+                for origin in origins:
+                    self.assertNotIn(origin, copies, "image input must have one owner")
+                    copies[origin] = destination
         for relative, destination in (
             ("scripts/install-file-tools.sh", "/opt/boxferry-tooling/scripts/"),
+            ("scripts/install-git.sh", "/opt/boxferry-tooling/scripts/"),
+            ("scripts/shared-ci.py", "/opt/boxferry-tooling/scripts/"),
             (
                 "automation/src/boxferry_ci/tooling.py",
                 "/opt/boxferry-tooling/automation/src/boxferry_ci/",
             ),
+            (
+                "automation/src/boxferry_ci/git_source.py",
+                "/opt/boxferry-tooling/automation/src/boxferry_ci/",
+            ),
             ("automation/tool-artifacts.json", "/opt/boxferry-tooling/automation/"),
         ):
-            self.assertIn(f"COPY {relative} {destination}", source)
+            self.assertEqual(copies[relative], destination)
+            self.assertTrue((CONSUMERS / relative).is_file())
         self.assertIn(
             "bash /opt/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin", source
         )
         self.assertIn("--destination /usr/local/bin --tools actionlint lychee", source)
-        self.assertIn("COPY scripts/shared-ci.py /opt/boxferry-tooling/scripts/", source)
+        self.assertIn("bash /opt/boxferry-tooling/scripts/install-git.sh /opt/boxferry-git", source)
         self.assertIn("COPY .github/automation.json /opt/boxferry-tooling/.github/", source)
         self.assertIn("--tools actionlint lychee --python-tools", source)
         self.assertNotIn("rm -r /opt/boxferry-tooling", source)
@@ -1499,11 +1530,23 @@ class NativeRenovateTests(unittest.TestCase):
       x.startsWith("github>Strukturpiloten/boxferry//renovate-presets/common#"));
     const localManagers = [...(adopted ? config.customManagers : []),
       ...rootConfig.customManagers];
-    const rootOwners = localManagers.flatMap(m =>
+    const allRootOwners = localManagers.flatMap(m =>
       m.managerFilePatterns.some(p => new RegExp(p.slice(1,-1)).test(file))
         ? extract(original, file, m).deps : []);
-    assert.equal(rootOwners.length, 12, "root bootstrap needs one owner per row");
-    assert.deepEqual(rootOwners, owners);
+    const rootOwners = allRootOwners.filter(dep => dep.datasource !== "custom.kernel-git");
+    const gitOwners = allRootOwners.filter(dep => dep.datasource === "custom.kernel-git");
+    const gitRows = JSON.parse(original).sources || [];
+    const ownsGit = Boolean(rootConfig.customDatasources?.["kernel-git"]);
+    assert.equal(rootOwners.length, 12, "root bootstrap needs one owner per binary row");
+    assert.deepEqual(rootOwners, owners, "Git adoption must preserve every binary extraction");
+    assert.equal(gitOwners.length, ownsGit ? gitRows.length : 0,
+      "one local source owner per declaration");
+    assert.equal(allRootOwners.length, 12 + gitOwners.length, "no unknown or duplicate extraction");
+    for (const [index, dep] of gitOwners.entries()) {
+      assert.equal(dep.depName, "git");
+      assert.equal(dep.currentValue, gitRows[index].currentVersion);
+      assert.equal(dep.currentDigest, gitRows[index].sha256);
+    }
     assert.ok(!rootConfig.customManagers.some(m =>
       m.description === "Signal updates for checksum-pinned file-quality tools"));
     for (let index = 0; index < rows.length; index++) {

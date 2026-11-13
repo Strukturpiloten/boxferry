@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -320,15 +321,25 @@ class DevContainerRenovateTests(unittest.TestCase):
 
 
 class FileToolWrapperTests(unittest.TestCase):
-    def test_devcontainer_copies_the_canonical_three_file_closure(self) -> None:
+    def test_devcontainer_copies_the_complete_canonical_tool_reader_and_callers(
+        self,
+    ) -> None:
         dockerfile = (ROOT / DOCKERFILE_PATH).read_text(encoding="utf-8")
         for source in (
             "scripts/install-file-tools.sh",
             "automation/src/boxferry_ci/tooling.py",
+            "automation/src/boxferry_ci/git_source.py",
             "automation/tool-artifacts.json",
+            "scripts/shared-ci.py",
+            "scripts/install-git.sh",
         ):
             with self.subTest(source=source):
-                self.assertRegex(dockerfile, rf"(?m)^COPY {re.escape(source)} ")
+                declarations = [
+                    line.split()[1:-1]
+                    for line in dockerfile.splitlines()
+                    if line.startswith("COPY ")
+                ]
+                self.assertEqual(sum(source in inputs for inputs in declarations), 1)
                 self.assertTrue((ROOT / source).is_file())
         self.assertIn(
             "bash /opt/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin",
@@ -409,6 +420,120 @@ class FileToolWrapperTests(unittest.TestCase):
             self.assertEqual(result.returncode, 17)
             self.assertTrue(log.exists())
 
+    def test_git_wrapper_uses_verified_source_with_explicit_candidate_inventory(
+        self,
+    ) -> None:
+        for case in (
+            "success",
+            "bootstrap-refused",
+            "install-refused",
+            "wrong-profile",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "scripts").mkdir()
+                (root / ".github").mkdir()
+                (root / "automation").mkdir()
+                binary = root / "bin"
+                binary.mkdir()
+                wrapper = root / "scripts/install-git.sh"
+                wrapper.write_bytes((ROOT / "scripts/install-git.sh").read_bytes())
+                (root / "scripts/shared-ci.py").write_text("# verified bootstrap fixture\n")
+                manifest = json.loads((ROOT / ".github/automation.json").read_text())
+                (root / ".github/automation.json").write_text(json.dumps(manifest))
+                inventory = root / "automation/tool-artifacts.json"
+                inventory.write_bytes((ROOT / "automation/tool-artifacts.json").read_bytes())
+                selected = root / "target/boxferry-automation" / manifest["revision"] / "automation"
+                selected.mkdir(parents=True)
+                # The admitted producer deliberately has no operational Git row.
+                (selected / "tool-artifacts.json").write_text('{"schema":2,"sources":[]}')
+                log = root / "calls.jsonl"
+                prefix = root / "complete prefix"
+                python = binary / "python3"
+                python.write_text(
+                    f"#!{sys.executable}\nimport json,os,sys\n"
+                    f"with open({str(log)!r},'a') as stream: stream.write(json.dumps(['python3',*sys.argv[1:]])+'\\n')\n"
+                    "if sys.argv[1].endswith('shared-ci.py'):\n"
+                    f" raise SystemExit({19 if case == 'bootstrap-refused' else 0})\n"
+                    f"os.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])\n"
+                )
+                uv = binary / "uv"
+                git_payload = (
+                    "#!/bin/sh\nprintf '%s\\n' 'rust: "
+                    + ("enabled" if case == "wrong-profile" else "disabled")
+                    + "'\n"
+                )
+                uv.write_text(
+                    f"#!{sys.executable}\n"
+                    "import json,os,sys,types\nfrom pathlib import Path\n"
+                    f"with open({str(log)!r},'a') as stream: stream.write(json.dumps(['uv',*sys.argv[1:]])+'\\n')\n"
+                    "class ToolError(ValueError): pass\n"
+                    "package=types.ModuleType('boxferry_ci'); package.__path__=[]\n"
+                    "installer=types.ModuleType('boxferry_ci.git_install')\n"
+                    "def load_source(path):\n"
+                    f" assert path == Path({str(inventory)!r}), 'must use candidate inventory'\n"
+                    " return json.loads(path.read_text())['sources'][0]\n"
+                    "def install(prefix, source, *, execute):\n"
+                    f" if {case == 'install-refused'!r}: raise ToolError('controlled source integrity refusal')\n"
+                    " assert source == load_source(Path(sys.argv[-1]))\n"
+                    " prefix.joinpath('bin').mkdir(parents=True)\n"
+                    " git=prefix/'bin/git'\n"
+                    f" git.write_text({git_payload!r})\n"
+                    " git.chmod(0o755)\n"
+                    " result=execute(('controlled-prerequisite',),cwd=prefix,stage='fixture',timeout_seconds=17)\n"
+                    " assert result.status == 'success'\n"
+                    " return {'complete_prefix':str(prefix)}\n"
+                    "def run(*args,**kwargs):\n"
+                    " assert args == (('controlled-prerequisite',),) and kwargs['timeout_seconds']==17\n"
+                    " return types.SimpleNamespace(status='success',stdout='bounded prerequisite output\\n',stderr='')\n"
+                    "installer.install=install;installer.load_source=load_source\n"
+                    "package.runner=types.SimpleNamespace(run=run);package.tooling=types.SimpleNamespace(ToolError=ToolError)\n"
+                    "sys.modules['boxferry_ci']=package;sys.modules['boxferry_ci.git_install']=installer\n"
+                    "program=sys.stdin.read();sys.argv=['-',*sys.argv[-2:]]\n"
+                    "exec(compile(program,'canonical-wrapper-input','exec'))\n"
+                )
+                for executable in (python, uv):
+                    executable.chmod(0o755)
+                result = subprocess.run(
+                    ["bash", str(wrapper), str(prefix)],
+                    env={**os.environ, "PATH": str(binary) + ":" + os.environ["PATH"]},
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                if case == "bootstrap-refused":
+                    self.assertEqual(result.returncode, 19)
+                    self.assertEqual(len(calls), 1)
+                    self.assertFalse(prefix.exists())
+                    continue
+                self.assertEqual(
+                    calls[-1],
+                    [
+                        "uv",
+                        "run",
+                        "--locked",
+                        "--project",
+                        str(selected),
+                        "python",
+                        "-I",
+                        "-",
+                        str(prefix),
+                        str(inventory),
+                    ],
+                )
+                if case == "success":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("bounded prerequisite output", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Canonical Git image installation failed", result.stderr)
+                    self.assertIn(
+                        "integrity refusal" if case == "install-refused" else "C build profile",
+                        result.stderr,
+                    )
+
 
 class KubernetesToolRenovateTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -452,7 +577,8 @@ class KubernetesToolRenovateTests(unittest.TestCase):
     def test_each_tool_has_one_owner_and_two_reviewed_checksums(self) -> None:
         pins = self.validate(self.configuration, self.source)
         self.assertEqual(
-            len(pins), len(re.findall(r"^readonly \w+_version=", self.source, re.MULTILINE)) + 2
+            len(pins),
+            len(re.findall(r"^readonly \w+_version=", self.source, re.MULTILINE)) + 2,
         )
         for tool in ("kubectl", "helm", "kustomize"):
             self.assertEqual(
@@ -682,10 +808,93 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 ".github/automation.json",
                 ".devcontainer/Dockerfile",
                 "rust-toolchain.toml",
+                "automation/tool-artifacts.json",
+                "scripts/git-worktree.py",
             ):
                 target = checkout / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
+            shutil.copytree(
+                ROOT / "automation/src/boxferry_ci",
+                checkout / "automation/src/boxferry_ci",
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            real_git = shutil.which("git")
+            assert real_git is not None
+            git_environment = {
+                key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+            }
+            git_environment.update(
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_SYSTEM=os.devnull,
+                GIT_CONFIG_COUNT="0",
+            )
+            fixture_git = [
+                real_git,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgSign=false",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                str(checkout),
+            ]
+            for args in (
+                ("init", "--initial-branch=main"),
+                ("config", "user.name", "Lifecycle fixture"),
+                ("config", "user.email", "fixture@example.invalid"),
+            ):
+                subprocess.run(
+                    [*fixture_git, *args],
+                    env=git_environment,
+                    check=True,
+                    capture_output=True,
+                )
+            subprocess.run([*fixture_git, "add", "."], env=git_environment, check=True)
+            subprocess.run(
+                [*fixture_git, "commit", "-m", "fixture"],
+                env=git_environment,
+                check=True,
+                capture_output=True,
+            )
+            prefix = fixture / "git-prefix"
+            for name in (
+                "libexec/git-core/git-remote-http",
+                "libexec/git-core/git-remote-https",
+                "libexec/git-core/git-http-fetch",
+                "libexec/git-core/git-http-push",
+                "libexec/git-core/git-send-email",
+                "share/perl5/Git.pm",
+                "share/git-core/templates/info/exclude",
+                "share/doc/git/COPYING",
+            ):
+                path = prefix / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"controlled runtime fixture\n")
+            source = json.loads((checkout / "automation/tool-artifacts.json").read_text())[
+                "sources"
+            ][0]
+            provenance = {
+                "source": {
+                    "version": source["currentVersion"],
+                    "url": source["url"],
+                    "sha256": source["sha256"],
+                },
+                "license": {
+                    "sha256": hashlib.sha256(
+                        (prefix / "share/doc/git/COPYING").read_bytes()
+                    ).hexdigest()
+                },
+            }
+            if case == "wrong-git-source":
+                provenance["source"]["sha256"] = "0" * 64
+            (prefix / "share/doc/git/boxferry-source.json").write_text(json.dumps(provenance))
+            if case == "wrong-git-license":
+                (prefix / "share/doc/git/COPYING").write_text("changed")
+            if case == "missing-git-helper":
+                (prefix / "libexec/git-core/git-remote-https").unlink()
             manifest = json.loads((checkout / ".github/automation.json").read_text())
             (tooling / ".github").mkdir(parents=True)
             retained = {**manifest, "revision": "f" * 40} if case == "wrong-authority" else manifest
@@ -704,6 +913,7 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 )
                 for name in ("ruff", "ty")
             }
+            versions["git"] = source["currentVersion"]
             versions["uv"] = metadata["tool"]["uv"]["required-version"][2:]
             node = re.search(
                 r"FROM docker\.io/library/node:([0-9]+\.[0-9]+\.[0-9]+)-",
@@ -717,7 +927,7 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             versions["rustc"] = channel
             tools = (
                 "actionlint cargo cargo-clippy cargo-deny cargo-llvm-cov cargo-semver-checks "
-                "curl gh git hadolint helm jq kind kubectl kustomize lychee markdownlint-cli2 "
+                "curl gh git git-system perl hadolint helm jq kind kubectl kustomize lychee markdownlint-cli2 "
                 "node npm prettier ruff rustc rustfmt rustup shellcheck shfmt "
                 "tombi ty uv zizmor sudo podman"
             ).split()
@@ -727,19 +937,25 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 "from pathlib import Path\n"
                 f"versions = {versions!r}\n"
                 "name, args = Path(sys.argv[0]).name, sys.argv[1:]\n"
-                "case = os.environ['LIFECYCLE_CASE']\n"
-                "with open(os.environ['TOOL_CALLS'], 'a') as stream:\n"
+                f"case = {case!r}\n"
+                f"with open({str(log)!r}, 'a') as stream:\n"
                 "    stream.write(json.dumps([name, *args]) + '\\n')\n"
                 "if name in ('sudo', 'podman'):\n"
                 "    raise SystemExit(99)\n"
-                "if name == 'git' and args != ['--version']:\n"
-                "    if args != ['-C', os.environ['EXPECTED_CHECKOUT'], "
-                "'rev-parse', '--show-toplevel']:\n"
-                "        raise SystemExit(98)\n"
-                "    if case == 'missing-checkout':\n"
-                "        raise SystemExit(128)\n"
-                "    root = Path(os.environ['EXPECTED_CHECKOUT'])\n"
-                "    print(root.parent if case == 'wrong-root' else root)\n"
+                "if name in ('git', 'git-system'):\n"
+                "    if args == ['--version', '--build-options']:\n"
+                "        print('git version ' + versions['git'])\n"
+                "        print('rust: enabled' if case == 'wrong-git-profile' else 'rust: disabled')\n"
+                "    elif args == ['--exec-path']:\n"
+                f"        print('/unrelated' if case == 'wrong-git-prefix' else {str(prefix / 'libexec/git-core')!r})\n"
+                "    elif args == ['--version']:\n"
+                "        version = '0.0.0' if case == 'wrong-' + name else versions['git']\n"
+                "        print('git version ' + version)\n"
+                "    elif args[-2:] == ['rev-parse', '--show-toplevel'] and case in ('missing-checkout', 'wrong-root'):\n"
+                "        if case == 'missing-checkout': raise SystemExit(128)\n"
+                f"        print(Path({str(checkout)!r}).parent)\n"
+                "    else:\n"
+                f"        os.execv({real_git!r}, [{real_git!r}, *args])\n"
                 "elif name == 'rustup' and args == ['component', 'list', '--installed']:\n"
                 "    print('clippy-x86_64-unknown-linux-gnu')\n"
                 "    if case != 'missing-llvm':\n"
@@ -760,6 +976,11 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 (ROOT / ".devcontainer/verify-tools.sh")
                 .read_text()
                 .replace('tooling_root="/opt/boxferry-tooling"', f'tooling_root="{tooling}"')
+                .replace(
+                    'prefix = Path("/opt/boxferry-git")',
+                    f"prefix = Path({str(prefix)!r})",
+                )
+                .replace('"/usr/bin/git"', repr(str(binary / "git-system")))
             )
             environment = {
                 **os.environ,
@@ -793,21 +1014,48 @@ class SingleCloneLifecycleTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(
             any(
-                len(call) == 5
+                len(call) >= 5
                 and call[0] == "git"
-                and call[2].endswith("/checkout")
-                and call[3:] == ["rev-parse", "--show-toplevel"]
+                and call[-4] == "-C"
+                and call[-3].endswith("/checkout")
+                and call[-2:] == ["rev-parse", "--show-toplevel"]
                 for call in calls
             )
         )
         self.assertIn("tooling is ready", completed.stdout)
+
+    def test_fixture_setup_cannot_route_writes_or_hooks_into_ambient_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            outside = Path(temporary)
+            marker = outside / "protected"
+            marker.write_bytes(b"unrelated")
+            configuration = outside / "global-git-config"
+            configuration.write_text(
+                "[core]\n hooksPath = /unavailable-user-hooks\n[commit]\n gpgSign = true\n"
+            )
+            from unittest.mock import patch
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GIT_DIR": str(outside / "metadata-that-must-not-be-created"),
+                    "GIT_WORK_TREE": str(outside),
+                    "GIT_CONFIG_GLOBAL": str(configuration),
+                },
+            ):
+                completed, _calls = self.exercise("valid")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(marker.read_bytes(), b"unrelated")
+            self.assertEqual(
+                sorted(path.name for path in outside.iterdir()), ["global-git-config", "protected"]
+            )
 
     def test_missing_or_misbound_own_checkout_fails(self) -> None:
         for case in ("missing-checkout", "wrong-root"):
             with self.subTest(case=case):
                 completed, _calls = self.exercise(case)
                 self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("requires its own Git checkout", completed.stderr)
+                self.assertIn("BoxFerry Git source check failed", completed.stderr)
 
     def test_existing_missing_component_failure_is_retained(self) -> None:
         completed, _calls = self.exercise("missing-llvm")
@@ -822,6 +1070,13 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             "wrong-node",
             "wrong-rustc",
             "wrong-authority",
+            "wrong-git",
+            "wrong-git-system",
+            "wrong-git-prefix",
+            "wrong-git-profile",
+            "wrong-git-source",
+            "wrong-git-license",
+            "missing-git-helper",
         ):
             with self.subTest(case=case):
                 completed, _calls = self.exercise(case)

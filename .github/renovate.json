@@ -1,8 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>Strukturpiloten/boxferry//renovate-presets/common#7b9ce867e0de8b05ee5d084581cad7de54d06459",
-    "github>Strukturpiloten/boxferry//renovate-presets/rust#7b9ce867e0de8b05ee5d084581cad7de54d06459"
+    "github>Strukturpiloten/boxferry//renovate-presets/common#32bebc379d7b32e79412eeba65e084484d4d18b0",
+    "github>Strukturpiloten/boxferry//renovate-presets/rust#32bebc379d7b32e79412eeba65e084484d4d18b0"
   ],
   "dependencyDashboard": true,
   "ignorePaths": [
@@ -206,6 +206,16 @@
       ],
       "versioningTemplate": "regex:^qemu-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
       "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\nreadonly release_emulator_image='{{{depName}}}:{{{newValue}}}@{{{newDigest}}}'"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^automation/tool-artifacts\\.json$/"],
+      "matchStrings": [
+        "\"tool\": \"(?<depName>git)\",\\n(?<indentation>[ \\t]*)\"provider\": \"kernel\\.org\",\\n[ \\t]*\"currentVersion\": \"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\",\\n[ \\t]*\"filename\": \"git-[0-9]+\\.[0-9]+\\.[0-9]+\\.tar\\.xz\",\\n[ \\t]*\"url\": \"https://www\\.kernel\\.org/pub/software/scm/git/git-[0-9]+\\.[0-9]+\\.[0-9]+\\.tar\\.xz\",\\n[ \\t]*\"sha256\": \"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "custom.kernel-git",
+      "versioningTemplate": "semver",
+      "autoReplaceStringTemplate": "\"tool\": \"git\",\n{{{indentation}}}\"provider\": \"kernel.org\",\n{{{indentation}}}\"currentVersion\": \"{{{newValue}}}\",\n{{{indentation}}}\"filename\": \"git-{{{newValue}}}.tar.xz\",\n{{{indentation}}}\"url\": \"https://www.kernel.org/pub/software/scm/git/git-{{{newValue}}}.tar.xz\",\n{{{indentation}}}\"sha256\": \"{{{newDigest}}}\""
     }
   ],
   "packageRules": [
@@ -328,7 +338,25 @@
         "zizmor"
       ],
       "enabled": false
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["custom.kernel-git"],
+      "matchPackageNames": ["git"],
+      "matchFileNames": ["automation/tool-artifacts.json"],
+      "groupName": "Canonical downloaded tools",
+      "pinDigests": true,
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     }
   ],
-  "gitIgnoredAuthors": ["317908760+strukturpiloten-release-plz[bot]@users.noreply.github.com"]
+  "gitIgnoredAuthors": ["317908760+strukturpiloten-release-plz[bot]@users.noreply.github.com"],
+  "customDatasources": {
+    "kernel-git": {
+      "defaultRegistryUrlTemplate": "https://www.kernel.org/pub/software/scm/git/sha256sums.asc",
+      "format": "plain",
+      "transformTemplates": [
+        "{\"releases\": [releases.($m := $match(version, /^([a-f0-9]{64}) [ *]git-([1-9][0-9]*\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*))\\.tar\\.xz$/); $m ? {\"version\": $m.groups[1], \"digest\": $m.groups[0]} : $nothing)]}"
+      ]
+    }
+  }
 }

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import git_worktree_validation
 from .contracts import ContractError, exact_sha
 from .dependencies import fetch_metadata
 from .operational import _json
@@ -1399,6 +1400,55 @@ def _verify_origin(root: Path, repository: str, commands: Commands) -> None:
         raise ValidationError("source origin differs from its scoped workspace repository")
 
 
+def probe_argv(
+    engine_argv: tuple[str, ...],
+    name: str,
+    token: str,
+    image_id: str,
+    identity: str,
+    group: str,
+    workdir: str,
+    mounts: list[str],
+    runtime_environment: list[str],
+    command: tuple[str, ...],
+) -> tuple[str, ...]:
+    """One exact-image probe profile, shared without changing its isolation flags."""
+    return (
+        *engine_argv,
+        "create",
+        "--name",
+        name,
+        "--label",
+        f"io.boxferry.devcontainer.run={token}",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "512",
+        "--memory",
+        "4g",
+        "--cpus",
+        "2",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=256m",
+        "--user",
+        f"{identity}:{group}",
+        "--workdir",
+        workdir,
+        *mounts,
+        "--entrypoint",
+        "/usr/bin/env",
+        image_id,
+        "-i",
+        *runtime_environment,
+        *command,
+    )
+
+
 def qualify(
     *,
     repository: str,
@@ -1549,6 +1599,16 @@ def qualify(
             name: binding["mode"] for name, binding in ignores.items()
         }
         report["git_metadata_excluded_from_build"] = True
+        git_fixtures = (
+            git_worktree_validation.prepare(private, automation, snapshot, commands)
+            if repository == "boxferry"
+            else None
+        )
+        if git_fixtures is not None:
+            report["git_worktree_host"] = git_fixtures.expected
+            host_evidence = work / f"git-worktree-host-{token}.json"
+            with host_evidence.open("x") as stream:
+                json.dump(git_fixtures.expected, stream, sort_keys=True)
         cli, cli_version = _cli(automation)
         node = shutil.which("node")
         if node is None or not Path(node).is_file():
@@ -1680,43 +1740,23 @@ def qualify(
                         f"{target}:rw,nosuid,nodev,uid={identity},gid={group},mode=0700,size=256m",
                     )
                 )
-        argv = (
-            *engine_argv,
-            "create",
-            "--name",
+        argv = probe_argv(
+            engine_argv,
             name,
-            "--label",
-            f"io.boxferry.devcontainer.run={token}",
-            "--network",
-            "none",
-            "--read-only",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--pids-limit",
-            "512",
-            "--memory",
-            "4g",
-            "--cpus",
-            "2",
-            "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=256m",
-            "--user",
-            f"{identity}:{group}",
-            "--workdir",
-            config["workspaceFolder"],
-            *mounts,
-            "--entrypoint",
-            "/usr/bin/env",
+            token,
             image_id,
-            "-i",
-            *_runtime_environment(config, sources, repository),
-            "/bin/bash",
-            "-c",
-            probe_script(probe_versions, sources, repository),
-            "qualification",
-            machine,
+            identity,
+            group,
+            config["workspaceFolder"],
+            mounts,
+            _runtime_environment(config, sources, repository),
+            (
+                "/bin/bash",
+                "-c",
+                probe_script(probe_versions, sources, repository),
+                "qualification",
+                machine,
+            ),
         )
         created = True  # Track interrupted creates by unique name plus held owner label.
         container_id = commands.call(argv, "create-probe").strip()
@@ -1738,6 +1778,73 @@ def qualify(
             raise ValidationError(
                 "exact-image verifier exited unsuccessfully or changed image identity"
             )
+        if git_fixtures is not None:
+            # Reuse the exact image and original absolute 300-second probe deadline.
+            remove_owned_container(commands, engine_argv, container_id, token)
+            created, container_id = False, None
+            program = (
+                "import sys;sys.path.insert(0,'/opt/boxferry-git-contract');"
+                "from boxferry_ci.git_worktree_validation import main;raise SystemExit(main())"
+            )
+            argv = probe_argv(
+                engine_argv,
+                name,
+                token,
+                image_id,
+                identity,
+                group,
+                "/tmp",
+                git_worktree_validation.mounts(git_fixtures, snapshot),
+                ["PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "LC_ALL=C.UTF-8"],
+                (
+                    "python3",
+                    "-I",
+                    "-c",
+                    git_worktree_validation.IMAGE_PYTHON,
+                    automation_sha,
+                    program,
+                ),
+            )
+            created = True
+            container_id = commands.call(argv, "create-git-worktree-probe").strip()
+            if re.fullmatch(r"[a-f0-9]{64}", container_id) is None:
+                raise ValidationError("engine returned an invalid Git probe container identity")
+            raw = commands.call(
+                (*engine_argv, "start", "--attach", container_id),
+                "git-worktree-probe",
+                PROBE_SECONDS,
+                max_output_bytes=git_worktree_validation.MAX_RECEIPT,
+            )
+            raw_evidence = work / f"git-worktree-probe-{token}.json"
+            with raw_evidence.open("x") as stream:
+                stream.write(raw)
+            state = _inspection(
+                commands.call(
+                    (*engine_argv, "container", "inspect", container_id), "git-probe-state"
+                )
+            )
+            if (
+                not isinstance(state.get("State"), dict)
+                or state["State"].get("ExitCode") != 0
+                or _image_identity(state.get("Image")) != image_id
+            ):
+                raise ValidationError("Git fixture probe failed or changed its exact image")
+            report["git_worktree_contract"] = git_worktree_validation.verify_receipt(
+                raw, git_fixtures, machine, int(identity), int(group)
+            )
+            contract = report["git_worktree_contract"]
+            assert isinstance(contract, dict)
+            contract.update(
+                image_id=image_id,
+                container_id=container_id,
+                container_exit_code=0,
+                candidate_sha=candidate,
+                policy_sha=policy_sha,
+                automation_sha=automation_sha,
+            )
+            report.pop("git_worktree_host", None)
+            report["git_worktree_status"] = "success"
+            report["git_worktree_spec_sha256"] = git_worktree_validation.SPEC_SHA256
         _held_revision(source, candidate, commands, clean=True)
         _held_revision(policy, policy_sha, commands)
         _held_revision(automation, automation_sha, commands)
@@ -1864,6 +1971,10 @@ def main(argv: list[str] | None = None) -> int:
             stream.write(f"sources={encoded}\nsource_digest={manifest_digest(result)}\n")
             if args.automation:
                 stream.write(f"node_version={canonical_versions(args.automation)['node']}\n")
+                if args.repository == "boxferry":
+                    stream.write(
+                        f"git_worktree_spec_sha256={git_worktree_validation.SPEC_SHA256}\n"
+                    )
     if args.github_output and args.command == "qualify" and result.get("status") == "success":
         with args.github_output.open("a") as stream:
             for name in (
@@ -1876,6 +1987,9 @@ def main(argv: list[str] | None = None) -> int:
                 "architecture",
             ):
                 stream.write(f"{name}={result[name]}\n")
+            if args.repository == "boxferry":
+                for name in ("git_worktree_status", "git_worktree_spec_sha256"):
+                    stream.write(f"{name}={result[name]}\n")
     return (
         0
         if (args.command == "resolve" and "repositories" in result)

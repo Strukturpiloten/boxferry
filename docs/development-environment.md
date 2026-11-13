@@ -32,18 +32,13 @@ image version/digest pairs, features, Cargo tools and downloaded-tool inventory;
 [development policy](dependency-policy.md) defines integrity and exceptions.
 The [shared inventory](../automation/tool-artifacts.json) and
 [installer](../scripts/install-file-tools.sh) supply file tools. Rebuild after upgrades.
-Git comes from the pinned base; `gh` uses the locked feature.
-
-The installer exposes `tools --git-source` for a future canonical Git source
-record. It requires a new prefix (not existing `/usr/local`), the shared Python
-package, native build prerequisites, Perl, OpenSSL and base-owned CA trust at
-`/etc/ssl/certs/ca-certificates.crt`; caller trust variables cannot select this bundle.
-It verifies the archive before bounded extraction/build, validates the staged complete
-runtime, and retains COPYING and source provenance. No Git source record or image
-invocation is selected. C builds omit Rust-only compatibility hashing, GUI, translations and generated docs.
-Builds use two make jobs, wall/child CPU/memory/file/output limits and owned-child
-cleanup. This is no process sandbox: Linux UID quotas count unrelated work and may
-not apply to root builds. Native builds and worktree/mount acceptance remain under #453.
+Git uses the same inventory's official source archive and admitted complete-prefix
+installer; `gh` uses the locked feature. Rebuild after source changes. See
+[Git worktree compatibility](development/git-worktree-compatibility.md) for relative metadata
+mounts, exact source/index checks and the explicit standalone-clone fallback.
+The C build preserves HTTPS trust, COPYING and source provenance. It omits optional
+Rust compatibility hashing, GUI, translations and generated documentation. Native image and VS Code acceptance remain
+separate from complete local gates.
 
 The [Kubernetes installer](../scripts/install-kubernetes-tools.sh) supplies pinned kind,
 kubectl, Helm and Kustomize. Its trusted checksum refresher verifies official metadata

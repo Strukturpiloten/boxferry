@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "provenance": {
     "reviewedPins": [
       "https://github.com/Strukturpiloten/boxferry/blob/ea264db2d6265454340b8e9e43fc99c3228eed8e/scripts/install-file-tools.sh",
@@ -8,7 +8,9 @@
     "actionlintChecksums": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt",
     "lycheeChecksums": "https://github.com/lycheeverse/lychee/releases/expanded_assets/lychee-v0.24.2",
     "redistribution": "Asset identities and checksums only. Tool binaries are downloaded directly from their official upstream releases for development use.",
-    "notes": "No version upgrades. Hadolint ARM asset spelling corrected to official arm64 without changing its reviewed checksum."
+    "notes": "No version upgrades. Hadolint ARM asset spelling corrected to official arm64 without changing its reviewed checksum.",
+    "gitChecksums": "https://www.kernel.org/pub/software/scm/git/sha256sums.asc",
+    "gitLicense": "Git COPYING (GPL-2.0), retained with exact corresponding source URL and SHA256 in the installed prefix."
   },
   "assets": [
     {
@@ -130,6 +132,16 @@
       "archive": "tar.gz",
       "currentVersion": "lychee-v0.24.2",
       "sha256": "5d0b0e3aeab240f41920c633a6eaf97599be6eedda034b36e858ede7dba5e535"
+    }
+  ],
+  "sources": [
+    {
+      "tool": "git",
+      "provider": "kernel.org",
+      "currentVersion": "2.56.1",
+      "filename": "git-2.56.1.tar.xz",
+      "url": "https://www.kernel.org/pub/software/scm/git/git-2.56.1.tar.xz",
+      "sha256": "f0b0bf89264b9bd2e1c640363e7529643989da76281600473c50745cd34a607f"
     }
   ]
 }

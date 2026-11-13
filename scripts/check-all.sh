@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=45
+readonly total_steps=46
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -217,6 +217,7 @@ run_step "Verify candidate Compose provider artifact integrity" \
   uv run --locked --project automation python -m boxferry_ci.compose_provider \
   --repository-root "${repository_root}" --verify-working-tree
 run_step "Test shared automation adoption" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-shared-automation.py --with-native-renovate
+run_step "Test exact Git source and standalone clone contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-git-worktree.py
 run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
 run_step "Verify Kubernetes tool installer integrity" \
   uv run --locked --project automation python \
