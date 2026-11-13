@@ -909,6 +909,180 @@ class NativeRenovateContracts(unittest.TestCase):
                 f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             )
 
+    def test_admitted_mount_aggregate_and_required_gate_fail_closed(self) -> None:
+        # Bootstrap above verifies the selected source. Read its workflow as inert
+        # exact-commit data: the deliberately narrow extraction omits workflows.
+        program = r"""
+import copy, hashlib, json, os, subprocess, sys, tempfile, textwrap, unittest
+from pathlib import Path
+root, pin = Path(sys.argv[1]), sys.argv[2]
+cache = root / 'target/boxferry-automation'
+selected = cache / pin
+sys.path[:0] = [str(selected / 'automation/src'), str(selected / 'automation/tests')]
+from boxferry_ci import bootstrap, contracts, devcontainer_validation, gate, planner, policy
+import test_git_worktree_validation
+objects = cache / (pin + '.git')
+bootstrap.validate_cache(objects)
+for module in (bootstrap, devcontainer_validation,
+        devcontainer_validation.git_worktree_validation, gate):
+    path = Path(module.__file__).resolve()
+    assert path.is_relative_to(selected.resolve()), path
+    relative = path.relative_to(selected)
+    held = bootstrap.run_git(objects, 'show', pin + ':' + relative.as_posix(), binary=True)
+    assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(held).digest()
+workflow = bootstrap.run_git(objects, 'show',
+    pin + ':.github/workflows/shared-devcontainer-validation.yml', binary=True)
+assert isinstance(workflow, bytes) and len(workflow) < 64 * 1024
+script = textwrap.dedent(workflow.decode().rsplit('        run: |\n', 1)[1])
+# Existing independently authored five-case receipt adversaries, executed with
+# the selected producer's actual validator rather than candidate imports.
+suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+    test_git_worktree_validation.NativeReceiptTests)
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+assert result.wasSuccessful() and result.testsRun > 0
+candidate, base, head = 'a' * 40, 'b' * 40, 'c' * 40
+spec = devcontainer_validation.git_worktree_validation.SPEC_SHA256
+configuration = policy.load_policy(root / 'scripts/shared-validation-policy.json')
+# Exercise the public CLI's actual export/dispatch wiring. Only runtime work
+# and unrelated Node metadata lookup are replaced with isolated test controls.
+from unittest.mock import patch
+manifest = dict(schema=1, repositories={name: candidate
+    for name in devcontainer_validation.ALL_REPOSITORIES})
+with tempfile.TemporaryDirectory(prefix='boxferry-admitted-cli-') as temporary:
+    directory = Path(temporary)
+    output, github = directory / 'resolve.json', directory / 'resolve.outputs'
+    with patch.object(devcontainer_validation, 'resolve_sources', return_value=manifest), \
+            patch.object(devcontainer_validation, 'canonical_versions',
+                return_value={'node': 'fixture-node'}):
+        code = devcontainer_validation.main(['resolve', '--repository', 'boxferry',
+            '--candidate-sha', candidate, '--automation', str(selected),
+            '--output', str(output), '--github-output', str(github)])
+    fields = dict(line.split('=', 1) for line in github.read_text().splitlines())
+    assert code == 0 and json.loads(output.read_text()) == manifest
+    assert fields['git_worktree_spec_sha256'] == spec
+    assert json.loads(fields['sources']) == manifest
+    assert fields['source_digest'] == devcontainer_validation.manifest_digest(manifest)
+    for architecture in ('amd64', 'arm64'):
+        for successful in (True, False):
+            label = architecture + ('-success' if successful else '-failure')
+            output, github = directory / (label + '.json'), directory / (label + '.outputs')
+            report = dict(schema=1, status='success', candidate_sha=candidate,
+                source_manifest_sha256='1' * 64, input_sha256='2' * 64,
+                build_context_sha256='3' * 64, architecture=architecture,
+                git_worktree_status='success', git_worktree_spec_sha256=spec)
+            if not successful:
+                report = dict(schema=1, status='failure', cause='controlled mount refusal')
+            with patch.object(devcontainer_validation, 'qualify', return_value=report) as qualify:
+                code = devcontainer_validation.main(['qualify', '--repository', 'boxferry',
+                    '--candidate-sha', candidate, '--policy-sha', base, '--automation-sha', pin,
+                    '--source', str(root), '--policy', str(root), '--automation', str(selected),
+                    '--sources-json', json.dumps(manifest), '--engine', 'docker',
+                    '--architecture', architecture, '--output', str(output),
+                    '--github-output', str(github)])
+            assert qualify.call_count == 1
+            assert qualify.call_args.kwargs == dict(repository='boxferry', candidate=candidate,
+                policy_sha=base, automation_sha=pin, source=root.resolve(), policy=root.resolve(),
+                automation=selected.resolve(), manifest=manifest, engine='docker', mode='hosted',
+                work=directory.resolve(), expected_architecture=architecture)
+            assert code == (0 if successful else 1)
+            assert json.loads(output.read_text()) == report
+            fields = dict(line.split('=', 1) for line in
+                (github.read_text().splitlines() if github.exists() else []))
+            if successful:
+                assert fields['candidate_sha'] == candidate
+                assert fields['architecture'] == architecture
+                assert fields['git_worktree_status'] == 'success'
+                assert fields['git_worktree_spec_sha256'] == spec
+            else:
+                assert not fields
+comparison = planner.Comparison('pull_request', base, head, candidate)
+plan = dict(schema=3, repository=configuration.repository, event='pull_request',
+    base_sha=base, head_sha=head, tested_sha=candidate, profile='full', profiles=['full'],
+    jobs={name: True for name in configuration.jobs}, reasons=['admitted mount contract'],
+    local_fingerprint=None)
+needs = {name: {'result': 'success'} for name in configuration.jobs}
+needs['validation-plan'] = {'result': 'success'}
+environment = dict(PATH=os.defpath, GITHUB_REPOSITORY='Strukturpiloten/boxferry',
+    SOURCES_RESULT='success', X64_RESULT='success', ARM64_RESULT='success',
+    CANDIDATE_SHA=candidate, X64_CANDIDATE=candidate, ARM64_CANDIDATE=candidate,
+    SOURCE_DIGEST='1' * 64, X64_SOURCE_DIGEST='1' * 64, ARM64_SOURCE_DIGEST='1' * 64,
+    X64_INPUT='2' * 64, ARM64_INPUT='2' * 64,
+    X64_CONTEXT='3' * 64, ARM64_CONTEXT='3' * 64,
+    X64_ARCHITECTURE='amd64', ARM64_ARCHITECTURE='arm64', EXPECTED_GIT_SPEC=spec,
+    X64_GIT_STATUS='success', ARM64_GIT_STATUS='success', X64_GIT_SPEC=spec, ARM64_GIT_SPEC=spec)
+changes = [None]
+for lane in ('X64', 'ARM64'):
+    changes.extend([
+        {lane + '_GIT_STATUS': value}
+        for value in ('', 'failure', 'cancelled', 'skipped')
+    ])
+    changes.extend([
+        {lane + '_RESULT': value} for value in ('', 'failure', 'cancelled', 'skipped')
+    ])
+    changes.extend([
+        {lane + '_CANDIDATE': base},
+        {lane + '_CANDIDATE': ''},
+        {lane + '_ARCHITECTURE': 'arm64' if lane == 'X64' else 'amd64'},
+        {lane + '_ARCHITECTURE': ''},
+        {lane + '_GIT_SPEC': ''},
+        {lane + '_GIT_SPEC': '0' * 64},
+        {lane + '_SOURCE_DIGEST': '4' * 64},
+        {lane + '_INPUT': '5' * 64},
+        {lane + '_CONTEXT': '6' * 64},
+    ])
+changes.extend([
+    {'X64_GIT_STATUS': '', 'ARM64_GIT_STATUS': '', 'X64_GIT_SPEC': '', 'ARM64_GIT_SPEC': ''},
+    {'EXPECTED_GIT_SPEC': ''}, {'EXPECTED_GIT_SPEC': 'not-a-digest'},
+    *({'SOURCES_RESULT': value} for value in ('', 'failure', 'cancelled', 'skipped')),
+])
+with tempfile.TemporaryDirectory(prefix='boxferry-admitted-mount-') as temporary:
+    for index, change in enumerate(changes):
+        output = Path(temporary) / str(index)
+        env = {**environment, **(change or {}), 'GITHUB_OUTPUT': str(output)}
+        observed = subprocess.run(['/bin/bash', '-c', script], env=env, text=True,
+            capture_output=True, timeout=5, check=False)
+        valid = change is None
+        assert (observed.returncode == 0) == valid, (change, observed.stdout, observed.stderr)
+        outputs = dict(line.split('=', 1) for line in
+            (output.read_text().splitlines() if output.exists() else []))
+        assert outputs == ({'candidate_sha': candidate} if valid else {}), (change, outputs)
+        value = copy.deepcopy(needs)
+        value['devcontainer-validation'] = dict(result='success' if valid else 'failure',
+            outputs=outputs)
+        try:
+            gate.verify_devcontainer_gate(
+                plan, value, configuration, comparison, expected_plan=plan)
+        except contracts.ContractError:
+            assert not valid, change
+        else:
+            assert valid, change
+for receipt in (None, {}, {'candidate_sha': base}, {'candidate_sha': head}, {'candidate_sha': ''}):
+    value = copy.deepcopy(needs)
+    value['devcontainer-validation'] = dict(result='success', outputs=receipt)
+    try:
+        gate.verify_devcontainer_gate(plan, value, configuration, comparison, expected_plan=plan)
+    except contracts.ContractError:
+        pass
+    else:
+        raise AssertionError(('unbound aggregate reached Required CI', receipt))
+print(json.dumps(dict(automation_sha=pin, aggregate_cases=len(changes),
+    native_receipt_tests=result.testsRun, selected_source=str(selected))))
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", program, str(ROOT), PIN],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["automation_sha"], PIN)
+        self.assertEqual(summary["selected_source"], str(ROOT / "target/boxferry-automation" / PIN))
+        self.assertGreater(summary["aggregate_cases"], 40)
+        self.assertGreater(summary["native_receipt_tests"], 0)
+
     def runtime(self) -> Path:
         runtime = Path(os.environ.get("BOXFERRY_RENOVATE_PACKAGE", ROOT / "target/tools/renovate"))
         expected = json.loads((ROOT / "automation/renovate-runtime.json").read_text())["image"]
