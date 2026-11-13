@@ -31,9 +31,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo "+${rust_channel}" install --locked --version "${ZIZMOR_VERSION}" zizmor
 
 COPY scripts/install-file-tools.sh /opt/boxferry-tooling/scripts/
-COPY automation/src/boxferry_ci/tooling.py /opt/boxferry-tooling/automation/src/boxferry_ci/
+COPY automation/src/boxferry_ci/tooling.py automation/src/boxferry_ci/git_source.py /opt/boxferry-tooling/automation/src/boxferry_ci/
 COPY automation/tool-artifacts.json /opt/boxferry-tooling/automation/
-COPY scripts/shared-ci.py /opt/boxferry-tooling/scripts/
+COPY scripts/shared-ci.py scripts/install-git.sh /opt/boxferry-tooling/scripts/
 COPY .github/automation.json /opt/boxferry-tooling/.github/
 COPY package.json package-lock.json /opt/boxferry-file-tools/
 ENV UV_CACHE_DIR=/opt/boxferry-tooling/uv-cache \
@@ -48,10 +48,15 @@ RUN set -eux; \
     bash /opt/boxferry-tooling/scripts/install-file-tools.sh /usr/local/bin; \
     python3 /opt/boxferry-tooling/scripts/shared-ci.py tools \
       --destination /usr/local/bin --tools actionlint lychee --python-tools; \
+    bash /opt/boxferry-tooling/scripts/install-git.sh /opt/boxferry-git; \
+    for executable in /opt/boxferry-git/bin/*; do \
+      ln -sf "${executable}" "/usr/local/bin/${executable##*/}"; \
+      ln -sf "${executable}" "/usr/bin/${executable##*/}"; \
+    done; \
     chown -R vscode:vscode /opt/boxferry-tooling/target /opt/boxferry-tooling/uv-cache /opt/boxferry-tooling/python; \
     chmod -R a+rX /opt/boxferry-tooling
 
-# Git is provided by the digest-pinned Rust base; gh is a locked Dev Container feature.
+# Git uses the canonical source inventory and complete prefix; gh is a locked feature.
 COPY scripts/install-kubernetes-tools.sh /tmp/install-kubernetes-tools.sh
 RUN git --version \
     && bash /tmp/install-kubernetes-tools.sh /usr/local/bin \

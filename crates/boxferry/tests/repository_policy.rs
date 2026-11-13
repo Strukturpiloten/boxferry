@@ -7057,11 +7057,31 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
         "installed_components=\"$(rustup component list --installed)\"",
         "$(rustup show active-toolchain)",
         "From the BoxFerry repository root, run: rustup component add llvm-tools-preview",
-        "rev-parse --show-toplevel",
-        "BoxFerry Dev Container requires its own Git checkout",
+        r#"python3 "${repository_root}/scripts/git-worktree.py" inspect --source "${repository_root}""#,
     ] {
         if !script.contains(required) {
             return Err(format!("Dev Container lifecycle check is missing `{required}`"));
+        }
+    }
+    let caller = fs::read_to_string(repository_root().join("scripts/git-worktree.py"))
+        .map_err(|error| format!("failed to read exact source caller: {error}"))?;
+    if !caller.contains("from boxferry_ci.git_worktree import main as inspect_main") {
+        return Err("Dev Container must use the canonical exact source/index inspector".to_owned());
+    }
+    let inspector = fs::read_to_string(repository_root().join("automation/src/boxferry_ci/git_worktree.py"))
+        .map_err(|error| format!("failed to read canonical source inspector: {error}"))?;
+    for required in [
+        r#""rev-parse", "--show-toplevel""#,
+        r#""rev-parse", "--absolute-git-dir""#,
+        r#""--git-path", "index""#,
+        "Git selected another source or index",
+        "legacy-metadata-unmounted",
+        "relative-metadata-unmounted",
+    ] {
+        if !inspector.contains(required) {
+            return Err(format!(
+                "canonical Dev Container source/index check is missing `{required}`"
+            ));
         }
     }
     for forbidden in [

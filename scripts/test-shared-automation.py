@@ -492,7 +492,9 @@ class SharedBehavior(unittest.TestCase):
             {
                 "rust-toolchain.toml",
                 "scripts/install-file-tools.sh",
+                "scripts/install-git.sh",
                 "automation/src/boxferry_ci/tooling.py",
+                "automation/src/boxferry_ci/git_source.py",
                 "automation/tool-artifacts.json",
                 "scripts/shared-ci.py",
                 ".github/automation.json",
@@ -506,6 +508,7 @@ class SharedBehavior(unittest.TestCase):
             ".devcontainer/devcontainer.json",
             ".devcontainer/devcontainer-lock.json",
             ".devcontainer/verify-tools.sh",
+            "scripts/git-worktree.py",
             "automation/pyproject.toml",
             "automation/uv.lock",
             "automation/src/boxferry_ci/bootstrap.py",
@@ -928,6 +931,8 @@ class NativeRenovateContracts(unittest.TestCase):
             "renovate-presets/rust.json",
             "scripts/test-shared-automation-policy.cjs",
             "scripts/test-cargo-deny-action.cjs",
+            "scripts/test-git-source-renovate.cjs",
+            "automation/tool-artifacts.json",
         )
         pin = json.loads((ROOT / ".github/automation.json").read_text())["revision"]
         selected = ROOT / "target/boxferry-automation" / pin / "renovate-presets"
@@ -1026,6 +1031,12 @@ class NativeRenovateContracts(unittest.TestCase):
     def test_actual_local_native_policy_and_late_overrides(self) -> None:
         result = self.run_native_fixture(
             self.runtime(), script="scripts/test-shared-automation-policy.cjs"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_native_git_source_owner_lookup_replacement_and_policy(self) -> None:
+        result = self.run_native_fixture(
+            self.runtime(), script="scripts/test-git-source-renovate.cjs"
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

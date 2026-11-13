@@ -37,6 +37,7 @@ jobs:
       sources: ${{ steps.resolve.outputs.sources }}
       source_digest: ${{ steps.resolve.outputs.source_digest }}
       node_version: ${{ steps.resolve.outputs.node_version }}
+      git_worktree_spec: ${{ steps.resolve.outputs.git_worktree_spec_sha256 }}
     steps:
       - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +85,8 @@ jobs:
       input_digest: ${{ steps.qualify.outputs.input_sha256 }}
       build_context_digest: ${{ steps.qualify.outputs.build_context_sha256 }}
       architecture: ${{ steps.qualify.outputs.architecture }}
+      git_worktree_status: ${{ steps.qualify.outputs.git_worktree_status }}
+      git_worktree_spec: ${{ steps.qualify.outputs.git_worktree_spec_sha256 }}
     steps:
       - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,6 +151,7 @@ jobs:
           name: devcontainer-amd64-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/devcontainer-amd64/report.json
+            ${{ runner.temp }}/devcontainer-amd64/git-worktree-*.json
             ${{ runner.temp }}/devcontainer-podman-prerequisite.json
           if-no-files-found: error
           retention-days: 7
@@ -163,6 +167,8 @@ jobs:
       input_digest: ${{ steps.qualify.outputs.input_sha256 }}
       build_context_digest: ${{ steps.qualify.outputs.build_context_sha256 }}
       architecture: ${{ steps.qualify.outputs.architecture }}
+      git_worktree_status: ${{ steps.qualify.outputs.git_worktree_status }}
+      git_worktree_spec: ${{ steps.qualify.outputs.git_worktree_spec_sha256 }}
     steps:
       - name: Check out immutable shared automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,6 +233,7 @@ jobs:
           name: devcontainer-arm64-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/devcontainer-arm64/report.json
+            ${{ runner.temp }}/devcontainer-arm64/git-worktree-*.json
             ${{ runner.temp }}/devcontainer-podman-prerequisite.json
           if-no-files-found: error
           retention-days: 7
@@ -259,6 +266,11 @@ jobs:
           ARM64_CONTEXT: ${{ needs.arm64.outputs.build_context_digest }}
           X64_ARCHITECTURE: ${{ needs.x64.outputs.architecture }}
           ARM64_ARCHITECTURE: ${{ needs.arm64.outputs.architecture }}
+          EXPECTED_GIT_SPEC: ${{ needs.sources.outputs.git_worktree_spec }}
+          X64_GIT_STATUS: ${{ needs.x64.outputs.git_worktree_status }}
+          ARM64_GIT_STATUS: ${{ needs.arm64.outputs.git_worktree_status }}
+          X64_GIT_SPEC: ${{ needs.x64.outputs.git_worktree_spec }}
+          ARM64_GIT_SPEC: ${{ needs.arm64.outputs.git_worktree_spec }}
         run: |
           set -euo pipefail
           test "${SOURCES_RESULT}" = success
@@ -275,4 +287,11 @@ jobs:
           test "${ARM64_CONTEXT}" = "${X64_CONTEXT}"
           test "${X64_ARCHITECTURE}" = amd64
           test "${ARM64_ARCHITECTURE}" = arm64
+          if [[ "${GITHUB_REPOSITORY}" == Strukturpiloten/boxferry ]]; then
+            test "${X64_GIT_STATUS}" = success
+            test "${ARM64_GIT_STATUS}" = success
+            [[ "${EXPECTED_GIT_SPEC}" =~ ^[a-f0-9]{64}$ ]]
+            test "${X64_GIT_SPEC}" = "${EXPECTED_GIT_SPEC}"
+            test "${ARM64_GIT_SPEC}" = "${EXPECTED_GIT_SPEC}"
+          fi
           printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"

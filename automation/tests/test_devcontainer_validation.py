@@ -21,6 +21,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from git_worktree_fixture import (
+    fixtures as simulated_git_fixtures,
+)
+from git_worktree_fixture import (
+    receipt as simulated_git_receipt,
+)
+
 from boxferry_ci import devcontainer_validation as validation
 from boxferry_ci.runner import Diagnostic, RunResult, run
 
@@ -95,6 +102,9 @@ class FakeCommands(validation.Commands):
             "ociRuntime": {"name": "runc", "path": "/usr/bin/runc"},
         }
         self.responses: dict[str, str] = {}
+        self.git_fixture: validation.git_worktree_validation.Fixtures | None = None
+        self.probe_deadlines: list[tuple[str, float]] = []
+        self.git_probe_identity = (1000, 1000)
 
     def call(
         self,
@@ -107,6 +117,13 @@ class FakeCommands(validation.Commands):
         max_output_bytes: int = 2_000_000,
     ) -> str:
         self.calls.append((argv, stage, timeout))
+        if self.budget is not None and stage in {
+            "tooling-workspace-probe",
+            "create-git-worktree-probe",
+            "git-worktree-probe",
+            "git-probe-state",
+        }:
+            self.probe_deadlines.append((stage, self.budget.deadline))
         if self.cancel_stage == stage:
             raise validation.RunCancelled("workflow cancellation")
         if self.failure == stage:
@@ -187,6 +204,10 @@ class FakeCommands(validation.Commands):
             return json.dumps(
                 {"path": str(self.podman_root.resolve()), "device": self.podman_root.stat().st_dev}
             )
+        if stage == "create-git-worktree-probe":
+            self.git_probe_identity = tuple(
+                int(value) for value in argv[argv.index("--user") + 1].split(":")
+            )
         if stage.startswith("create-"):
             self.token = argv[argv.index("--label") + 1].split("=", 1)[1]
             return CONTAINER
@@ -207,7 +228,12 @@ class FakeCommands(validation.Commands):
                     }
                 ]
             )
-        if stage == "probe-state":
+        if stage == "git-worktree-probe":
+            assert self.git_fixture is not None
+            receipt = simulated_git_receipt(self.git_fixture)
+            receipt["uid"], receipt["gid"] = self.git_probe_identity
+            return json.dumps(receipt)
+        if stage in {"probe-state", "git-probe-state"}:
             return json.dumps([{"State": {"ExitCode": 0}, "Image": IMAGE}])
         return ""
 
@@ -692,6 +718,8 @@ class ProducerTests(unittest.TestCase):
             "input_sha256": INPUT,
             "build_context_sha256": "b" * 64,
             "architecture": "amd64",
+            "git_worktree_status": "success",
+            "git_worktree_spec_sha256": validation.git_worktree_validation.SPEC_SHA256,
         }
         output = self.root / "report.json"
         github_output = self.root / "github-output"
@@ -1257,6 +1285,12 @@ class ProducerTests(unittest.TestCase):
             "X64_ARCHITECTURE": "amd64",
             "ARM64_ARCHITECTURE": "arm64",
             "GITHUB_OUTPUT": str(self.root / "outputs"),
+            "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+            "EXPECTED_GIT_SPEC": validation.git_worktree_validation.SPEC_SHA256,
+            "X64_GIT_STATUS": "success",
+            "ARM64_GIT_STATUS": "success",
+            "X64_GIT_SPEC": validation.git_worktree_validation.SPEC_SHA256,
+            "ARM64_GIT_SPEC": validation.git_worktree_validation.SPEC_SHA256,
         }
         changes = [
             None,
@@ -1271,6 +1305,11 @@ class ProducerTests(unittest.TestCase):
             ("ARM64_INPUT", "d" * 64),
             ("ARM64_CONTEXT", "c" * 64),
             ("ARM64_ARCHITECTURE", "amd64"),
+            ("X64_GIT_STATUS", "failure"),
+            ("ARM64_GIT_STATUS", ""),
+            ("EXPECTED_GIT_SPEC", ""),
+            ("X64_GIT_SPEC", "0" * 64),
+            ("ARM64_GIT_SPEC", "1" * 64),
         ]
         for change in changes:
             env = {**environment, **({change[0]: change[1]} if change else {})}
@@ -1558,8 +1597,16 @@ class ProducerTests(unittest.TestCase):
     def test_cancelled_build_and_probe_preserve_failure_and_only_clean_owned_resources(
         self,
     ) -> None:
-        for stage in ("build", "tooling-workspace-probe"):
-            report, fake = self.simulate(engine="podman", cancel_stage=stage)
+        for stage in (
+            "build",
+            "tooling-workspace-probe",
+            "create-git-worktree-probe",
+            "git-worktree-probe",
+            "git-probe-state",
+        ):
+            report, fake = self.simulate(
+                engine="docker" if "git-" in stage else "podman", cancel_stage=stage
+            )
             self.assertEqual(report["status"], "failure")
             self.assertIn("workflow cancellation", str(report["cause"]))
             self.assertEqual(report["cleanup"], "success")
@@ -1612,7 +1659,18 @@ class ProducerTests(unittest.TestCase):
             self.addCleanup(shutil.rmtree, private, ignore_errors=True)
             return fake
 
+        def prepare_git(
+            private: Path, _automation: Path, _candidate: Path, _commands: validation.Commands
+        ) -> validation.git_worktree_validation.Fixtures:
+            fake.git_fixture = simulated_git_fixtures(
+                private / "git-contract", ROOT / "automation/src/boxferry_ci"
+            )
+            return fake.git_fixture
+
         with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(validation.git_worktree_validation, "prepare", side_effect=prepare_git)
+            )
             stack.enter_context(
                 patch.object(
                     validation,
@@ -1717,6 +1775,40 @@ class ProducerTests(unittest.TestCase):
         )
         self.assertFalse(any("run" in argv for argv, _stage, _timeout in fake.calls))
 
+    def test_box_git_probe_reuses_one_image_profile_and_original_absolute_deadline(self) -> None:
+        report, fake = self.simulate()
+        self.assertEqual(report["status"], "success", report)
+        self.assertEqual(sum(stage == "build" for _, stage, _ in fake.calls), 1)
+        first = next(argv for argv, stage, _ in fake.calls if stage == "create-probe")
+        second = next(argv for argv, stage, _ in fake.calls if stage == "create-git-worktree-probe")
+        for argument, expected in (
+            ("--network", "none"),
+            ("--pids-limit", "512"),
+            ("--memory", "4g"),
+            ("--cpus", "2"),
+            ("--user", "1000:1000"),
+            ("--cap-drop", "ALL"),
+            ("--security-opt", "no-new-privileges"),
+        ):
+            self.assertEqual(first[first.index(argument) + 1], expected)
+            self.assertEqual(second[second.index(argument) + 1], expected)
+        self.assertIn(IMAGE, first)
+        self.assertIn(IMAGE, second)
+        self.assertIn("--read-only", second)
+        self.assertNotIn("docker.sock", " ".join(second))
+        self.assertEqual(
+            sum("type=bind" in value and value.endswith(",readonly") for value in second), 9
+        )
+        self.assertEqual(len({deadline for _, deadline in fake.probe_deadlines}), 1)
+        self.assertEqual(report["git_worktree_status"], "success")
+        self.assertEqual(
+            report["git_worktree_spec_sha256"], validation.git_worktree_validation.SPEC_SHA256
+        )
+        podman, sibling = self.simulate(engine="podman")
+        self.assertEqual(podman["status"], "success", podman)
+        self.assertFalse(any(stage == "create-git-worktree-probe" for _, stage, _ in sibling.calls))
+        self.assertNotIn("git_worktree_contract", podman)
+
     def test_backend_cache_mounts_preserve_nonroot_ownership_and_isolation(self) -> None:
         # Independent expected argv from Podman v4.9.3/v6.1.4 mount references;
         # no native parser or runtime execution is claimed by this simulation.
@@ -1796,6 +1888,9 @@ class ProducerTests(unittest.TestCase):
             "build",
             "tooling-workspace-probe",
             "probe-state",
+            "create-git-worktree-probe",
+            "git-worktree-probe",
+            "git-probe-state",
             "cleanup-container",
             "cleanup-image-tag",
             "cleanup-container-absence",

@@ -79,13 +79,11 @@ if ! grep -q '^llvm-tools-' <<< "${installed_components}"; then
 fi
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-if [[ "$(git -C "${repository_root}" rev-parse --show-toplevel 2> /dev/null)" != "${repository_root}" ]]; then
-  printf 'BoxFerry Dev Container requires its own Git checkout: %s\n' "${repository_root}" >&2
-  exit 1
-fi
+# Inspect the exact mounted checkout and index; missing metadata is never repaired.
 
 # The image retains the selected authority for executable version checks; no bootstrap here.
 python3 - "${repository_root}" "${tooling_root}" << 'PYTHON'
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -98,6 +96,40 @@ try:
     manifest = json.loads((repository / ".github/automation.json").read_text())
     if json.loads((tooling / ".github/automation.json").read_text()) != manifest:
         raise ValueError("retained shared-tool authority differs from the checkout; rebuild the image")
+    inventory = json.loads((repository / "automation/tool-artifacts.json").read_text())
+    sources = inventory.get("sources", [])
+    if len(sources) != 1 or sources[0]["tool"] != "git":
+        raise ValueError("one canonical Git source is required")
+    source = sources[0]
+    prefix = Path("/opt/boxferry-git")
+    provenance = json.loads((prefix / "share/doc/git/boxferry-source.json").read_text())
+    if provenance["source"] != {"version": source["currentVersion"], "url": source["url"],
+                                "sha256": source["sha256"]}:
+        raise ValueError("installed Git source differs from the checkout; rebuild the image")
+    if (hashlib.sha256((prefix / "share/doc/git/COPYING").read_bytes()).hexdigest()
+            != provenance["license"]["sha256"]):
+        raise ValueError("Git COPYING differs from its installed source provenance")
+    options = subprocess.run(["git", "--version", "--build-options"], check=True,
+                             capture_output=True, text=True, timeout=30).stdout
+    if "rust: disabled" not in options.splitlines():
+        raise ValueError("Git C build profile differs from recorded capability omissions")
+    for executable in ("git", "/usr/bin/git"):
+        actual = subprocess.run([executable, "--version"], check=True, capture_output=True,
+                                text=True, timeout=30).stdout.strip()
+        if actual != "git version " + source["currentVersion"]:
+            raise ValueError(f"{executable} has {actual}; expected Git {source['currentVersion']}; rebuild the image")
+        helper = subprocess.run([executable, "--exec-path"], check=True, capture_output=True,
+                                text=True, timeout=30).stdout.strip()
+        if Path(helper) != prefix / "libexec/git-core":
+            raise ValueError("Git helper prefix differs from the complete runtime")
+    for name in ("libexec/git-core/git-remote-http", "libexec/git-core/git-remote-https",
+                 "libexec/git-core/git-http-fetch", "libexec/git-core/git-http-push",
+                 "libexec/git-core/git-send-email", "share/perl5/Git.pm",
+                 "share/git-core/templates/info/exclude", "share/doc/git/COPYING"):
+        if not (prefix / name).is_file():
+            raise ValueError("Git runtime is incomplete: " + name)
+    subprocess.run(["perl", "-I" + str(prefix / "share/perl5"), "-MGit", "-e", "exit 0"],
+                   check=True, timeout=30)
     project = tooling / "target/boxferry-automation" / manifest["revision"] / "automation"
     metadata = tomllib.loads((project / "pyproject.toml").read_text())
     requirement = metadata["tool"]["uv"]["required-version"]
@@ -136,5 +168,7 @@ except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
     print(f"BoxFerry Dev Container tool verification failed: {error}", file=sys.stderr)
     raise SystemExit(1) from None
 PYTHON
+
+python3 "${repository_root}/scripts/git-worktree.py" inspect --source "${repository_root}"
 
 printf 'BoxFerry Dev Container tooling is ready.\n'
