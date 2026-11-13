@@ -60,19 +60,42 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          POLICY_SHA: ${{ inputs.policy_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
         run: |
           set -euo pipefail
           uv run --locked --project _automation/automation python -m boxferry_ci.devcontainer_validation resolve \
             --repository "${GITHUB_REPOSITORY#*/}" --candidate-sha "${CANDIDATE_SHA}" \
+            --policy-sha "${POLICY_SHA}" --automation-sha "${AUTOMATION_SHA}" \
             --automation _automation --output "${RUNNER_TEMP}/devcontainer-sources.json" \
             --github-output "${GITHUB_OUTPUT}"
-      - name: Retain once-resolved source identities
+      - name: Retain once-resolved source identities and failure diagnostics
+        id: retain
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: devcontainer-sources-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/devcontainer-sources.json
           if-no-files-found: error
           retention-days: 7
+      - name: Require successful resolution and retained diagnostic evidence
+        if: always()
+        shell: bash
+        env:
+          RESOLVE_OUTCOME: ${{ steps.resolve.outcome }}
+          RETAIN_OUTCOME: ${{ steps.retain.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "${RESOLVE_OUTCOME}" != success ]]; then
+            echo '::error::Workspace source resolution failed or did not run. Inspect the devcontainer-sources artifact and resolver logs; repair the reported failure before retrying.'
+            failed=1
+          fi
+          if [[ "${RETAIN_OUTCOME}" != success ]]; then
+            echo '::error::The source-resolution report is missing or could not be retained. Inspect resolver and artifact-upload logs; check runner temporary-directory permissions, free space and artifact service availability.'
+            failed=1
+          fi
+          exit "${failed}"
 
   x64:
     name: Native amd64 candidate image
