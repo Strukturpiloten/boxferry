@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import http.client
 import io
@@ -19,7 +20,7 @@ import textwrap
 import threading
 import time
 import unittest
-from collections.abc import Buffer
+from collections.abc import Buffer, Callable, Iterator
 from dataclasses import replace
 from http.client import IncompleteRead
 from pathlib import Path
@@ -497,13 +498,17 @@ class BuildFixture:
                 if self.fail != "helper"
                 else "/wrong/prefix\n"
             )
-        elif "GIT_TEMPLATE_DIR" in argv:
-            assert self.prefix is not None
-            return result(
-                str(self.prefix / "share/git-core/templates") + "\n"
-                if self.fail != "templates"
-                else "/wrong/templates\n"
-            )
+        elif "init" in argv:
+            root = Path(argv[-1]) / ".git"
+            for name in ("description", "info/exclude", "hooks/applypatch-msg.sample"):
+                copied = root / name
+                copied.parent.mkdir(parents=True, exist_ok=True)
+                copied.write_text(
+                    "authored runtime fixture\n"
+                    if self.fail != "templates"
+                    else "wrong templates\n"
+                )
+                copied.chmod(0o644)
         return result()
 
 
@@ -570,6 +575,7 @@ class SourceInstallTests(unittest.TestCase):
             self.assertTrue((root / "git/share/doc/git/COPYING").is_file())
             recorded = json.loads((root / "git/share/doc/git/boxferry-source.json").read_text())
             self.assertEqual(recorded["source"]["sha256"], source(archive()).sha256)
+            self.assertEqual(recorded["child_umask"], "0022")
             self.assertFalse(list(root.glob(".boxferry-git-*")))
             https.assert_called_once()
             makes = [row for row in fixture.calls if row[0][4] == "/usr/bin/make"]
@@ -585,6 +591,11 @@ class SourceInstallTests(unittest.TestCase):
                 self.assertNotIn("GIT_EXEC_PATH", env)
                 self.assertLessEqual(cast(float, options["timeout_seconds"]), subject.BUILD_SECONDS)
             self.assertIn("-j2", makes[0][0])
+            self.assertIn("NO_RUST=YesPlease", makes[0][0])
+            self.assertIn(
+                "optional Rust implementations and compatibility hash algorithms",
+                cast(list[str], recorded["omitted"]),
+            )
             self.assertIn(f"prefix={root}/git", makes[0][0])
             self.assertIn(f"bindir={root}/git/bin", makes[0][0])
             self.assertIn(f"perllibdir={root}/git/share/perl5", makes[0][0])
@@ -725,6 +736,96 @@ class SourceInstallTests(unittest.TestCase):
                 subject._runtime(root, source(archive()), root, {}, time.monotonic() + 30, Mock())
 
 
+class LiveBuildObservationTests(unittest.TestCase):
+    def test_only_live_scan_tolerates_vanished_members_without_losing_entry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "kept.o").write_bytes(b"xx")
+            original_walk = subject.os.walk
+
+            def disappearing(
+                directory: Path, *, followlinks: bool, onerror: Callable[[OSError], None]
+            ) -> Iterator[tuple[str, list[str], list[str]]]:
+                transient = root / "compiler-temporary.s"
+                transient.write_bytes(b"transient assembly")
+                listing = list(original_walk(directory, followlinks=followlinks, onerror=onerror))
+                self.assertIn(transient.name, listing[0][2])
+                transient.unlink()  # Actual unlink after enumeration and before lstat.
+                return iter(listing)
+
+            with patch.object(subject.os, "walk", side_effect=disappearing):
+                self.assertEqual(subject._files(root, 2, 2, live=True), [root / "kept.o"])
+            with patch.object(subject.os, "walk", side_effect=disappearing):
+                with self.assertRaises(FileNotFoundError):
+                    subject._files(root, 2, 2)
+            for byte_limit, file_limit in ((1, 2), (2, 1)):
+                with patch.object(subject.os, "walk", side_effect=disappearing):
+                    with self.assertRaisesRegex(tooling.ToolError, "file/byte budget"):
+                        subject._files(root, byte_limit, file_limit, live=True)
+
+    def test_traversal_and_inspection_errors_remain_strict_except_live_enoent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for error in (
+                FileNotFoundError(errno.ENOENT, "gone"),
+                PermissionError(errno.EACCES, "denied"),
+                OSError(errno.EIO, "I/O failure"),
+                NotADirectoryError(errno.ENOTDIR, "not a directory"),
+            ):
+                for live in (False, True):
+
+                    def walk(
+                        *_args: object, failure: OSError = error, **options: object
+                    ) -> Iterator[tuple[str, list[str], list[str]]]:
+                        cast(Callable[[OSError], None], options["onerror"])(failure)
+                        return iter(())
+
+                    with self.subTest(error=type(error).__name__, live=live):
+                        with patch.object(subject.os, "walk", side_effect=walk):
+                            if live and isinstance(error, FileNotFoundError):
+                                self.assertEqual(subject._files(root, 10, 10, live=live), [])
+                            else:
+                                with self.assertRaises(type(error)):
+                                    subject._files(root, 10, 10, live=live)
+                        if not isinstance(error, FileNotFoundError):
+                            with (
+                                patch.object(
+                                    subject.os,
+                                    "walk",
+                                    return_value=iter([(str(root), [], ["entry"])]),
+                                ),
+                                patch.object(Path, "lstat", side_effect=error),
+                                self.assertRaises(type(error)),
+                            ):
+                                subject._files(root, 10, 10, live=live)
+
+    def test_runtime_commands_use_strict_monitor_and_live_mode_is_explicit(self) -> None:
+        def execute(_argv: tuple[str, ...], **options: object) -> RunResult:
+            cast(Callable[[], None], options["monitor"])()
+            return result()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for live in (False, True):
+                with patch.object(subject, "_files") as scan:
+                    if live:
+                        subject._invoke(
+                            ("/usr/bin/true",),
+                            root,
+                            {},
+                            time.monotonic() + 30,
+                            execute,
+                            live_build=True,
+                        )
+                    else:
+                        subject._invoke(
+                            ("/usr/bin/true",), root, {}, time.monotonic() + 30, execute
+                        )
+                    scan.assert_called_once_with(
+                        root, subject.MAX_BUILD_BYTES, subject.MAX_BUILD_FILES, live=live
+                    )
+
+
 class HTTPSContractTests(unittest.TestCase):
     def test_local_tls_probe_requires_verified_trust_and_untrusted_refusal(self) -> None:
         for reject_status in ("failed", "success", "timeout", "wrong-failure"):
@@ -783,6 +884,8 @@ class HTTPSContractTests(unittest.TestCase):
 # Its local TLS client exercises real certificate verification in both directions.
 FIXTURE_GIT = r"""
 import http.client
+import os
+MODE = "success"
 import pathlib
 import ssl
 import sys
@@ -793,8 +896,23 @@ if args == ['--version']:
     print('git version 2.56.0')
 elif args == ['--exec-path']:
     print(prefix / 'libexec/git-core')
-elif args == ['var', 'GIT_TEMPLATE_DIR']:
-    print(prefix / 'share/git-core/templates')
+elif len(args) == 3 and args[:2] == ['init', '--initial-branch=boxferry-template-probe']:
+    destination = pathlib.Path(args[2]) / '.git'
+    templates = prefix / 'share/git-core/templates'
+    destination.mkdir(parents=True)
+    for original in templates.rglob('*'):
+        copied = destination / original.relative_to(templates)
+        if original.is_dir(): copied.mkdir()
+        else:
+            # Upstream Git copy.c creates 0777/0666 according to executable bit,
+            # with caller umask applied; copy2/copytree would conceal this behavior.
+            mode = 0o777 if original.stat().st_mode & 0o111 else 0o666
+            fd = os.open(copied, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+            with os.fdopen(fd, 'wb') as output: output.write(original.read_bytes())
+    copied = destination / 'info/exclude'
+    if MODE == 'template-missing': copied.unlink()
+    if MODE == 'template-bytes': copied.write_text('different template bytes\n')
+    if MODE == 'template-mode': copied.chmod(0o755)
 elif 'ls-remote' in args:
     assert 'http.sslVerify=true' in args and 'http.proxy=' in args
     ca = next(value.split('=', 1)[1] for value in args if value.startswith('http.sslCAInfo='))
@@ -845,7 +963,10 @@ class ActualRunnerTests(unittest.TestCase):
 
     def payload(self, root: Path, mode: str = "success") -> bytes:
         runtime = {
-            "bin/git": "#!" + sys.executable + "\n" + textwrap.dedent(FIXTURE_GIT),
+            "bin/git": "#!"
+            + sys.executable
+            + "\n"
+            + textwrap.dedent(FIXTURE_GIT.replace('MODE = "success"', f"MODE = {mode!r}")),
             **{
                 "libexec/git-core/" + name: "#!/bin/sh\nexit 99\n"
                 for name in (
@@ -921,6 +1042,74 @@ class ActualRunnerTests(unittest.TestCase):
             self.assertEqual((prefix / "share/perl5/Git.pm").read_text(), "package Git; 1;\n")
             self.assertTrue((prefix / "libexec/git-core/git-remote-https").is_file())
             self.assertFalse(list(root.glob(".boxferry-git-*")))
+
+    def test_child_modes_are_deterministic_without_changing_private_caller_umask(self) -> None:
+        code = """
+import os,pathlib,subprocess,sys
+root = pathlib.Path(sys.argv[2])
+probe = "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('owned child')"
+subprocess.run([sys.executable, '-I', '-c', sys.argv[1], sys.executable,
+                '-I', '-c', probe, str(root / 'child')], check=True)
+(root / 'caller').write_text('private caller')
+assert (root / 'child').stat().st_mode & 0o777 == 0o644
+assert (root / 'caller').stat().st_mode & 0o777 == 0o600
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", textwrap.dedent(code), subject._LIMIT_EXEC, temporary],
+                umask=0o077,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+
+    def test_private_caller_keeps_public_documentation_traversable_and_parent_private(self) -> None:
+        code = """
+import pathlib,sys
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+from test_git_install import ActualRunnerTests, subject
+root = pathlib.Path(sys.argv[2])
+fixture = ActualRunnerTests()
+ca = fixture.base_ca(root)
+with patch.object(subject, 'CA_BUNDLE', ca): fixture.install(root)
+prefix = root / 'git'
+for name in ('share', 'share/doc', 'share/doc/git'):
+    assert (prefix / name).stat().st_mode & 0o777 == 0o755, name
+for name in ('COPYING', 'boxferry-source.json'):
+    assert (prefix / 'share/doc/git' / name).stat().st_mode & 0o777 == 0o644, name
+(root / 'private-caller').write_text('private')
+assert (root / 'private-caller').stat().st_mode & 0o777 == 0o600
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    textwrap.dedent(code),
+                    str(Path(__file__).parent),
+                    temporary,
+                ],
+                umask=0o077,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+
+    def test_real_runtime_rejects_missing_changed_or_wrong_mode_default_templates(self) -> None:
+        for mode in ("template-missing", "template-bytes", "template-mode"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                sentinel = root / "unrelated"
+                sentinel.write_text("preserve")
+                with self.assertRaisesRegex(tooling.ToolError, "default template bytes/modes"):
+                    self.install(root, mode)
+                self.assertFalse((root / "git").exists())
+                self.assertFalse(list(root.glob(".boxferry-git-*")))
+                self.assertEqual(sentinel.read_text(), "preserve")
 
     def test_real_build_failures_limits_and_owned_child_cleanup(self) -> None:
         for mode in ("all-failure", "install-failure", "timeout", "budget", "output"):

@@ -52,6 +52,7 @@ CA_BUNDLE = Path("/etc/ssl/certs/ca-certificates.crt")
 # This installer is not a process-count/network isolation sandbox.
 _LIMIT_EXEC = (
     "import os,resource,sys; "
+    "os.umask(0o022); "
     "resource.setrlimit(resource.RLIMIT_CORE,(0,0)); "
     "resource.setrlimit(resource.RLIMIT_AS,(3221225472,3221225472)); "
     "resource.setrlimit(resource.RLIMIT_FSIZE,(268435456,268435456)); "
@@ -263,21 +264,36 @@ def extract(source: GitSource, archive: Path, destination: Path) -> Path:
         expansion.cleanup()
 
 
-def _files(root: Path, max_bytes: int, max_files: int) -> list[Path]:
+def _files(root: Path, max_bytes: int, max_files: int, *, live: bool = False) -> list[Path]:
     """Bound logical entries and physical bytes without following generated links."""
     files: list[Path] = []
     size = 0
     inodes: set[tuple[int, int]] = set()
-    for directory, children, names in os.walk(root, followlinks=False):
+    entries = 0
+
+    def traversal_error(error: OSError) -> None:
+        if not (live and isinstance(error, FileNotFoundError)):
+            raise error
+
+    for directory, children, names in os.walk(root, followlinks=False, onerror=traversal_error):
         for name in (*children, *names):
+            # Count observed names even if the compiler removes one before lstat.
+            entries += 1
+            if entries > max_files:
+                raise tooling.ToolError("Git build/runtime tree exceeded its file/byte budget")
             path = Path(directory) / name
-            facts = path.lstat()
+            try:
+                facts = path.lstat()
+            except FileNotFoundError:
+                if live:
+                    continue
+                raise
             files.append(path)
             key = (facts.st_dev, facts.st_ino)
             if key not in inodes:
                 size += facts.st_size
                 inodes.add(key)
-            if len(files) > max_files or size > max_bytes:
+            if size > max_bytes:
                 raise tooling.ToolError("Git build/runtime tree exceeded its file/byte budget")
     return files
 
@@ -291,13 +307,14 @@ def _invoke(
     *,
     required: bool = True,
     budget_root: Path | None = None,
+    live_build: bool = False,
 ) -> runner.RunResult:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise tooling.ToolError("Git source installation exceeded its total deadline")
 
     def monitor() -> None:
-        _files(budget_root or cwd, MAX_BUILD_BYTES, MAX_BUILD_FILES)
+        _files(budget_root or cwd, MAX_BUILD_BYTES, MAX_BUILD_FILES, live=live_build)
 
     result = execute(
         (sys.executable, "-I", "-c", _LIMIT_EXEC, *argv),
@@ -476,12 +493,35 @@ def _runtime(
     for args, expected in (
         (("--version",), f"git version {source.version}\n"),
         (("--exec-path",), str(prefix / "libexec/git-core") + "\n"),
-        (("var", "GIT_TEMPLATE_DIR"), str(prefix / "share/git-core/templates") + "\n"),
     ):
         result = _invoke((str(git), *args), work, environment, deadline, execute)
         if result.stdout != expected:
             raise tooling.ToolError(
                 "Git runtime version/helper/template prefix differs from selection"
+            )
+    # GIT_TEMPLATE_DIR is an environment override, not a supported `git var`
+    # query. Exercise default template lookup through actual repository creation.
+    template_probe = work / "template-probe"
+    _invoke(
+        (str(git), "init", "--initial-branch=boxferry-template-probe", str(template_probe)),
+        work,
+        environment,
+        deadline,
+        execute,
+    )
+    for name in ("description", "info/exclude", "hooks/applypatch-msg.sample"):
+        original = prefix / "share/git-core/templates" / name
+        copied = template_probe / ".git" / name
+        if (
+            copied.is_symlink()
+            or not copied.is_file()
+            or not copied.resolve(strict=True).is_relative_to(template_probe)
+            or bounded_sha256(copied, MAX_RUNTIME_FILE)
+            != bounded_sha256(original, MAX_RUNTIME_FILE)
+            or stat.S_IMODE(copied.stat().st_mode) != stat.S_IMODE(original.stat().st_mode)
+        ):
+            raise tooling.ToolError(
+                "Git default template bytes/modes differ from its runtime prefix"
             )
     result = _invoke(
         (
@@ -578,6 +618,10 @@ def install(
                 "template_dir=share/git-core/templates",
                 f"perllibdir={destination}/share/perl5",
                 "RUNTIME_PREFIX=YesPlease",
+                # Keep the explicit C build-tool closure. Git 2.56 enables
+                # optional Rust by default; C fallbacks retain ordinary hashes
+                # and worktrees but omit Rust-only compatibility hash support.
+                "NO_RUST=YesPlease",
                 "NO_TCLTK=YesPlease",
                 "NO_GETTEXT=YesPlease",
             )
@@ -585,7 +629,9 @@ def install(
             stage.mkdir()
             for target in ("all", "install"):
                 argv = ("/usr/bin/make", "-j2", *flags, f"DESTDIR={stage}", target)
-                _invoke(argv, tree, environment, deadline, execute, budget_root=work)
+                _invoke(
+                    argv, tree, environment, deadline, execute, budget_root=work, live_build=True
+                )
             _files(work, MAX_BUILD_BYTES, MAX_BUILD_FILES)
             prefix = stage / destination.relative_to("/")
             if prefix.is_symlink() or not prefix.is_dir():
@@ -599,18 +645,24 @@ def install(
             document = prefix / "share/doc/git"
             if any(path.is_symlink() for path in (document, *document.parents)):
                 raise tooling.ToolError("Git license/provenance path must not follow runtime links")
-            document.mkdir(parents=True, exist_ok=True)
+            # Only public directories inside this new task-owned staged prefix.
+            # Parent caller umask stays untouched, including restrictive callers.
+            for directory in (prefix / "share/doc", document):
+                directory.mkdir(mode=0o755, exist_ok=True)
+                directory.chmod(0o755)
             with (
                 (tree / "COPYING").open("rb") as incoming,
                 (document / "COPYING").open("xb") as out,
             ):
                 shutil.copyfileobj(incoming, out, length=tooling.CHUNK)
+                os.fchmod(out.fileno(), 0o644)
             evidence = {
                 "schema": 1,
                 "source": {"version": source.version, "url": source.url, "sha256": source.sha256},
                 "architecture": architecture,
                 "prefix": str(destination),
                 "make_flags": flags,
+                "child_umask": "0022",
                 "license": {
                     "file": "share/doc/git/COPYING",
                     "sha256": bounded_sha256(document / "COPYING", MAX_SOURCE_FILE),
@@ -620,7 +672,12 @@ def install(
                         "this installer does not publish images."
                     ),
                 },
-                "omitted": ["Tcl/Tk GUI", "translated messages", "generated documentation"],
+                "omitted": [
+                    "optional Rust implementations and compatibility hash algorithms",
+                    "Tcl/Tk GUI",
+                    "translated messages",
+                    "generated documentation",
+                ],
                 "validated": [
                     "exact version",
                     "relocatable helper/template prefix",
@@ -632,6 +689,7 @@ def install(
             }
             with (document / "boxferry-source.json").open("x") as output:
                 output.write(json.dumps(evidence, indent=2) + "\n")
+                os.fchmod(output.fileno(), 0o644)
             _files(prefix, MAX_RUNTIME_BYTES, MAX_MEMBERS)
             if time.monotonic() > deadline or destination.exists() or destination.is_symlink():
                 raise tooling.ToolError(
