@@ -971,6 +971,9 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 tool = binary / name
                 tool.write_text(program)
                 tool.chmod(0o755)
+            # Keep the fixture's interpreter explicit: hosted /usr/bin/python3 can
+            # predate the locked project while this test already runs under it.
+            (binary / "python3").symlink_to(sys.executable)
             script = checkout / ".devcontainer/verify-tools.sh"
             script.write_text(
                 (ROOT / ".devcontainer/verify-tools.sh")
