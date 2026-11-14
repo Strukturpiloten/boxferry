@@ -18,16 +18,17 @@ routes stable and register every displayed `boxferry` command in
 
 ## Develop BoxFerry
 
-| Task                                       | Read first                                                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Change the model, engine, or an adapter    | [Architecture](architecture.md)                                                                    |
-| Change public Rust APIs                    | [API stability](api-stability.md) and Rustdoc                                                      |
-| Add or change tests and fixtures           | [Testing](testing.md) and [fixtures](../fixtures/)                                                 |
-| Change tools or dependencies               | [Dependency policy](dependency-policy.md)                                                          |
-| Change workflows or shared validation      | [Shared automation](automation.md), [releases](releasing.md), [dependencies](dependency-policy.md) |
-| Prepare or publish a release               | [Releases](releasing.md)                                                                           |
-| Set up a checkout or submit a pull request | [Development environment](development-environment.md)                                              |
-| Change platform behavior                   | [Platform support](platform-support.md)                                                            |
+| Task                                             | Read first                                                                                         |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Change the model, engine, or an adapter          | [Architecture](architecture.md)                                                                    |
+| Change public Rust APIs                          | [API stability](api-stability.md) and Rustdoc                                                      |
+| Add or change tests and fixtures                 | [Testing](testing.md) and [fixtures](../fixtures/)                                                 |
+| Change tools or dependencies                     | [Dependency policy](dependency-policy.md)                                                          |
+| Change workflows or shared validation            | [Shared automation](automation.md), [releases](releasing.md), [dependencies](dependency-policy.md) |
+| Inspect Dev Container source-resolution failures | [Bounded source reports](development/devcontainer-source-reports.md)                               |
+| Prepare or publish a release                     | [Releases](releasing.md)                                                                           |
+| Set up a checkout or submit a pull request       | [Development environment](development-environment.md)                                              |
+| Change platform behavior                         | [Platform support](platform-support.md)                                                            |
 
 Repository-wide agent and Git rules live in [`AGENTS.md`](../AGENTS.md); the [automation guide](automation.md#daily-checks-and-agent-repairs) indexes scoped additions.
 

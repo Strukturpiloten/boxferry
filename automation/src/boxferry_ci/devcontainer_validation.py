@@ -1884,6 +1884,130 @@ def qualify(
     return report
 
 
+def _replace_resolution_file(path: Path, data: bytes, mode: int = 0o600) -> None:
+    """Publish a complete command/report file; remove only our uncommitted temporary."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=path.parent, prefix=".devcontainer-sources-", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            if stream.write(data) != len(data):
+                raise OSError("source-resolution file write was incomplete")
+            os.fchmod(stream.fileno(), mode)
+        temporary.replace(path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _write_resolution_report(path: Path, report: Mapping[str, object]) -> None:
+    """Atomically retain the bounded report in a private regular file."""
+    _replace_resolution_file(path, (serialize_report(report) + "\n").encode())
+
+
+def _append_resolution_outputs(path: Path, exports: str) -> None:
+    """Preserve prior command-file bytes and commit all new outputs together."""
+    previous = b""
+    mode = 0o600
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    except FileNotFoundError:
+        pass
+    else:
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise ValidationError("GitHub output destination is not a regular file")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                previous = stream.read(MAX_REPORT + 1)
+            mode = stat.S_IMODE(info.st_mode) & 0o777
+        finally:
+            os.close(descriptor)
+        if len(previous) > MAX_REPORT:
+            raise ValidationError("existing GitHub output exceeds the source-report byte bound")
+    _replace_resolution_file(path, previous + exports.encode(), mode)
+
+
+def _log_resolution_fallback(report: Mapping[str, object]) -> None:
+    """Preserve the safe original cause without emitting executable workflow commands."""
+    fallback = dict(report)
+    cause = str(report["cause"]).replace(":", ": ").replace("##[", "# #[")
+    while True:
+        fallback["cause"] = cause
+        fallback["cause_truncated"] = cause != report["cause"]
+        encoded = json.dumps(fallback, sort_keys=True)
+        if len(encoded.encode()) <= MAX_FAILURE_STREAM:
+            print(encoded, file=sys.stderr)
+            return
+        cause = _bounded_text(cause, max(1, len(cause.encode()) // 2))
+
+
+def resolve_cli(args: argparse.Namespace) -> int:
+    """A failed source resolution must retain diagnostics without exporting acceptance."""
+    bindings: dict[str, object] = {"repository": args.repository}
+    for name in ("candidate_sha", "policy_sha", "automation_sha"):
+        value = getattr(args, name)
+        bindings[name] = (
+            value if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{40}", value) else None
+        )
+    stage = "identity"
+    try:
+        candidate = exact_sha(args.candidate_sha, "candidate SHA")
+        for name in ("policy_sha", "automation_sha"):
+            if value := getattr(args, name):
+                exact_sha(value, name)
+        stage = "metadata"
+        result = resolve_sources(args.repository, candidate)
+        parse_sources(result, args.repository, candidate)
+        exports = f"sources={serialize_report(result)}\nsource_digest={manifest_digest(result)}\n"
+        stage = "tool-authority"
+        if args.github_output and args.automation:
+            exports += f"node_version={canonical_versions(args.automation)['node']}\n"
+            if args.repository == "boxferry":
+                exports += f"git_worktree_spec_sha256={git_worktree_validation.SPEC_SHA256}\n"
+        stage = "report-write"
+        _write_resolution_report(args.output, result)
+        stage = "output-export"
+        if args.github_output:
+            _append_resolution_outputs(args.github_output, exports)
+        return 0
+    except (OSError, ValueError, RunCancelled, KeyboardInterrupt) as error:
+        report = {
+            "schema": 1,
+            "status": "failure",
+            "command": "resolve",
+            **bindings,
+            "stage": stage,
+            "cause": _bounded_text(redact(str(error), protected_values(os.environ)), 4096),
+            "next_action": (
+                "Inspect the source-resolution diagnostic artifact and resolver/upload logs; "
+                "repair the reported metadata, tool authority or report/output destination "
+                "before retrying. Failed resolution cannot qualify native images."
+            ),
+        }
+        try:
+            _write_resolution_report(args.output, report)
+        except OSError:
+            print(
+                "Dev Container source-resolution report could not be written. Check the runner "
+                "temporary directory permissions and free space, then rerun resolution. "
+                "Native acceptance remains blocked.",
+                file=sys.stderr,
+            )
+        finally:
+            # Preserve the original cause even when later artifact upload is unavailable.
+            _log_resolution_fallback(report)
+        print(
+            "Dev Container source resolution failed. Inspect the bounded diagnostic artifact; "
+            "if absent, inspect resolver and artifact-upload logs before retrying.",
+            file=sys.stderr,
+        )
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("resolve", "qualify", "prepare-podman"))
@@ -1917,7 +2041,7 @@ def main(argv: list[str] | None = None) -> int:
                     "outcomes": commands.outcomes,
                 }
         elif args.command == "resolve":
-            result = resolve_sources(args.repository, args.candidate_sha)
+            return resolve_cli(args)
         else:
             if not all(
                 (
@@ -1966,15 +2090,6 @@ def main(argv: list[str] | None = None) -> int:
     result = json.loads(encoded)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(encoded + "\n")
-    if args.github_output and args.command == "resolve" and "repositories" in result:
-        with args.github_output.open("a") as stream:
-            stream.write(f"sources={encoded}\nsource_digest={manifest_digest(result)}\n")
-            if args.automation:
-                stream.write(f"node_version={canonical_versions(args.automation)['node']}\n")
-                if args.repository == "boxferry":
-                    stream.write(
-                        f"git_worktree_spec_sha256={git_worktree_validation.SPEC_SHA256}\n"
-                    )
     if args.github_output and args.command == "qualify" and result.get("status") == "success":
         with args.github_output.open("a") as stream:
             for name in (
@@ -1990,12 +2105,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.repository == "boxferry":
                 for name in ("git_worktree_status", "git_worktree_spec_sha256"):
                     stream.write(f"{name}={result[name]}\n")
-    return (
-        0
-        if (args.command == "resolve" and "repositories" in result)
-        or result.get("status") == "success"
-        else 1
-    )
+    return 0 if result.get("status") == "success" else 1
 
 
 if __name__ == "__main__":
