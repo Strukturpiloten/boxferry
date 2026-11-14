@@ -44,7 +44,7 @@ CI alone never justifies one. Project intent, not legal advice.
 
 Each operational pin has one Renovate owner. Native managers cover Cargo, npm, Rust toolchains,
 Dev Container features, Actions and supported literal hosted runners. Custom managers cover
-annotated matrices and legacy runners pending adoption, downloaded tools, image version/digest
+annotated matrices and legacy runners pending adoption, [downloaded tools](development/workflow-linting.md), image version/digest
 pairs, Compose providers and selected application images. Reserved hosted labels stay unquoted/unanchored scalars;
 dynamic matrices/self-hosted runners remain distinct. Workflows use `scripts/lib/compose-provider.sh`.
 Fixtures, historical evidence, compatibility targets and invalid fixture registries stay outside

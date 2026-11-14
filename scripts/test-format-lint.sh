@@ -84,11 +84,11 @@ grep --fixed-strings --quiet 'uv run --locked --project automation ruff format a
 grep --fixed-strings --quiet 'uv run --locked --project automation ruff format --check automation [jobs=unset]' "${test_root}/check.commands"
 grep --fixed-strings --quiet 'uv run --locked --project automation ruff check automation [jobs=unset]' "${test_root}/default.commands"
 grep --fixed-strings --quiet 'uv run --locked --project automation ty check --project automation [jobs=unset]' "${test_root}/default.commands"
-grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py [jobs=unset]' "${test_root}/default.commands"
-grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py [jobs=unset]' "${test_root}/check.commands"
+grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py [jobs=unset]' "${test_root}/default.commands"
+grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py [jobs=unset]' "${test_root}/check.commands"
 for label in default check; do
-  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py [jobs=unset]' "${test_root}/${label}.commands"
-  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py [jobs=unset]' "${test_root}/${label}.commands"
+  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py [jobs=unset]' "${test_root}/${label}.commands"
+  grep --fixed-strings --line-regexp --quiet 'uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py [jobs=unset]' "${test_root}/${label}.commands"
 done
 grep --extended-regexp --quiet '^\[13/13\] PASS Run Clippy without executing tests \([0-9]+s\)$' \
   "${test_root}/default.output"
@@ -145,10 +145,10 @@ for test_mode in --check --fix; do
   if [[ "${test_mode}" == --check ]]; then
     format_arguments+=" --check"
   fi
-  format_arguments+=" --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py"
+  format_arguments+=" --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py"
   for consumer_arguments in "${format_arguments}" \
-    'run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py' \
-    'run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py'; do
+    'run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py' \
+    'run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py'; do
     export FORMAT_LINT_TEST_FAIL_UV_ARGS="${consumer_arguments}"
     status=0
     run_quality consumer_failure "${test_mode}" || status=$?

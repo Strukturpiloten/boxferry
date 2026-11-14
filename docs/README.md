@@ -24,6 +24,7 @@ routes stable and register every displayed `boxferry` command in
 | Change public Rust APIs                          | [API stability](api-stability.md) and Rustdoc                                                      |
 | Add or change tests and fixtures                 | [Testing](testing.md) and [fixtures](../fixtures/)                                                 |
 | Change tools or dependencies                     | [Dependency policy](dependency-policy.md)                                                          |
+| Lint GitHub Actions workflows                    | [Workflow linting](development/workflow-linting.md)                                                |
 | Change workflows or shared validation            | [Shared automation](automation.md), [releases](releasing.md), [dependencies](dependency-policy.md) |
 | Inspect Dev Container source-resolution failures | [Bounded source reports](development/devcontainer-source-reports.md)                               |
 | Prepare or publish a release                     | [Releases](releasing.md)                                                                           |

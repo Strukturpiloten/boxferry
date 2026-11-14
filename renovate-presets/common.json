@@ -110,7 +110,7 @@
       "description": "Update each canonical downloaded-tool release tag and architecture checksum atomically; asset filenames are computed from version-independent templates.",
       "managerFilePatterns": ["/^automation/tool-artifacts\\.json$/"],
       "matchStrings": [
-        "\"repository\"\\s*:\\s*\"(?<depName>tombi-toml/tombi|mvdan/sh|koalaman/shellcheck|hadolint/hadolint|rhysd/actionlint|lycheeverse/lychee)\"\\s*,\\s*\"architecture\"\\s*:\\s*\"(?<depType>x86_64|aarch64)\"\\s*,\\s*\"filenameTemplate\"\\s*:\\s*\"[^\"\\r\\n]+\"\\s*,\\s*\"memberTemplate\"\\s*:\\s*(?:null|\"[^\"\\r\\n]+\")\\s*,\\s*\"archive\"\\s*:\\s*\"(?:binary|tar\\.gz|tar\\.xz)\"\\s*,\\s*\"currentVersion\"\\s*:\\s*\"(?<currentValue>(?:v|lychee-v)[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{64})\""
+        "\"repository\"\\s*:\\s*\"(?<depName>tombi-toml/tombi|mvdan/sh|koalaman/shellcheck|hadolint/hadolint|rhysd/actionlint|kjanat/actionlint|lycheeverse/lychee)\"\\s*,\\s*\"architecture\"\\s*:\\s*\"(?<depType>x86_64|aarch64)\"\\s*,\\s*\"filenameTemplate\"\\s*:\\s*\"[^\"\\r\\n]+\"\\s*,\\s*\"memberTemplate\"\\s*:\\s*(?:null|\"[^\"\\r\\n]+\")\\s*,\\s*\"archive\"\\s*:\\s*\"(?:binary|tar\\.gz|tar\\.xz)\"\\s*,\\s*\"currentVersion\"\\s*:\\s*\"(?<currentValue>(?:v|lychee-v)[0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{64})\""
       ],
       "datasourceTemplate": "github-release-attachments",
       "versioningTemplate": "regex:^(?:v|lychee-v)(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
@@ -220,6 +220,7 @@
         "koalaman/shellcheck",
         "hadolint/hadolint",
         "rhysd/actionlint",
+        "kjanat/actionlint",
         "lycheeverse/lychee"
       ],
       "groupName": "Canonical downloaded tools",

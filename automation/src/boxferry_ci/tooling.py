@@ -48,6 +48,7 @@ REPOSITORIES = {
     "actionlint": "rhysd/actionlint",
     "lychee": "lycheeverse/lychee",
 }
+ACTIONLINT_REPOSITORIES = frozenset({"rhysd/actionlint", "kjanat/actionlint"})
 CORE = ("tombi", "shfmt", "shellcheck", "hadolint")
 WEBSITE = (*CORE, "actionlint", "lychee")
 ARCHITECTURES = ("x86_64", "aarch64")
@@ -188,6 +189,7 @@ def load_manifest(path: Path = MANIFEST) -> dict[tuple[str, str], Asset]:
         raise ToolError("canonical tool metadata must contain the complete schema-1 inventory")
     inventory: dict[tuple[str, str], Asset] = {}
     versions: dict[str, str] = {}
+    origins: dict[str, str] = {}
     for row in document["assets"]:
         if not isinstance(row, dict) or set(row) != {
             "tool",
@@ -204,7 +206,9 @@ def load_manifest(path: Path = MANIFEST) -> dict[tuple[str, str], Asset]:
         if (
             not isinstance(tool, str)
             or tool not in REPOSITORIES
-            or row["repository"] != REPOSITORIES[tool]
+            or not isinstance(row["repository"], str)
+            or row["repository"]
+            not in (ACTIONLINT_REPOSITORIES if tool == "actionlint" else {REPOSITORIES[tool]})
             or not isinstance(architecture, str)
             or architecture not in ARCHITECTURES
             or not isinstance(tag, str)
@@ -216,6 +220,9 @@ def load_manifest(path: Path = MANIFEST) -> dict[tuple[str, str], Asset]:
         if tool in versions and versions[tool] != tag:
             raise ToolError(f"{tool} versions differ across architectures; reject partial updates")
         versions[tool] = tag
+        if tool in origins and origins[tool] != row["repository"]:
+            raise ToolError(f"{tool} origins differ across architectures; reject partial updates")
+        origins[tool] = row["repository"]
         digest = row["sha256"]
         if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
             raise ToolError(f"{tool} must have an exact lowercase SHA256")
@@ -232,7 +239,7 @@ def load_manifest(path: Path = MANIFEST) -> dict[tuple[str, str], Asset]:
         if (tool, architecture) in inventory:
             raise ToolError(f"{tool} repeats architecture {architecture}")
         inventory[tool, architecture] = Asset(
-            tool, REPOSITORIES[tool], architecture, tag, digest, filename, member, archive
+            tool, row["repository"], architecture, tag, digest, filename, member, archive
         )
     if set(inventory) != {(tool, arch) for tool in REPOSITORIES for arch in ARCHITECTURES}:
         raise ToolError("tool metadata is missing an architecture or contains a duplicate")
