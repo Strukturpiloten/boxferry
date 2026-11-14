@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
@@ -16,6 +19,8 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "automation/src"))
@@ -388,6 +393,420 @@ class ConsumerContracts(unittest.TestCase):
             matches = [rule for rule in rules if rule.get("description") == phrase]
             self.assertEqual(len(matches), 1)
             self.assertIs(matches[0]["enabled"], False)
+
+
+class SourceReportDiagnosticContracts(unittest.TestCase):
+    """Actual fixture CLI, retained evidence and selected canonical Bash, not native acceptance."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "source_report_diagnostic", ROOT / "scripts/devcontainer-source-report-diagnostic.py"
+        )
+        assert spec is not None and spec.loader is not None
+        cls.diagnostic: Any = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.diagnostic)
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.temp = Path(temporary.name)
+        self.candidate, self.selected = "a" * 40, "c" * 40
+
+    def identity(self, case: str) -> tuple[Path, dict[str, Any]]:
+        root = self.diagnostic.location(self.temp, "12", "3", case)
+        root.mkdir()
+        identity = {
+            "schema": 1,
+            "kind": self.diagnostic.KIND,
+            "candidate_sha": self.candidate,
+            "policy_sha": self.candidate,
+            "automation_sha": self.selected,
+            "run_id": "12",
+            "run_attempt": "3",
+            "case": case,
+            "source_sha256": {
+                name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+                for name in (
+                    self.diagnostic.MODULE,
+                    self.diagnostic.FIXTURE,
+                    self.diagnostic.WORKFLOW,
+                )
+            },
+        }
+        self.diagnostic.write(root / "identity.json", identity)
+        return root, identity
+
+    def fixture(self, root: Path, case: str) -> subprocess.CompletedProcess[str]:
+        # Direct script execution exercises the real argparse/CLI/metadata boundary and exit.
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / self.diagnostic.FIXTURE),
+                "--automation",
+                str(ROOT),
+                "--directory",
+                str(root / "fixture"),
+                "--case",
+                self.diagnostic.CASES[case][0],
+                "--candidate-sha",
+                self.candidate,
+                "--policy-sha",
+                self.candidate,
+                "--automation-sha",
+                self.selected,
+                "--propagate-failure",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+
+    def test_actual_cli_all_six_rows_keep_counts_exit_reports_and_original_log(self) -> None:
+        for case in self.diagnostic.CASES:
+            with self.subTest(case=case):
+                root, identity = self.identity(case)
+                result = self.fixture(root, case)
+                self.assertEqual(result.returncode, self.diagnostic.CASES[case][1], result.stderr)
+                summary_bytes = (root / "fixture/fixture.json").read_bytes()
+                report = root / "fixture/devcontainer-sources.json"
+                digest = (
+                    hashlib.sha256(report.read_bytes()).hexdigest() if report.exists() else None
+                )
+                log = io.StringIO()
+                with contextlib.redirect_stdout(log):
+                    self.diagnostic.observe(root, identity)
+                self.assertEqual(log.getvalue(), (root / "fixture/resolver.stderr").read_text())
+                self.assertNotIn("authored-source-report-canary", log.getvalue())
+                self.assertNotIn("::", log.getvalue())
+                if self.diagnostic.CASES[case][1]:
+                    self.assertIn('"stage": "metadata"', log.getvalue())
+                    self.assertIn('"cause":', log.getvalue())
+                else:
+                    self.assertEqual(log.getvalue(), "")
+                self.assertEqual(summary_bytes, (root / "fixture/fixture.json").read_bytes())
+                missing = case in {"missing-report", "unavailable-report-loss"}
+                self.assertEqual(report.exists(), not missing)
+                if case == "unavailable-report-loss":
+                    loss = json.loads((root / "controlled-file-loss.json").read_text())
+                    self.assertEqual(loss["report_sha256_before_removal"], digest)
+                    self.assertEqual(loss["operation"], "controlled-file-loss-not-provider-outage")
+                self.diagnostic.sidecars(root, identity)
+                # Upload outcomes are fed into the actual selected canonical Bash.
+                with contextlib.redirect_stdout(io.StringIO()):
+                    actual = self.diagnostic.final_check(
+                        ROOT,
+                        "success" if result.returncode == 0 else "failure",
+                        "failure" if missing else "success",
+                    )
+                self.assertEqual(actual, 0 if case == "success" else 1)
+                self.diagnostic.owner(root, self.candidate, self.selected, "12", "3", case)
+                self.diagnostic.cleanup(root)
+                self.assertFalse(root.exists())
+
+    def test_changed_safe_cause_cannot_claim_survival_or_remove_failure_report(self) -> None:
+        expected = {
+            "unavailable": "controlled metadata unavailable [REDACTED]",
+            "malformed": "public repository has an unsupported default branch",
+            "invalid-revision": (
+                "resolved sibling SHA must be an exact lowercase 40-character Git SHA"
+            ),
+            "unavailable-report-loss": "controlled metadata unavailable [REDACTED]",
+        }
+        self.assertEqual(self.diagnostic.EXPECTED_CAUSES, expected)
+        for case, cause in expected.items():
+            root, identity = self.identity(case)
+            self.assertEqual(self.fixture(root, case).returncode, 1)
+            report, stderr = (
+                root / "fixture/devcontainer-sources.json",
+                root / "fixture/resolver.stderr",
+            )
+            report_bytes, log_bytes = report.read_bytes(), stderr.read_bytes()
+            self.assertEqual(json.loads(report_bytes)["cause"], cause)
+            self.assertEqual(json.loads(log_bytes.splitlines()[0])["cause"], cause)
+            for channel in ("report", "log"):
+                changed = json.loads(
+                    report_bytes if channel == "report" else log_bytes.splitlines()[0]
+                )
+                changed["cause"] = "unrelated safe nonempty cause"
+                target = report if channel == "report" else stderr
+                data = json.dumps(changed).encode() + b"\n"
+                if channel == "log":
+                    data += log_bytes.splitlines(keepends=True)[1]
+                target.write_bytes(data)
+                captured = io.StringIO()
+                with self.subTest(case=case, channel=channel), contextlib.redirect_stdout(captured):
+                    with self.assertRaises(ValueError):
+                        self.diagnostic.observe(root, identity)
+                self.assertEqual(captured.getvalue(), "")
+                self.assertTrue(report.exists())
+                self.assertFalse((root / "controlled-file-loss.json").exists())
+                report.write_bytes(report_bytes)
+                stderr.write_bytes(log_bytes)
+            self.diagnostic.cleanup(root)
+
+    def test_actual_canonical_final_bash_fails_every_nonsuccess_outcome(self) -> None:
+        for resolve in ("success", "failure", "cancelled", "skipped"):
+            for retain in ("success", "failure", "cancelled", "skipped"):
+                with (
+                    self.subTest(resolve=resolve, retain=retain),
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    self.assertEqual(
+                        self.diagnostic.final_check(ROOT, resolve, retain),
+                        0 if resolve == retain == "success" else 1,
+                    )
+        with self.assertRaises(ValueError):
+            self.diagnostic.final_check(ROOT, "expected-failure", "success")
+
+    def test_preparation_binds_actual_source_blobs_and_refuses_dirty_or_wrong_source(self) -> None:
+        def held(_root: Path, *args: str) -> bytes:
+            if args == ("rev-parse", "HEAD"):
+                return self.selected.encode() + b"\n"
+            if args == ("status", "--porcelain"):
+                return b""
+            self.assertEqual(args[0], "show")
+            return (ROOT / args[1].split(":", 1)[1]).read_bytes()
+
+        root = self.diagnostic.location(self.temp, "12", "3", "success")
+        with patch.object(self.diagnostic, "git", side_effect=held):
+            identity = self.diagnostic.prepare(
+                root, ROOT, self.candidate, self.selected, "12", "3", "success"
+            )
+        self.assertEqual(
+            identity["source_sha256"][self.diagnostic.FIXTURE],
+            hashlib.sha256((ROOT / self.diagnostic.FIXTURE).read_bytes()).hexdigest(),
+        )
+        self.diagnostic.owner(root, self.candidate, self.selected, "12", "3", "success")
+        self.diagnostic.cleanup(root)
+        for responses in (
+            [b"b" * 40],
+            [self.selected.encode(), b" M module.py"],
+            [self.selected.encode(), b"", b"other module bytes"],
+        ):
+            with patch.object(self.diagnostic, "git", side_effect=responses):
+                with self.assertRaises(ValueError):
+                    self.diagnostic.prepare(
+                        root, ROOT, self.candidate, self.selected, "12", "3", "success"
+                    )
+            self.assertFalse(root.exists())
+        with patch.object(self.diagnostic, "git", return_value=b"b" * 40):
+            with self.assertRaises(ValueError):
+                self.diagnostic.final_check(ROOT, "success", "success", self.selected)
+
+    def test_observer_refuses_wrong_binding_hash_count_privacy_and_oversize(self) -> None:
+        root, identity = self.identity("unavailable")
+        self.assertEqual(self.fixture(root, "unavailable").returncode, 1)
+        summary_path = root / "fixture/fixture.json"
+        original = summary_path.read_bytes()
+        for key, value in (
+            ("candidate_sha", "b" * 40),
+            ("policy_sha", "b" * 40),
+            ("automation_sha", "b" * 40),
+            ("module_sha256", "0" * 64),
+            ("metadata_requests", 12),
+            ("actual_cli_exit", 0),
+            ("kind", "native-acceptance"),
+        ):
+            changed = json.loads(original)
+            changed[key] = value
+            summary_path.write_text(json.dumps(changed))
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.diagnostic.observe(root, identity)
+        summary_path.write_bytes(original)
+        report = root / "fixture/devcontainer-sources.json"
+        report_bytes = report.read_bytes()
+        for key, value in (
+            ("policy_sha", "b" * 40),
+            ("schema", 2),
+            ("stage", "different-stage"),
+            ("status", "success"),
+            ("cause", "authored-source-report-canary"),
+            ("next_action", ""),
+        ):
+            changed = json.loads(report_bytes)
+            changed[key] = value
+            report.write_text(json.dumps(changed))
+            with self.subTest(report=key), self.assertRaises(ValueError):
+                self.diagnostic.observe(root, identity)
+        report.write_bytes(b"x" * (64 * 1024 + 1))
+        with self.assertRaises(ValueError):
+            self.diagnostic.observe(root, identity)
+        report.write_bytes(report_bytes)
+        stderr = root / "fixture/resolver.stderr"
+        for value in (
+            b"authored-source-report-canary",
+            b"::error::injected",
+            b"##[error]legacy",
+            b"x" * 4097,
+        ):
+            stderr.write_bytes(value)
+            with self.subTest(stderr=value[:30]), self.assertRaises(ValueError):
+                self.diagnostic.observe(root, identity)
+        stderr.unlink()
+        stderr.symlink_to(summary_path)
+        with self.assertRaises(ValueError):
+            self.diagnostic.observe(root, identity)
+
+    def test_sidecar_precheck_and_cleanup_refuse_missing_foreign_unknown_or_linked(self) -> None:
+        root, identity = self.identity("success")
+        with self.assertRaises(OSError):
+            self.diagnostic.sidecars(root, identity)
+        self.fixture(root, "success")
+        with self.assertRaises(ValueError):
+            self.diagnostic.owner(root, "b" * 40, self.selected, "12", "3", "success")
+        outside = self.temp / "foreign"
+        outside.write_text("preserve")
+        unknown = root / "unexpected"
+        unknown.write_text("preserve")
+        with self.assertRaises(ValueError):
+            self.diagnostic.cleanup(root)
+        self.assertTrue((root / "identity.json").exists())
+        unknown.unlink()
+        linked = root / "fixture/resolver.stderr"
+        linked.unlink()
+        linked.symlink_to(outside)
+        with self.assertRaises(ValueError):
+            self.diagnostic.cleanup(root)
+        self.assertEqual(outside.read_text(), "preserve")
+        self.assertTrue((root / "identity.json").exists())
+        linked.unlink()
+        linked.write_text("")
+        self.diagnostic.cleanup(root)
+        self.assertEqual(outside.read_text(), "preserve")
+
+    def test_candidate_manifest_is_sole_source_and_refuses_unsafe_inputs(self) -> None:
+        candidate = self.temp / "candidate"
+        (candidate / ".github").mkdir(parents=True)
+        (candidate / "scripts").mkdir()
+        (candidate / "scripts/policy.json").write_text("{}")
+        path = candidate / ".github/automation.json"
+        value = {
+            "schema": 1,
+            "interface": 1,
+            "repository": "Strukturpiloten/boxferry",
+            "revision": self.selected,
+            "policy": "scripts/policy.json",
+        }
+
+        def held(_root: Path, *args: str) -> bytes:
+            if args == ("rev-parse", "HEAD"):
+                return self.candidate.encode() + b"\n"
+            if args == ("show", self.candidate + ":.github/automation.json"):
+                return path.read_bytes()
+            return b"{}"
+
+        path.write_text(json.dumps(value))
+        with patch.object(self.diagnostic, "git", side_effect=[b"b" * 40]):
+            with self.assertRaises(ValueError):
+                self.diagnostic.manifest(candidate, self.candidate)
+        with patch.object(self.diagnostic, "git", side_effect=[self.candidate.encode(), b"{}"]):
+            with self.assertRaises(ValueError):
+                self.diagnostic.manifest(candidate, self.candidate)
+        with patch.object(self.diagnostic, "git", side_effect=held):
+            self.assertEqual(self.diagnostic.manifest(candidate, self.candidate), value)
+            for key, invalid in (
+                ("schema", True),
+                ("interface", 2),
+                ("repository", "other/repository"),
+                ("revision", "main"),
+                ("revision", "A" * 40),
+                ("revision", "a" * 39),
+                ("policy", "../escape"),
+                ("policy", "/tmp/escape"),
+                ("policy", "scripts/../policy.json"),
+                ("policy", "scripts/policy.json\n"),
+            ):
+                path.write_text(json.dumps({**value, key: invalid}))
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    self.diagnostic.manifest(candidate, self.candidate)
+            for raw in (b"x" * 8193, b"{}", b'{"schema":1,"schema":1}'):
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError):
+                    self.diagnostic.manifest(candidate, self.candidate)
+            path.unlink()
+            foreign = self.temp / "manifest.json"
+            foreign.write_text(json.dumps(value))
+            path.symlink_to(foreign)
+            with self.assertRaises(ValueError):
+                self.diagnostic.manifest(candidate, self.candidate)
+        for run, attempt, case in (
+            ("../escape", "1", "success"),
+            ("1", "0", "success"),
+            ("1", "1", "arbitrary"),
+        ):
+            with self.assertRaises(ValueError):
+                self.diagnostic.location(self.temp, run, attempt, case)
+
+    def test_workflow_uses_actual_fixture_and_upload_without_failure_masking(self) -> None:
+        import yaml
+
+        text = (ROOT / ".github/workflows/devcontainer-source-report-diagnostics.yml").read_text()
+        definition = yaml.safe_load(text)
+        self.assertEqual(definition.get("on", definition.get(True)), {"workflow_dispatch": None})
+        self.assertEqual(definition["permissions"], {"contents": "read"})
+        self.assertEqual(set(definition["jobs"]), {"diagnostic"})
+        job = definition["jobs"]["diagnostic"]
+        self.assertEqual(job["timeout-minutes"], 5)
+        for guard in (
+            "github.repository == 'Strukturpiloten/boxferry'",
+            "github.ref == 'refs/heads/main'",
+            "github.event_name == 'workflow_dispatch'",
+            "github.event.repository.default_branch == 'main'",
+        ):
+            self.assertIn(guard, job["if"])
+        self.assertIs(job["strategy"]["fail-fast"], False)
+        self.assertEqual(job["strategy"]["max-parallel"], 1)
+        self.assertEqual(
+            job["strategy"]["matrix"]["include"],
+            [
+                {"case": name, "fixture": values[0]}
+                for name, values in self.diagnostic.CASES.items()
+            ],
+        )
+        steps = job["steps"]
+        by_id = {step["id"]: step for step in steps if "id" in step}
+        resolve = by_id["resolve"]
+        self.assertIn("_automation/automation/tests/source_report_fixture.py", resolve["run"])
+        self.assertIn("--propagate-failure", resolve["run"])
+        self.assertIn('--directory "${DIRECTORY}/fixture"', resolve["run"])
+        self.assertNotIn("continue-on-error", text)
+        self.assertNotIn("||", resolve["run"])
+        self.assertNotIn("GITHUB_OUTPUT", resolve["run"])
+        retain, _ = self.diagnostic.canonical(ROOT)
+        for key in ("uses", "if"):
+            self.assertEqual(by_id["retain"][key], retain[key])
+        for key in ("if-no-files-found", "retention-days"):
+            self.assertEqual(by_id["retain"]["with"][key], retain["with"][key])
+        self.assertTrue(
+            by_id["retain"]["with"]["path"].endswith("/fixture/devcontainer-sources.json")
+        )
+        self.assertNotIn("*", by_id["retain"]["with"]["path"])
+        self.assertIn("source-report-diagnostic-${{ github.sha }}", by_id["retain"]["with"]["name"])
+        self.assertEqual(by_id["observe"]["if"], "always()")
+        self.assertEqual(by_id["sidecars"]["if"], "always() && steps.observe.outcome == 'success'")
+        self.assertEqual(steps[-1]["if"], "always()")
+        self.assertIn(" cleanup ", steps[-1]["run"])
+        final = next(
+            step
+            for step in steps
+            if step["name"] == "Execute actual selected canonical source final check"
+        )
+        self.assertEqual(final["if"], "always()")
+        self.assertEqual(final["env"]["RESOLVE_OUTCOME"], "${{ steps.resolve.outcome }}")
+        self.assertEqual(final["env"]["RETAIN_OUTCOME"], "${{ steps.retain.outcome }}")
+        checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        self.assertEqual(
+            [step["with"]["ref"] for step in checkouts],
+            ["${{ github.sha }}", "${{ steps.selected.outputs.revision }}"],
+        )
+        self.assertTrue(all(step["with"]["persist-credentials"] is False for step in checkouts))
+        self.assertNotRegex(text, r"revision: [a-f0-9]{40}")
+        self.assertNotIn("shared-devcontainer-validation.yml@", text)
+        self.assertIn("./_automation/.github/actions/shared-source", text)
+        self.assertIn("./_automation/.github/actions/shared-python", text)
 
 
 class SharedBehavior(unittest.TestCase):
@@ -1098,9 +1517,11 @@ print(json.dumps(dict(automation_sha=pin, aggregate_cases=len(changes),
             ".github/workflows/ci.yml",
             ".github/workflows/dependency-eligibility.yml",
             ".github/workflows/devcontainer-feature-qualification.yml",
+            ".github/workflows/devcontainer-source-report-diagnostics.yml",
             ".github/workflows/release-plz.yml",
             ".github/workflows/release.yml",
             ".github/workflows/shared-rust-dependencies.yml",
+            ".github/workflows/shared-devcontainer-validation.yml",
             "renovate-presets/common.json",
             "renovate-presets/rust.json",
             "scripts/test-shared-automation-policy.cjs",
@@ -1253,6 +1674,7 @@ try {
     '.github/automation.json','.github/renovate.json','.github/workflows/ci.yml',
     '.github/workflows/dependency-eligibility.yml',
     '.github/workflows/devcontainer-feature-qualification.yml',
+    '.github/workflows/devcontainer-source-report-diagnostics.yml',
     '.github/workflows/release-plz.yml','.github/workflows/release.yml','renovate-presets/common.json'
   ]) {
     assert.equal(fs.lstatSync(sourceRoot+'/'+file).isSymbolicLink(),false,file);
@@ -1279,6 +1701,7 @@ try {
     ['.github/workflows/ci.yml',[15,7]],
     ['.github/workflows/dependency-eligibility.yml',[1,1]],
     ['.github/workflows/devcontainer-feature-qualification.yml',[1,1]],
+    ['.github/workflows/devcontainer-source-report-diagnostics.yml',[0,0]],
     ['.github/workflows/release-plz.yml',[1,1]],
     ['.github/workflows/release.yml',[15,1]],
   ]);
@@ -1298,6 +1721,20 @@ try {
     }
     if (file.endsWith('.yml')) {
       const extracted = await actions.extractPackageFile(content,file,{});
+      if (file.endsWith('/devcontainer-source-report-diagnostics.yml')) {
+        for (const name of ['actions/checkout','actions/upload-artifact']) {
+          const canonical = fs.readFileSync(sourceRoot+
+            '/.github/workflows/shared-devcontainer-validation.yml','utf8');
+          const digest = canonical.match(new RegExp('uses: '+name+'@([a-f0-9]{40})'))[1];
+          const matches = extracted.deps.filter(dep => dep.depName === name);
+          assert.ok(matches.length >= 1,name+' native Renovate owner');
+          assert.ok(matches.every(dep => dep.currentDigest === digest),name+' immutable digest');
+        }
+        assert.ok(common.packageRules.some(rule =>
+          rule.matchManagers?.includes('github-actions') && rule.pinDigests === true));
+        assert.ok(common.packageRules.some(rule =>
+          rule.matchManagers?.includes('github-actions') && rule.groupName === 'GitHub Actions'));
+      }
       for (const [depIndex,dep] of (extracted?.deps || []).entries()) {
         if (dep.currentDigest !== pin) continue;
         assert.equal(dep.depName,'Strukturpiloten/boxferry');
@@ -1589,6 +2026,7 @@ if __name__ == "__main__":
             unittest.defaultTestLoader.loadTestsFromTestCase(case)
             for case in (
                 ConsumerContracts,
+                SourceReportDiagnosticContracts,
                 SharedBehavior,
                 ReleaseConsumerContracts,
                 NativeCachePreparationContracts,

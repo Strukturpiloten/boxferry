@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=46
+readonly total_steps=49
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -198,10 +198,18 @@ fi
 if [[ "${format_mode}" == "check" ]]; then
   run_step "Check shared automation Python formatting" \
     uv run --locked --project automation ruff format --check automation
+  run_step "Check consumer Python formatting" \
+    uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 else
   run_step "Format shared automation Python" \
     uv run --locked --project automation ruff format automation
+  run_step "Format consumer Python" \
+    uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 fi
+run_step "Lint consumer Python" \
+  uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
+run_step "Type-check consumer Python" \
+  uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 run_step "Lint shared automation Python" uv run --locked --project automation ruff check automation
 run_step "Type-check shared automation Python" uv run --locked --project automation ty check --project automation
 run_step "Verify every canonical archive on both architectures" \
@@ -216,7 +224,7 @@ run_step "Test shared automation contracts" \
 run_step "Verify candidate Compose provider artifact integrity" \
   uv run --locked --project automation python -m boxferry_ci.compose_provider \
   --repository-root "${repository_root}" --verify-working-tree
-run_step "Test shared automation adoption" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-shared-automation.py --with-native-renovate
+run_step "Test shared automation adoption" env PYTHONDONTWRITEBYTECODE=1 uv run --locked --project automation python scripts/test-shared-automation.py --with-native-renovate
 run_step "Test exact Git source and standalone clone contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-git-worktree.py
 run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
 run_step "Verify Kubernetes tool installer integrity" \
