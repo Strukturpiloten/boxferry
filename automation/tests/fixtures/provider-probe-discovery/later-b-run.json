@@ -1,0 +1,28 @@
+{
+  "actor": {
+    "id": 1497405,
+    "login": "TheRealBecks"
+  },
+  "conclusion": "success",
+  "created_at": "2026-11-08T17:39:03Z",
+  "display_title": "629 provider probe 9f5732bf0d63400381f463243184af6d case B",
+  "event": "workflow_dispatch",
+  "head_branch": "main",
+  "head_repository": {
+    "full_name": "Strukturpiloten/boxferry"
+  },
+  "head_sha": "44c9301ce8f0eebdb3d5a7f72fac477eae2bb264",
+  "html_url": "https://github.com/Strukturpiloten/boxferry/actions/runs/42506013197",
+  "id": 42506013197,
+  "path": ".github/workflows/recovery-cancellation-provider-probe.yml",
+  "repository": {
+    "full_name": "Strukturpiloten/boxferry"
+  },
+  "run_attempt": 1,
+  "status": "completed",
+  "triggering_actor": {
+    "id": 1497405,
+    "login": "TheRealBecks"
+  },
+  "workflow_id": 411281080
+}
