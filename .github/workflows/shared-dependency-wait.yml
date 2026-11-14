@@ -41,7 +41,7 @@ permissions:
 jobs:
   check:
     name: Dependency eligibility
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}

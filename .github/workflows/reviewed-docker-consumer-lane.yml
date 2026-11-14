@@ -56,7 +56,7 @@ jobs:
   pre-build:
     name: Fresh admission before candidate build
     if: inputs.context_only == false && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check out trusted dispatcher
@@ -99,7 +99,7 @@ jobs:
     name: Fresh data-only sealing and final pre-native admission
     needs: build
     if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       binding: ${{ steps.issue.outputs.binding }}

@@ -85,7 +85,7 @@ jobs:
     name: Admit both exact reviewed published heads
     needs: context-smoke
     if: inputs.context_only == false && inputs.task == 'volume-consumer' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       admission_revision: ${{ steps.pin.outputs.revision }}
@@ -141,7 +141,7 @@ jobs:
     name: Fresh trusted Docker consumer result
     needs: [admission, lanes]
     if: always() && !inputs.context_only && inputs.task == 'volume-consumer' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Reject failed skipped cancelled or missing lane jobs
@@ -216,7 +216,7 @@ jobs:
     name: Admit exact main-only custody source and real actors
     needs: context-smoke
     if: inputs.context_only == false && inputs.task == 'paperless-custody-mechanism' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       checked_at: ${{ steps.admit.outputs.checked-at }}
@@ -277,7 +277,7 @@ jobs:
     name: Independently validate mechanism-only evidence
     needs: main-custody
     if: inputs.context_only == false && inputs.task == 'paperless-custody-mechanism' && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check out exact trusted main
