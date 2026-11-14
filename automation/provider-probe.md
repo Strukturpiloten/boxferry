@@ -4,7 +4,9 @@ This fixture observes GitHub scheduling. It sends no recovery, status, retry,
 label, queue, publication, or runtime request. Source admission does not authorize
 execution or establish production recovery safety. The three workflows stay
 manual/call-only. A separately authorized operator controls the bounded series;
-there is no collector, dispatch controller, or production classifier here.
+the paired manual package is `python -m boxferry_ci.provider_probe`. It has no automatic
+poll loop, retry or production classifier. The [future procedure](provider-probe-procedure.md)
+requires separate explicit authorization after source admission; do not execute it now.
 
 ## Source and identity custody
 
@@ -55,9 +57,10 @@ production checkpoint. Independently authenticate its provider provenance.
 
 Normal execution is exactly five dispatches and two ordinary cancellations D/E,
 plus automatic B cancellation. No rerun, force cancellation, bulk control, or
-retry-until-preferred-result loop. Stop on safety/identity failure. At the deadline,
-only freshly reauthenticated active runs belonging to this exact probe series may
-be ordinarily cancelled, recording the series as aborted. Never affect other work.
+retry-until-preferred-result loop. Stop on safety/identity failure. Before hard exhaustion, only freshly authenticated active runs belonging to this exact
+probe series may use its existing one-shot cleanup, recording the series as aborted.
+At 400 spent or 1800 seconds, no HTTP is permitted, including authentication or cleanup.
+Never affect other work.
 
 ## Bounded observations and refusal rules
 
@@ -123,3 +126,55 @@ consume none of these probe workflows.
 closed execution operations, positive witnesses and fixed holds without waiting.
 Focused checks are development evidence only; the primary must still run formatting,
 complete local gates and independent review before normal protected admission.
+
+## Canonical manual package and derivation
+
+The tracked controller/observer derive from the repository-owned, authored v5 drafts
+(controller SHA-256 `40d5343a79aadba9ead4ff00f094bbd53fc98d20c94e8d2f7296fc7a61d8619a`;
+observer `c5b81b9fefa2b685cf3ec2d925bf60573c6a092aa14fae73ae9d965407694006`).
+They use fixed package imports and an independently reviewed exact admitted-S descriptor,
+not archive imports, an arbitrary helper path or a future self-commit literal. The descriptor
+binds held package/workflow Git bytes and modes, uploader/tag and reviewed source-CI identity;
+local Git operations cannot lazily fetch. Old custody schemas refuse rather than migrate.
+Normal commands cannot operate on copied custody; E's durable readback copy is local read-only.
+
+Initialize before any experiment HTTP at zero requests and a fresh immutable clock/registration.
+The same charged transport performs the finite 14-GET authentication/source/catalog/CI preflight.
+Local credential retrieval is not an HTTP observation; a conservative precharge remains spent
+if it fails before send. Seeded preflight counts and manual charge commands are absent.
+One persisted three-read reservation per case covers normal and diagnostic discovery. General
+inventory reads cannot bypass it. Refusal aborts normal control; diagnostic correlation is
+non-authorizing and cannot bind or resume a case. Every discovery result persists bounded
+static phase/code, before/after/delta global and per-case counts, safe captured identity facts
+and evidence references, including failures before list success or after exact binding.
+The nine literal-site structural metadata guards and both actor-loop sites have fixed codes;
+unknown exceptions remain static.
+
+The v5 role/phase/custody guards remain: positive A holds, authenticated B pending/replacement
+sequence, successful A/C provenance, positive failed D prerequisite, full pre-cancel E preparation
+attribution and durable cut, then post-cancel effect corroboration. Successful leaf retention
+never proves a separate caller wrapper. Typed JSON-boundary annotations and new-schema/source
+binding replace draft constants; they grant no new effect or recovery authority.
+
+Offline tests exercise actual package calls with transport disabled/mocked, the privacy-reviewed
+[later B subset](tests/fixtures/provider-probe-discovery/), request/page/hop reservations,
+closed identities, abort/quota/deadline failures and inherited v5 archive/role/privacy guards.
+The original workflow fixture tests remain unchanged. The later metadata is not the missing
+original B refusal body. Historical series `9f5732bf0d63400381f463243184af6d` remains
+ABORTED/INCONCLUSIVE (74/400, 17m10s, actual three B inventory reads versus internal two,
+only A/B, natural completion, no cancellation/C/D/E); its first refusal cause is UNKNOWN.
+The package and procedure neither reproduce that refusal nor authorize another experiment,
+production recovery, allowance/fence resets, publication or closure of #629/#655/#453.
+
+A non-mutating schema/helper/source/directory precheck precedes lock creation, with revalidation
+under lock. No-follow directory descriptors protect custody registration, lock and file writes;
+old or symlinked custody is refused without mutation. A durable incomplete-invocation marker
+precedes observations/controls. Any metadata, IO or interruption failure aborts normal control;
+if abort persistence fails, the marker forces abort on later load. Diagnostic/cleanup reads
+never clear the permanent abort flag or reset spent counts.
+
+For manual terminal waits, `observe capture-terminal` saves unique active run samples without
+job/artifact inventory reads. The first completed run response is reused for its complete first
+snapshot, then exactly one spaced stable snapshot is allowed. Fixed canonical terminal labels
+bind only completed captures; no predictive timing, duplicate run GET, overwritten raw sample,
+third terminal read or new allowance is needed. See the future procedure for exact commands.
