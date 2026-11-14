@@ -331,6 +331,28 @@ class ConsumerContracts(unittest.TestCase):
         complete = (ROOT / "scripts/check-all.sh").read_text()
         self.assertEqual(complete.count("python -m boxferry_ci.test_reporting"), 1)
 
+    def test_hosted_workflow_lint_uses_candidate_inventory_and_hard_cli_contracts(self) -> None:
+        source = job("documentation")
+        install = source.index("python3 automation/src/boxferry_ci/tooling.py")
+        lint = source.index("        run: actionlint")
+        contracts = source.index("python scripts/test-workflow-lint.py")
+        self.assertLess(install, lint)
+        self.assertLess(lint, contracts)
+        self.assertIn("--tools actionlint", source)
+        self.assertIn('"${RUNNER_TEMP}/workflow-lint-tools" >> "${GITHUB_PATH}"', source)
+        self.assertIn(
+            "uv run --locked --project _automation/automation python scripts/test-workflow-lint.py",
+            source,
+        )
+        self.assertNotIn("--profile website", source)
+        self.assertNotIn("continue-on-error", source)
+        self.assertNotIn("actionlint -ignore", source)
+        complete = (ROOT / "scripts/check-all.sh").read_text()
+        self.assertIn('run_step "Lint GitHub Actions syntax" actionlint', complete)
+        self.assertIn(
+            "uv run --locked --project automation python scripts/test-workflow-lint.py", complete
+        )
+
     def test_docs_node_uses_same_selected_source_after_locked_python(self) -> None:
         docs = job("documentation")
         checkout = docs.index("      - name: Check out immutable shared documentation tooling")
@@ -1525,6 +1547,7 @@ print(json.dumps(dict(automation_sha=pin, aggregate_cases=len(changes),
             "renovate-presets/common.json",
             "renovate-presets/rust.json",
             "scripts/test-shared-automation-policy.cjs",
+            "scripts/test-workflow-lint.py",
             "scripts/test-cargo-deny-action.cjs",
             "scripts/test-git-source-renovate.cjs",
             "automation/tool-artifacts.json",

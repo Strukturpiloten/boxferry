@@ -115,16 +115,16 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
 expected_ordinary_sequence=""
-for ((ordinary_step = 1; ordinary_step <= 49; ordinary_step++)); do
-  printf -v ordinary_prefix '[%02d/49]' "${ordinary_step}"
+for ((ordinary_step = 1; ordinary_step <= 50; ordinary_step++)); do
+  printf -v ordinary_prefix '[%02d/50]' "${ordinary_step}"
   expected_ordinary_sequence+="${ordinary_prefix}"$'\n'
 done
 for mode in default fix check; do
-  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/49\]' "${test_root}/${mode}.output")" == 49 ]]
-  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/49\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
-  grep --fixed-strings --quiet -- '[49/49] Check development API compatibility' "${test_root}/${mode}.output"
+  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/50\]' "${test_root}/${mode}.output")" == 50 ]]
+  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/50\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
+  grep --fixed-strings --quiet -- '[50/50] Check development API compatibility' "${test_root}/${mode}.output"
   [[ "$(tail -n 1 "${test_root}/${mode}.commands")" == *"python -m boxferry_ci.api_baselines run "* ]]
-  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 49 steps.' ]]
+  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 50 steps.' ]]
 done
 # Keep the explicit source/index bridge in every complete mode exactly once.
 for mode in default fix check; do
@@ -135,7 +135,7 @@ done
 # Every new consumer check and locked diagnostic harness must run exactly once and
 # preserve the first failure, before any later complete-gate command is dispatched.
 for mode in default fix check; do
-  consumer_files="scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py"
+  consumer_files="scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py"
   consumer_format="uv run --locked --project automation ruff format"
   if [[ "${mode}" == check ]]; then
     consumer_format+=" --check"
@@ -144,7 +144,8 @@ for mode in default fix check; do
   for command in "${consumer_format}" \
     "uv run --locked --project automation ruff check --config automation/pyproject.toml ${consumer_files}" \
     "uv run --locked --project automation ty check ${consumer_files}" \
-    "uv run --locked --project automation python scripts/test-shared-automation.py --with-native-renovate"; do
+    "uv run --locked --project automation python scripts/test-shared-automation.py --with-native-renovate" \
+    "uv run --locked --project automation python scripts/test-workflow-lint.py"; do
     assert_contains "${mode}" "${command}"
     [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
     status=0
@@ -185,7 +186,7 @@ for mode in default check; do
     fi
     [[ "${status}" == 17 ]]
     [[ "$(tail -n 1 "${test_root}/${label}.commands")" == "${command}" ]]
-    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/49\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
+    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/50\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
   done
 done
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
@@ -316,6 +317,13 @@ for mode in default fix check; do
     printf 'Ordinary validation must not build a Dev Container.\n' >&2
     exit 1
   fi
+done
+
+# Actual workflow lint precedes its CLI contracts, and either failure stops the gate.
+for mode in fix check; do
+  lint_line="$(grep -nFx actionlint "${test_root}/${mode}.commands" | cut -d: -f1)"
+  harness_line="$(grep -nFx 'uv run --locked --project automation python scripts/test-workflow-lint.py' "${test_root}/${mode}.commands" | cut -d: -f1)"
+  [[ "${harness_line}" == "$((lint_line + 1))" ]]
 done
 
 # A failed check must stop the gate and preserve its exit status in either mode.

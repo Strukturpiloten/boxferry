@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=49
+readonly total_steps=50
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -199,17 +199,17 @@ if [[ "${format_mode}" == "check" ]]; then
   run_step "Check shared automation Python formatting" \
     uv run --locked --project automation ruff format --check automation
   run_step "Check consumer Python formatting" \
-    uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
+    uv run --locked --project automation ruff format --check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py
 else
   run_step "Format shared automation Python" \
     uv run --locked --project automation ruff format automation
   run_step "Format consumer Python" \
-    uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
+    uv run --locked --project automation ruff format --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py
 fi
 run_step "Lint consumer Python" \
-  uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
+  uv run --locked --project automation ruff check --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py
 run_step "Type-check consumer Python" \
-  uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
+  uv run --locked --project automation ty check scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py scripts/test-workflow-lint.py
 run_step "Lint shared automation Python" uv run --locked --project automation ruff check automation
 run_step "Type-check shared automation Python" uv run --locked --project automation ty check --project automation
 run_step "Verify every canonical archive on both architectures" \
@@ -247,6 +247,8 @@ run_step "Run offline migration-readiness tier" python3 scripts/migration-readin
 run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh --development
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint
+run_step "Test selected actual Actionlint CLI contracts" \
+  uv run --locked --project automation python scripts/test-workflow-lint.py
 run_step "Audit GitHub Actions security" zizmor .github/workflows
 run_step "Check all workspace targets and features" cargo ci-check
 run_step "Check facade core feature boundary" cargo ci-core

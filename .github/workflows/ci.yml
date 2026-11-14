@@ -75,11 +75,11 @@ jobs:
       - name: Lint Python
         run: uv run --locked --project _automation/automation ruff check _automation/automation
       - name: Check consumer Python formatting
-        run: uv run --locked --project _automation/automation ruff format --check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py
+        run: uv run --locked --project _automation/automation ruff format --check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py _automation/scripts/test-workflow-lint.py
       - name: Lint consumer Python
-        run: uv run --locked --project _automation/automation ruff check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py
+        run: uv run --locked --project _automation/automation ruff check --config _automation/automation/pyproject.toml _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py _automation/scripts/test-workflow-lint.py
       - name: Check consumer Python types
-        run: uv run --locked --project _automation/automation ty check _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py
+        run: uv run --locked --project _automation/automation ty check _automation/scripts/shared-ci.py _automation/scripts/test-shared-automation.py _automation/scripts/git-worktree.py _automation/scripts/test-git-worktree.py _automation/scripts/devcontainer-source-report-diagnostic.py _automation/scripts/test-workflow-lint.py
       - name: Check Python types
         run: uv run --locked --project _automation/automation ty check --project _automation/automation
       - name: Prepare the integrity-pinned native Renovate test runtime
@@ -318,6 +318,14 @@ jobs:
       - name: Install checksum-pinned native file-quality tools
         run: |
           sudo bash scripts/install-file-tools.sh /usr/local/bin
+      - name: Install candidate-owned canonical Actionlint
+        run: |
+          python3 automation/src/boxferry_ci/tooling.py --destination "${RUNNER_TEMP}/workflow-lint-tools" --tools actionlint
+          printf '%s\n' "${RUNNER_TEMP}/workflow-lint-tools" >> "${GITHUB_PATH}"
+      - name: Lint repository GitHub Actions workflows
+        run: actionlint
+      - name: Test selected actual Actionlint CLI contracts
+        run: uv run --locked --project _automation/automation python scripts/test-workflow-lint.py
       - name: Check non-Rust file formatting and lint
         run: bash scripts/check-files.sh --check
       - name: Test validation-plan regressions

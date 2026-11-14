@@ -196,6 +196,61 @@ class ManifestTests(unittest.TestCase):
     def test_production_manifest_has_complete_version_independent_coverage(self) -> None:
         self.assert_complete_invariants(subject.load_manifest())
 
+    def test_future_actionlint_publisher_preserves_exact_selected_origin_and_archives(self) -> None:
+        for schema in (1, 2):
+            document = self.document()
+            if schema == 2:
+                document |= {"schema": 2, "sources": []}
+            for row in document["assets"]:
+                if row["tool"] == "actionlint":
+                    row["repository"] = "kjanat/actionlint"
+                    row["currentVersion"] = "v9.8.7"  # Authored future metadata, never active pins.
+            values = self.load(document)
+            self.assert_complete_invariants(values)
+            for architecture, release_arch in (("x86_64", "amd64"), ("aarch64", "arm64")):
+                selected = values["actionlint", architecture]
+                self.assertEqual(selected.repository, "kjanat/actionlint")
+                self.assertEqual(
+                    selected.url,
+                    "https://github.com/kjanat/actionlint/releases/download/v9.8.7/"
+                    f"actionlint_9.8.7_linux_{release_arch}.tar.gz",
+                )
+                self.assertEqual(
+                    selected.digest, "a" * 64 if architecture == "x86_64" else "b" * 64
+                )
+                self.assertEqual(selected.member, "actionlint")
+
+    def test_unknown_and_mixed_publishers_refuse_before_any_download_or_install(self) -> None:
+        for defect in ("unknown", "mixed", "version", "other-tool"):
+            document = self.document()
+            for row in document["assets"]:
+                if row["tool"] == "actionlint":
+                    row["repository"] = "kjanat/actionlint"
+            actionlint = next(row for row in document["assets"] if row["tool"] == "actionlint")
+            if defect == "unknown":
+                actionlint["repository"] = "unknown/actionlint"
+            elif defect == "mixed":
+                actionlint["repository"] = "rhysd/actionlint"
+            elif defect == "version":
+                actionlint["currentVersion"] = "v9.8.7"
+            else:
+                document["assets"][0]["repository"] = "kjanat/actionlint"
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                manifest = root / "manifest.json"
+                manifest.write_text(json.dumps(document))
+                acquire = Mock()
+                with self.subTest(defect=defect), self.assertRaises(subject.ToolError):
+                    subject.install(
+                        root / "destination",
+                        ("actionlint",),
+                        manifest=manifest,
+                        architecture="x86_64",
+                        downloader=acquire,
+                    )
+                acquire.assert_not_called()
+                self.assertFalse((root / "destination").exists())
+
     def test_production_lychee_selects_portable_musl_archives_for_both_native_lanes(self) -> None:
         values = subject.load_manifest()
         for architecture in ("x86_64", "aarch64"):
@@ -1513,7 +1568,16 @@ class NativeRenovateTests(unittest.TestCase):
     );
     assert.ok(manager, "the canonical tool metadata needs exactly one native manager");
     const file = "automation/tool-artifacts.json",
-      original = fs.readFileSync(root + "/" + file, "utf8");
+      active = fs.readFileSync(root + "/" + file, "utf8");
+    const projection = JSON.parse(active);
+    if (process.argv[5] === "kjanat/actionlint") {
+      // Inert future fixture under candidate preset code, never a live adoption claim.
+      for (const row of projection.assets) if (row.tool === "actionlint") {
+        row.repository = "kjanat/actionlint";
+        row.currentVersion = "v9.8.7";
+      }
+    }
+    const original = JSON.stringify(projection, null, 2);
     let content = original;
     const rows = JSON.parse(original).assets;
     const owners = config.customManagers.flatMap((m) =>
@@ -1617,6 +1681,8 @@ class NativeRenovateTests(unittest.TestCase):
       );
       assert.equal(digest, nextDigest);
       assert.equal(calls.length, 2);
+      assert.ok(calls.every(url => url.includes(row.repository + "/releases/tags/")),
+        "native attachment lookup must use the actual selected publisher");
       const updated = await doAutoReplace(
         {
           ...manager,
@@ -1676,15 +1742,26 @@ class NativeRenovateTests(unittest.TestCase):
   process.exit(1);
 });
 """
-        result = subprocess.run(
-            ["node", "-e", script, str(runtime), str(ROOT), str(config), str(root_config)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=90,
-        )
-        self.assertEqual(result.returncode, 0, (result.stdout + result.stderr)[-6000:])
-        self.assertIn("12 unique rows", result.stdout)
+        for publisher in ("rhysd/actionlint", "kjanat/actionlint"):
+            with self.subTest(publisher=publisher):
+                result = subprocess.run(
+                    [
+                        "node",
+                        "-e",
+                        script,
+                        str(runtime),
+                        str(ROOT),
+                        str(config),
+                        str(root_config),
+                        publisher,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=90,
+                )
+                self.assertEqual(result.returncode, 0, (result.stdout + result.stderr)[-6000:])
+                self.assertIn("12 unique rows", result.stdout)
 
 
 if __name__ == "__main__":
