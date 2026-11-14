@@ -80,18 +80,18 @@ fi
 if [[ "${mode}" == "--check" ]]; then
   run_step "Check shared Python formatting" uv run --locked --project automation ruff format --check automation
   run_step "Check consumer Python formatting" uv run --locked --project automation ruff format --check \
-    --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py
+    --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 else
   run_step "Format shared Python" uv run --locked --project automation ruff format automation
   run_step "Format consumer Python" uv run --locked --project automation ruff format \
-    --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py
+    --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 fi
 run_step "Lint shared Python" uv run --locked --project automation ruff check automation
 run_step "Lint consumer Python" uv run --locked --project automation ruff check \
-  --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py
+  --config automation/pyproject.toml scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 run_step "Check shared Python types" uv run --locked --project automation ty check --project automation
 run_step "Check consumer Python types" uv run --locked --project automation ty check \
-  scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py
+  scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py
 run_step "Check unstaged whitespace errors" git --no-pager diff --check
 run_step "Check staged whitespace errors" git --no-pager diff --cached --check
 run_step "Lint GitHub Actions syntax" actionlint

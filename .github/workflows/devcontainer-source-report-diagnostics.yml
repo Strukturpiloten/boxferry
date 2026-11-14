@@ -1,0 +1,149 @@
+---
+name: Dev Container source report diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-report-diagnostics-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    name: Diagnostic fixture (${{ matrix.case }})
+    if: >-
+      github.repository == 'Strukturpiloten/boxferry' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.repository.default_branch == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - case: success
+            fixture: success
+          - case: unavailable
+            fixture: unavailable
+          - case: malformed
+            fixture: malformed
+          - case: invalid-revision
+            fixture: invalid-revision
+          - case: missing-report
+            fixture: missing-report
+          - case: unavailable-report-loss
+            fixture: unavailable
+    steps:
+      - name: Read exact candidate manifest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Select immutable automation solely from the candidate manifest
+        id: selected
+        shell: bash
+        run: python3 candidate/scripts/devcontainer-source-report-diagnostic.py manifest
+      - name: Check out selected immutable automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ steps.selected.outputs.revision }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind exact candidate and policy using selected producer
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ github.sha }}
+          policy-sha: ${{ github.sha }}
+          automation-sha: ${{ steps.selected.outputs.revision }}
+          config-path: ${{ steps.selected.outputs.policy }}
+      - name: Install selected locked Python authority
+        uses: ./_automation/.github/actions/shared-python
+      - name: Verify producer blobs and reserve run-owned evidence
+        id: owned
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          CASE: ${{ matrix.case }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          candidate/scripts/devcontainer-source-report-diagnostic.py prepare --case "${CASE}"
+      - name: Run actual admitted fixture and propagate actual CLI failure
+        id: resolve
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          DIRECTORY: ${{ steps.owned.outputs.directory }}
+          FIXTURE_CASE: ${{ matrix.fixture }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          _automation/automation/tests/source_report_fixture.py
+          --automation _automation --directory "${DIRECTORY}/fixture" --case "${FIXTURE_CASE}"
+          --candidate-sha "${GITHUB_SHA}" --policy-sha "${GITHUB_SHA}"
+          --automation-sha "${AUTOMATION_SHA}" --propagate-failure
+      - name: Observe bounded identities and forward captured original cause to job log
+        id: observe
+        if: always()
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          CASE: ${{ matrix.case }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          candidate/scripts/devcontainer-source-report-diagnostic.py observe --case "${CASE}"
+      - name: Retain exact diagnostic report with real upload outcome
+        id: retain
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-report-diagnostic-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}
+          path: ${{ runner.temp }}/boxferry-source-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}/fixture/devcontainer-sources.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Check every required fixed sidecar before upload
+        id: sidecars
+        if: always() && steps.observe.outcome == 'success'
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          CASE: ${{ matrix.case }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          candidate/scripts/devcontainer-source-report-diagnostic.py sidecars --case "${CASE}"
+      - name: Retain fixed diagnostic sidecars
+        if: always() && steps.sidecars.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-report-diagnostic-sidecars-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}
+          path: |
+            ${{ runner.temp }}/boxferry-source-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}/identity.json
+            ${{ runner.temp }}/boxferry-source-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}/fixture/fixture.json
+            ${{ runner.temp }}/boxferry-source-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}/fixture/resolver.stderr
+            ${{ runner.temp }}/boxferry-source-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.case }}/controlled-file-loss.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Execute actual selected canonical source final check
+        if: always()
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          RESOLVE_OUTCOME: ${{ steps.resolve.outcome }}
+          RETAIN_OUTCOME: ${{ steps.retain.outcome }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          candidate/scripts/devcontainer-source-report-diagnostic.py final
+      - name: Remove only validated run-owned fixture evidence after retention attempts
+        if: always()
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ steps.selected.outputs.revision }}
+          CASE: ${{ matrix.case }}
+        run: >-
+          uv run --locked --project _automation/automation python
+          candidate/scripts/devcontainer-source-report-diagnostic.py cleanup --case "${CASE}"

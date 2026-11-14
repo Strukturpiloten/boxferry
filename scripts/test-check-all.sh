@@ -115,22 +115,47 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
 expected_ordinary_sequence=""
-for ((ordinary_step = 1; ordinary_step <= 46; ordinary_step++)); do
-  printf -v ordinary_prefix '[%02d/46]' "${ordinary_step}"
+for ((ordinary_step = 1; ordinary_step <= 49; ordinary_step++)); do
+  printf -v ordinary_prefix '[%02d/49]' "${ordinary_step}"
   expected_ordinary_sequence+="${ordinary_prefix}"$'\n'
 done
 for mode in default fix check; do
-  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/46\]' "${test_root}/${mode}.output")" == 46 ]]
-  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/46\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
-  grep --fixed-strings --quiet -- '[46/46] Check development API compatibility' "${test_root}/${mode}.output"
+  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/49\]' "${test_root}/${mode}.output")" == 49 ]]
+  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/49\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
+  grep --fixed-strings --quiet -- '[49/49] Check development API compatibility' "${test_root}/${mode}.output"
   [[ "$(tail -n 1 "${test_root}/${mode}.commands")" == *"python -m boxferry_ci.api_baselines run "* ]]
-  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 46 steps.' ]]
+  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 49 steps.' ]]
 done
 # Keep the explicit source/index bridge in every complete mode exactly once.
 for mode in default fix check; do
   command="python3 scripts/test-git-worktree.py"
   assert_contains "${mode}" "${command}"
   [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
+done
+# Every new consumer check and locked diagnostic harness must run exactly once and
+# preserve the first failure, before any later complete-gate command is dispatched.
+for mode in default fix check; do
+  consumer_files="scripts/shared-ci.py scripts/test-shared-automation.py scripts/git-worktree.py scripts/test-git-worktree.py scripts/devcontainer-source-report-diagnostic.py"
+  consumer_format="uv run --locked --project automation ruff format"
+  if [[ "${mode}" == check ]]; then
+    consumer_format+=" --check"
+  fi
+  consumer_format+=" --config automation/pyproject.toml ${consumer_files}"
+  for command in "${consumer_format}" \
+    "uv run --locked --project automation ruff check --config automation/pyproject.toml ${consumer_files}" \
+    "uv run --locked --project automation ty check ${consumer_files}" \
+    "uv run --locked --project automation python scripts/test-shared-automation.py --with-native-renovate"; do
+    assert_contains "${mode}" "${command}"
+    [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
+    status=0
+    if [[ "${mode}" == default ]]; then
+      CHECK_ALL_TEST_FAIL_COMMAND="${command}" run_gate consumer_failure || status=$?
+    else
+      CHECK_ALL_TEST_FAIL_COMMAND="${command}" run_gate consumer_failure "--${mode}" || status=$?
+    fi
+    [[ "${status}" == 17 ]]
+    [[ "$(tail -n 1 "${test_root}/consumer_failure.commands")" == "${command}" ]]
+  done
 done
 # Every YAML-dependent application test uses the declared candidate environment.
 for mode in default check; do
@@ -144,9 +169,9 @@ done
 for mode in default check; do
   for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
     case "${script}" in
-      test-application-probes.sh) expected_step=19 ;;
-      test-observability-application.sh) expected_step=21 ;;
-      test-supabase-application.sh) expected_step=22 ;;
+      test-application-probes.sh) expected_step=22 ;;
+      test-observability-application.sh) expected_step=24 ;;
+      test-supabase-application.sh) expected_step=25 ;;
     esac
     label="application-env-${mode}-${expected_step}"
     command="uv run --locked --project automation bash scripts/${script}"
@@ -160,7 +185,7 @@ for mode in default check; do
     fi
     [[ "${status}" == 17 ]]
     [[ "$(tail -n 1 "${test_root}/${label}.commands")" == "${command}" ]]
-    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/46\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
+    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/49\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
   done
 done
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
