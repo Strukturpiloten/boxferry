@@ -16,6 +16,7 @@ import http.client
 import json
 import os
 import re
+import stat
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -62,6 +63,13 @@ REFUSAL_CODES = {
     "E duplicate or parallel role identity": "V4O018",
     "E durable copy identity cut or phase mismatch": "V4C003",
     "E durable custody directory symlink refused": "V4C004",
+    "E copy needs a fresh owned durable directory": "E_COPY_DESTINATION",
+    "E durable directory identity changed": "E_COPY_DIRECTORY_CHANGED",
+    "E durable file set differs from the frozen boundary": "E_COPY_FILE_SET",
+    "E durable file I/O failed": "E_COPY_IO",
+    "E verified copy receipt required": "E_COPY_RECEIPT",
+    "E copy already attempted or series aborted": "E_COPY_ABORTED",
+    "E stable local state unavailable for copy": "E_COPY_LOCAL_STATE",
     "E effect inherited preparation linkage mismatch": "V4O019",
     "E entry metadata ID or content changed": "V4O020",
     "E entry metadata not observed before cancellation": "V4O021",
@@ -460,6 +468,7 @@ PHASE_CODES = frozenset(
         "DISPATCH",
         "DISPATCH_WINDOW",
         "DISCOVERY",
+        "DURABLE_E_COPY",
         "DURABLE_E_READBACK",
         "CANCELLATION",
         "DISCOVERY_RECEIPT",
@@ -1591,15 +1600,18 @@ class Controller:
             "identity": facts,
         }
 
-    @diagnostic_phase("DURABLE_E_READBACK")
-    def durable_e_copy(self, directory: str | Path, proof_boundary: list[dict[str, Any]]) -> None:
-        candidate = Path(directory)
-        self.o.require(not candidate.is_symlink(), "E durable custody directory symlink refused")
-        destination = candidate.resolve()
+    def durable_destination(self, directory: str | Path) -> Path:
+        candidate = self.o.checked_custody(directory)
         self.o.require(
-            destination != self.e.directory and not destination.is_relative_to(self.e.directory),
+            ".." not in candidate.parts
+            and candidate != self.e.directory
+            and not candidate.is_relative_to(self.e.directory)
+            and not self.e.directory.is_relative_to(candidate),
             "separate operator-approved durable custody required",
         )
+        return candidate
+
+    def durable_cut(self, boundary: list[dict[str, Any]]) -> dict[str, Any]:
         cut = self.e.state.get("e_v5", {}).get("pre_cancel_cut")
         self.o.require(
             cut
@@ -1608,21 +1620,182 @@ class Controller:
             "E exact helper-bound pre-cancel cut required",
         )
         self.o.require(
-            proof_boundary and proof_boundary[: len(cut["files"])] == cut["files"],
+            boundary and boundary[: len(cut["files"])] == cut["files"],
             "E frozen cut is not a prefix of pre-cancel boundary",
         )
-        started = self.e.elapsed()
-        copied_path = destination / "state.json"
+        return cast(dict[str, Any], cut)
+
+    def durable_attestation(self, cut: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "schema": "boxferry.provider632.storage-attestation.v5",
+            "series": self.e.state["series"],
+            "source_sha": self.source,
+            "observer_sha256": self.observer_hash,
+            "controller_sha256": self.source_hash,
+            "cut_sha256": cut["cut_sha256"],
+            "root_reviewed": True,
+            "storage_class": "operator-reviewed-durable-filesystem",
+            "limits": "fsync-and-readback-only; no WORM or power-loss guarantee",
+        }
+
+    def verify_durable_files(
+        self,
+        destination: Path,
+        identity: tuple[int, int],
+        records: list[dict[str, Any]],
+        *,
+        sync: bool,
+    ) -> dict[str, bytes]:
+        # open_directory opens a new file description. Listing a directory FD already
+        # enumerated while empty can hide new entries on Btrfs, even after fsync.
+        retained = {}
+        names = {item["path"] for item in records}
         self.o.require(
-            not copied_path.is_symlink()
-            and copied_path.is_file()
-            and copied_path.stat().st_size <= self.o.MAX_JSON,
-            "durable state file exceeds bound",
+            len(names) == len(records)
+            and all(name not in {"", ".", ".."} and Path(name).name == name for name in names),
+            "durable proof index missing or changed",
         )
-        with copied_path.open("rb") as stream:
-            copied_raw = stream.read(self.o.MAX_JSON + 1)
-            os.fsync(stream.fileno())
-        self.o.require(len(copied_raw) <= self.o.MAX_JSON, "durable state exceeds bound")
+        try:
+            with self.o.open_directory(destination) as directory:
+                info = os.fstat(directory)
+                self.o.require(
+                    (info.st_dev, info.st_ino) == identity
+                    and info.st_uid == os.getuid()
+                    and stat.S_IMODE(info.st_mode) == 0o700,
+                    "E durable directory identity changed",
+                )
+                self.o.require(
+                    set(os.listdir(directory)) == names,
+                    "E durable file set differs from the frozen boundary",
+                )
+                for item in records:
+                    name, length = item["path"], item["bytes"]
+                    descriptor = os.open(
+                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                    )
+                    with os.fdopen(descriptor, "rb") as stream:
+                        info = os.fstat(stream.fileno())
+                        self.o.require(
+                            stat.S_ISREG(info.st_mode)
+                            and info.st_size == length <= self.o.MAX_CUSTODY,
+                            "durable proof file shape mismatch",
+                        )
+                        raw = stream.read(length + 1)
+                        if sync:
+                            os.fsync(stream.fileno())
+                    self.o.require(
+                        len(raw) == length and hashlib.sha256(raw).hexdigest() == item["sha256"],
+                        "durable readback mismatch",
+                    )
+                    if name in {"state.json", "storage-attestation.json"}:
+                        retained[name] = raw
+                if sync:
+                    os.fsync(directory)
+        except OSError:
+            raise self.o.Inconclusive("E durable file I/O failed") from None
+        return retained
+
+    @diagnostic_phase("DURABLE_E_COPY")
+    def copy_e(self, directory: str | Path) -> None:
+        self.o.require(
+            not self.c["aborted"]
+            and "cancel:E" not in self.c["effects"]
+            and "E_copy_verified" not in self.c,
+            "E copy already attempted or series aborted",
+        )
+        started = self.e.elapsed()
+        boundary = list(self.e.state["files"])
+        cut = self.durable_cut(boundary)
+        destination = self.durable_destination(directory)
+        try:
+            with self.o.open_directory(destination) as target:
+                info = os.fstat(target)
+                identity = (info.st_dev, info.st_ino)
+                self.o.require(
+                    info.st_uid == os.getuid()
+                    and stat.S_IMODE(info.st_mode) == 0o700
+                    and identity != self.e.directory_identity
+                    and not os.listdir(target),
+                    "E copy needs a fresh owned durable directory",
+                )
+                state = self.o.read_regular(self.e.state_path, self.o.MAX_JSON)
+                self.o.require(
+                    self.o.decode(state) == self.e.state,
+                    "E stable local state unavailable for copy",
+                )
+                controls = {
+                    "state.json": state,
+                    "storage-attestation.json": self.o.e_bytes(self.durable_attestation(cut)),
+                }
+                records = boundary + [
+                    {"path": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+                    for name, raw in controls.items()
+                ]
+                self.o.require(
+                    len({item["path"] for item in records}) == len(records),
+                    "durable proof index missing or changed",
+                )
+                self.o.require(
+                    sum(item["bytes"] for item in records) <= self.o.MAX_CUSTODY,
+                    "aggregate custody byte budget exhausted",
+                )
+                for item in records:
+                    name, length = item["path"], item["bytes"]
+                    self.o.require(
+                        name not in {"", ".", ".."}
+                        and Path(name).name == name
+                        and type(length) is int
+                        and 0 <= length <= self.o.MAX_CUSTODY,
+                        "durable proof index missing or changed",
+                    )
+                    raw = controls.get(name)
+                    if raw is None:
+                        raw = self.o.read_regular(self.e.directory / name, length)
+                        self.o.require(
+                            len(raw) == length
+                            and hashlib.sha256(raw).hexdigest() == item["sha256"],
+                            "E indexed evidence bytes changed",
+                        )
+                    descriptor = os.open(
+                        name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=target,
+                    )
+                    with os.fdopen(descriptor, "wb") as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                os.fsync(target)
+        except OSError:
+            raise self.o.Inconclusive("E durable file I/O failed") from None
+        self.verify_durable_files(destination, identity, records, sync=False)
+        self.c["E_copy_verified"] = {
+            "directory": str(destination),
+            "identity": list(identity),
+            "controls": records[len(boundary) :],
+            "cut_sha256": cut["cut_sha256"],
+            "elapsed": self.e.elapsed(),
+            "duration_seconds": self.e.elapsed() - started,
+        }
+        self.e.persist()
+
+    @diagnostic_phase("DURABLE_E_READBACK")
+    def durable_e_copy(self, directory: str | Path, proof_boundary: list[dict[str, Any]]) -> None:
+        destination = self.durable_destination(directory)
+        cut = self.durable_cut(proof_boundary)
+        receipt = self.c.get("E_copy_verified", {})
+        self.o.require(
+            receipt.get("directory") == str(destination)
+            and receipt.get("cut_sha256") == cut["cut_sha256"],
+            "E verified copy receipt required",
+        )
+        identity = cast(tuple[int, int], tuple(receipt["identity"]))
+        started = self.e.elapsed()
+        files = self.verify_durable_files(
+            destination, identity, proof_boundary + receipt["controls"], sync=True
+        )
+        copied_raw = files["state.json"]
         copied = self.o.decode(copied_raw)
         self.o.require(
             copied.get("series") == self.e.state["series"]
@@ -1637,6 +1810,10 @@ class Controller:
         )
         # Re-run the actual preparation ZIP/schema/provenance and execution proof on copied bytes.
         copied_evidence = self.o.Evidence(destination, read_only=True)
+        self.o.require(
+            copied_evidence.directory_identity == identity and copied_evidence.state == copied,
+            "E durable directory identity changed",
+        )
         proof = self.o.decode(
             self.o.e_bytes(
                 self.o.e_pre_proof(
@@ -1649,55 +1826,12 @@ class Controller:
             all(cut.get(key) == value for key, value in proof.items()),
             "E copied mandatory pre-cancel proof incomplete or changed",
         )
-        for row in proof_boundary:
-            self.o.require(
-                Path(row["path"]).name == row["path"], "durable proof index missing or changed"
-            )
-            path = destination / row["path"]
-            self.o.require(
-                not path.is_symlink()
-                and path.is_file()
-                and path.stat().st_size == row["bytes"]
-                and row["bytes"] <= self.o.MAX_CUSTODY,
-                "durable proof file shape mismatch",
-            )
-            with path.open("rb") as stream:
-                data = stream.read(row["bytes"] + 1)
-                os.fsync(stream.fileno())
-            self.o.require(
-                len(data) == row["bytes"] and hashlib.sha256(data).hexdigest() == row["sha256"],
-                "durable readback mismatch",
-            )
-        # Environmental storage-class attestation is explicit; these syscalls do not prove power-
-        # loss/WORM durability.
-        attestation_path = destination / "storage-attestation.json"
-        self.o.require(
-            not attestation_path.is_symlink()
-            and attestation_path.is_file()
-            and attestation_path.stat().st_size <= 16384,
-            "E reviewed storage attestation unavailable",
-        )
-        with attestation_path.open("rb") as stream:
-            attestation_raw = stream.read(16385)
-            os.fsync(stream.fileno())
+        attestation_raw = files["storage-attestation.json"]
         attestation = self.o.decode(attestation_raw)
-        expected = {
-            "schema": "boxferry.provider632.storage-attestation.v5",
-            "series": self.e.state["series"],
-            "source_sha": self.source,
-            "observer_sha256": self.observer_hash,
-            "controller_sha256": self.source_hash,
-            "cut_sha256": cut["cut_sha256"],
-            "root_reviewed": True,
-            "storage_class": "operator-reviewed-durable-filesystem",
-            "limits": "fsync-and-readback-only; no WORM or power-loss guarantee",
-        }
-        self.o.require(attestation == expected, "E reviewed storage attestation identity mismatch")
-        descriptor = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        self.o.require(
+            attestation == self.durable_attestation(cut),
+            "E reviewed storage attestation identity mismatch",
+        )
         self.c["E_durable_readback"] = {
             "directory": str(destination),
             "cut_sha256": cut["cut_sha256"],
@@ -1712,9 +1846,6 @@ class Controller:
             "storage_attestation": attestation,
         }
         self.e.persist()
-
-        # Storage durability and fsync provenance remain an explicit root-reviewed environment
-        # prerequisite.
 
     @diagnostic_phase("CANCELLATION")
     def cancel(
@@ -1806,6 +1937,9 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--main-ci-run", type=int, required=True)
+    copy_e = commands.add_parser("copy-e", help="copy and read back the frozen E proof locally")
+    copy_e.add_argument("--durable-custody", required=True)
+    copy_e.add_argument("--storage-reviewed", action="store_true", required=True)
     for name in ("dispatch", "discover", "diagnose-discovery", "cancel", "cleanup"):
         command = commands.add_parser(name)
         command.add_argument("--case", choices=list("ABCDE"), required=True)
@@ -1827,6 +1961,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.command == "preflight":
                 controller.preflight(args.main_ci_run)
+            elif args.command == "copy-e":
+                controller.copy_e(args.durable_custody)
             elif args.command == "dispatch":
                 controller.dispatch(args.case)
             elif args.command in {"discover", "diagnose-discovery"}:

@@ -160,19 +160,36 @@ effect wrapper must still be active without conclusion. Missing wrappers remain 
 
 Run `observe guard-e --custody CUSTODY --prepare E-prepare-pre-cancel --effect E-effect-hold` to
 freeze the single `pre_cancel_cut`. Preserve actual preparation provenance/ZIP and the unique
-effect-entry metadata in it. Copy state and every indexed pre-boundary file to separately
-reviewed durable custody, fsync files and directory, and verify byte lengths/hashes/readback.
-Provide `storage-attestation.json` matching the controller's closed schema
-`boxferry.provider632.storage-attestation.v5`: current series/S,
-observer/controller hashes, cut SHA, `root_reviewed: true`, storage class
-`operator-reviewed-durable-filesystem`, and the literal limit
-`fsync-and-readback-only; no WORM or power-loss guarantee`. Storage review must be true;
-ordinary runner disposal or a hash alone cannot establish durability.
+effect-entry metadata in it. Use the local copy command immediately after the cut:
+
+```console
+python -m boxferry_ci.provider_probe control --custody CUSTODY copy-e --durable-custody DURABLE --storage-reviewed
+```
+
+Before the hold, select and review the durability of an existing empty, operator-owned mode
+0700 directory separate from local custody. Supply `--storage-reviewed` only after that
+review. The command binds the closed `boxferry.provider632.storage-attestation.v5` schema
+to the same series, source, observer, controller and cut. The claim remains
+`fsync-and-readback-only; no WORM or power-loss guarantee`. Use the canonical command
+with a fresh directory for each authorized series. It writes exclusively, fsyncs each
+file and the destination directory, then reopens the intended directory to verify its
+identity, exact file set, lengths and hashes. A reused directory handle can return a stale
+listing on Btrfs after files are added. No experiment HTTP is used for the copy. A failed
+copy or readback aborts the series. Preserve the partial or complete copy and its diagnostics.
 
 Invoke the single `control --custody CUSTODY cancel --case E --run E_RUN --durable-custody DURABLE`.
-The controller rechecks source, full copied proof, file/directory fsync/readback, active owned
-run and <=5-second hold freshness. A slow copy or API/fsync sequence refuses without extending
-freshness. Do not replace a cut, refresh its missing facts after cancel, or retry ambiguous control.
+The controller requires the successful copy receipt and reopens the same durable directory
+for its independent file/directory fsync and exact readback. It rechecks source, the full copied
+proof, active owned run and the original <=5-second hold freshness. Run the hold, final
+preparation observation, guard, copy and cancellation commands in order, stopping after any
+nonzero exit. Rehearse the local steps on the intended filesystem before authorization. Include
+the copy and controller recheck in the elapsed time from the effect hold. Measure the
+per-file fsync passes and allow for storage latency variation. Leave room for the remaining
+provider reads and process startup within the same five seconds. A copy-only pass does not
+establish that the cancellation sequence fits. If the margin is insufficient, record the
+bottleneck on #629 before proposing another series. A slow copy or API/fsync sequence refuses
+without extending freshness. Do not replace a cut, refresh its
+missing facts after cancel, or retry ambiguous control.
 
 After actual cancellation, use capture-terminal to bind `E-terminal` and `E-terminal-stable`, with exact same cancelled
 effect job/check and retained successful preparation, authenticating every exposed role after

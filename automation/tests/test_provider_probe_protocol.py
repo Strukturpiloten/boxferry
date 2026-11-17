@@ -8,14 +8,15 @@ Synthetic request totals are not a live provider or future-series budget promise
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import datetime as dt
 import hashlib
 import io
 import json
-import shutil
 import stat
 import urllib.request
+import uuid
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -245,12 +246,6 @@ class Fixture:
             total_count=len(jobs), jobs=jobs
         )
 
-    def durable(self) -> Path:
-        self.e.persist()
-        destination = self.root / "synthetic-external-copy"
-        shutil.copytree(self.custody, destination, dirs_exist_ok=True)
-        return destination
-
 
 class EFixture(Fixture):
     def __init__(self, owner: OfflineCase) -> None:
@@ -352,21 +347,32 @@ class EFixture(Fixture):
         self.e.bind_e_uploader(label, identifier, digest, 4 if role == "prepare" else 6, 1, 3)
 
     def durable(self) -> Path:
-        destination = super().durable()
-        cut = self.e.state["e_v5"]["pre_cancel_cut"]
-        attestation = {
-            "schema": "boxferry.provider632.storage-attestation.v5",
-            "series": self.e.state["series"],
-            "source_sha": S,
-            "observer_sha256": self.e.state["observer_sha256"],
-            "controller_sha256": self.controller.source_hash,
-            "cut_sha256": cut["cut_sha256"],
-            "root_reviewed": True,
-            "storage_class": "operator-reviewed-durable-filesystem",
-            "limits": "fsync-and-readback-only; no WORM or power-loss guarantee",
-        }
-        (destination / "storage-attestation.json").write_bytes(O.e_bytes(attestation))
+        destination = self.root / "synthetic-external-copy"
+        destination.mkdir(mode=0o700)
+        self.controller.copy_e(destination)
         return destination
+
+    def freeze_layout(self) -> None:
+        # 212 indexed files plus the copied state and attestation. Use authored
+        # bytes rather than reading either sealed series.
+        files = self.e.state["files"]
+        for number in range(len(files), 211):
+            name = f"{number + 1:04d}-offline-layout-{number}"
+            raw = (f"fixture-{number} " * 400).encode()
+            (self.e.directory / name).write_bytes(raw)
+            files.append(
+                dict(
+                    path=name,
+                    bytes=len(raw),
+                    sha256=hashlib.sha256(raw).hexdigest(),
+                    utc=O.utc(),
+                    elapsed=self.e.elapsed(),
+                )
+            )
+        self.e.persist()
+        O.guard_e(
+            self.e, argparse.Namespace(prepare="E-prepare-pre-cancel", effect="E-effect-hold")
+        )
 
     def cancel(self) -> None:
         self.destination = self.durable()
@@ -424,7 +430,14 @@ class EFixture(Fixture):
         )
 
 
-class ProtocolTests(OfflineCase):
+class FreshProtocolCase(OfflineCase):
+    def init_arguments(self) -> list[str]:
+        arguments = super().init_arguments()
+        arguments[arguments.index("--series") + 1] = uuid.uuid4().hex
+        return arguments
+
+
+class ProtocolTests(FreshProtocolCase):
     def test_full_e_leaf_only_cut_durable_copy_cancel_terminal_and_provenance(self) -> None:
         fixture = EFixture(self).prepare()
         cut = copy.deepcopy(fixture.e.state["e_v5"]["pre_cancel_cut"])
@@ -458,6 +471,160 @@ class ProtocolTests(OfflineCase):
         with self.assertRaises(O.Inconclusive):
             fixture.controller.cancel("E", 5, False, fixture.destination)
         self.assertEqual(len(fixture.posts), 1)
+
+    def test_e_full_size_durable_copy_and_controller_recheck(self) -> None:
+        fixture = EFixture(self).prepare(freeze=False)
+        fixture.freeze_layout()
+        self.assertEqual(len(fixture.e.state["files"]), 212)
+        spent = fixture.e.state["requests"]
+        expected = {
+            item["path"]: (fixture.e.directory / item["path"]).read_bytes()
+            for item in fixture.e.state["files"]
+        }
+        expected["state.json"] = fixture.e.state_path.read_bytes()
+        cut = fixture.e.state["e_v5"]["pre_cancel_cut"]
+        destination = fixture.durable()
+        self.assertEqual(fixture.e.state["requests"], spent)
+        self.assertEqual(
+            {file.name for file in destination.iterdir()},
+            expected.keys() | {"storage-attestation.json"},
+        )
+        for name, contents in expected.items():
+            self.assertEqual((destination / name).read_bytes(), contents, name)
+        self.assertEqual(
+            O.decode((destination / "storage-attestation.json").read_bytes()),
+            {
+                "schema": "boxferry.provider632.storage-attestation.v5",
+                "series": fixture.e.state["series"],
+                "source_sha": S,
+                "observer_sha256": fixture.e.state["observer_sha256"],
+                "controller_sha256": fixture.controller.source_hash,
+                "cut_sha256": cut["cut_sha256"],
+                "root_reviewed": True,
+                "storage_class": "operator-reviewed-durable-filesystem",
+                "limits": "fsync-and-readback-only; no WORM or power-loss guarantee",
+            },
+        )
+        fixture.controller.cancel("E", 5, False, destination)
+        self.assertEqual(fixture.controller.c["E_durable_readback"]["file_fsync_count"], 214)
+        self.assertEqual(len(fixture.posts), 1)
+
+    def test_e_durable_changes_refuse_before_cancellation(self) -> None:
+        for change in ("missing", "extra", "altered", "attestation", "state", "replaced"):
+            with self.subTest(change=change):
+                # Use exclusive new custody and mocked series registration for each case.
+                case = FreshProtocolCase()
+                case.setUp()
+                try:
+                    fixture = EFixture(case).prepare(freeze=False)
+                    fixture.freeze_layout()
+                    destination = fixture.durable()
+                    data = destination / fixture.e.state["files"][-1]["path"]
+                    if change == "missing":
+                        data.unlink()
+                    elif change == "extra":
+                        (destination / "extra").write_bytes(b"unexpected")
+                    elif change == "altered":
+                        raw = data.read_bytes()
+                        data.write_bytes(bytes((raw[0] ^ 1,)) + raw[1:])
+                    elif change == "attestation":
+                        path = destination / "storage-attestation.json"
+                        path.write_bytes(
+                            path.read_bytes().replace(
+                                b'"root_reviewed":true', b'"root_reviewed":null'
+                            )
+                        )
+                    elif change == "state":
+                        path = destination / "state.json"
+                        path.write_bytes(path.read_bytes() + b" ")
+                    else:
+                        moved = destination.with_name("moved-copy")
+                        destination.rename(moved)
+                        destination.mkdir(mode=0o700)
+                        for file in moved.iterdir():
+                            (destination / file.name).write_bytes(file.read_bytes())
+                    refusal = {
+                        "missing": "E durable file set differs",
+                        "extra": "E durable file set differs",
+                        "altered": "durable readback mismatch",
+                        "attestation": "durable readback mismatch",
+                        "state": "durable proof file shape mismatch",
+                        "replaced": "E durable directory identity changed",
+                    }
+                    with self.assertRaisesRegex(O.Inconclusive, refusal[change]):
+                        fixture.controller.cancel("E", 5, False, destination)
+                    self.assertEqual(fixture.posts, [])
+                    self.assertNotIn("cancel:E", fixture.controller.c["effects"])
+                finally:
+                    case.doCleanups()
+
+    def test_e_failed_reopen_readback_records_abort_without_requests(self) -> None:
+        fixture = EFixture(self).prepare(freeze=False)
+        fixture.freeze_layout()
+        destination = fixture.root / "durable"
+        destination.mkdir(mode=0o700)
+        listing = C.os.listdir
+        calls = 0
+
+        def fail_second_listing(fd: int) -> list[str]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("synthetic reopened directory read failure")
+            return listing(fd)
+
+        output = io.StringIO()
+        spent = fixture.e.state["requests"]
+        with (
+            patch.object(C.os, "listdir", side_effect=fail_second_listing),
+            contextlib.redirect_stdout(output),
+        ):
+            code = C.main(
+                [
+                    "--custody",
+                    str(fixture.custody),
+                    "copy-e",
+                    "--durable-custody",
+                    str(destination),
+                    "--storage-reviewed",
+                ]
+            )
+        self.assertEqual(calls, 2)
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(output.getvalue())["refusal_code"], "E_COPY_IO")
+        state = json.loads(fixture.e.state_path.read_bytes())
+        self.assertEqual(state["requests"], spent)
+        self.assertTrue(state["controller_v5"]["aborted"])
+        self.assertNotIn("E_copy_verified", state["controller_v5"])
+        self.assertNotIn("cancel:E", state["controller_v5"]["effects"])
+        self.assertEqual(fixture.posts, [])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                C.main(
+                    [
+                        "--custody",
+                        str(fixture.custody),
+                        "cancel",
+                        "--case",
+                        "E",
+                        "--run",
+                        "5",
+                        "--durable-custody",
+                        str(destination),
+                    ]
+                ),
+                2,
+            )
+        self.assertEqual(json.loads(fixture.e.state_path.read_bytes())["requests"], spent)
+
+    def test_e_copy_success_does_not_extend_hold_freshness(self) -> None:
+        fixture = EFixture(self).prepare()
+        destination = fixture.durable()
+        fixture.advance(5.1)
+        with self.assertRaisesRegex(O.Inconclusive, "fresh positive hold evidence required"):
+            fixture.controller.cancel("E", 5, False, destination)
+        self.assertEqual(fixture.posts, [])
+        self.assertNotIn("cancel:E", fixture.controller.c["effects"])
 
     def test_full_e_observed_preparation_wrapper_has_separate_retention_scope(self) -> None:
         fixture = EFixture(self).prepare(wrapper=True)
