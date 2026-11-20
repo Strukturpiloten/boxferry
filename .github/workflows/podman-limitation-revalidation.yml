@@ -22,7 +22,7 @@ concurrency:
 jobs:
   candidates:
     name: Select immutable candidates
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       cells: ${{ steps.select.outputs.cells }}
       has-candidates: ${{ steps.select.outputs.has-candidates }}
@@ -86,7 +86,7 @@ jobs:
     name: Build BoxFerry once
     needs: candidates
     if: needs.candidates.outputs.has-candidates == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -115,7 +115,7 @@ jobs:
       max-parallel: 1
       matrix:
         candidate: ${{ fromJSON(needs.candidates.outputs.cells) }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 140
     steps:
       - name: Check out exact default-branch commit
