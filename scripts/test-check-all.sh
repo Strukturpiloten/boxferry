@@ -34,6 +34,10 @@ cat > "${test_root}/bin/mock" << 'MOCK'
 #!/bin/bash
 set -Eeuo pipefail
 command_name="${0##*/}"
+# The ambient Actionlint stub refuses to execute.
+if [[ "${command_name}" == actionlint && "${0%/*}" != */target/workflow-lint-tools ]]; then
+  exit 18
+fi
 # Metadata is piped to jq, so its command order is deliberately not asserted.
 case "${command_name}:$*" in
   cargo:metadata* | jq:*) ;;
@@ -54,6 +58,10 @@ fi
 case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
   python3:automation/src/boxferry_ci/bootstrap.py\ install-uv*) printf '%s/uv\n' "${0%/*}" ;;
+  python3:automation/src/boxferry_ci/tooling.py\ --destination*)
+    [[ "$4" == --tools && "$5" == actionlint ]]
+    mkdir -p -- "$3"
+    ln -sf -- "${0%/*}/mock" "$3/actionlint" ;;
   jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
   uv:*boxferry_ci.cargo_tools*--package\ cargo-llvm-cov*)
     [[ "${CARGO_HOME}" == "${CHECK_ALL_TEST_COVERAGE_HOME}" ]] ;;
@@ -318,6 +326,14 @@ for mode in default fix check; do
     exit 1
   fi
 done
+
+# Candidate installation failure stops the gate before any lint can use PATH.
+status=0
+CHECK_ALL_TEST_FAIL_COMMAND="python3 automation/src/boxferry_ci/tooling.py --destination ${test_root}/repository/target/workflow-lint-tools --tools actionlint" \
+  run_gate tool_failure --check || status=$?
+[[ "${status}" == 17 ]]
+grep -Fq -- 'Install candidate-owned Actionlint (exit 17)' "${test_root}/tool_failure.output"
+[[ "$(tail -n 1 "${test_root}/tool_failure.commands")" == *"--tools actionlint" ]]
 
 # Actual workflow lint precedes its CLI contracts, and either failure stops the gate.
 for mode in fix check; do

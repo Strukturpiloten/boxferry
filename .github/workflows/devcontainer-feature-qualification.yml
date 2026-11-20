@@ -12,8 +12,8 @@ jobs:
       github.repository == 'Strukturpiloten/boxferry' &&
       github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' &&
       github.event_name == 'workflow_dispatch'
-    uses: Strukturpiloten/boxferry/.github/workflows/shared-devcontainer-updates.yml@5c8a288f7b9ef9d7b2e582153811030919900a22 # automation-v1 interface v1
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-devcontainer-updates.yml@4a5e10c15d5866be2e073e80eeb0eb62601bacd1 # automation-v1 interface v1
     with:
-      automation-sha: 5c8a288f7b9ef9d7b2e582153811030919900a22
+      automation-sha: 4a5e10c15d5866be2e073e80eeb0eb62601bacd1
     secrets:
       app-private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}

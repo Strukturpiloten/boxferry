@@ -489,7 +489,7 @@ class PresetTests(unittest.TestCase):
             self.assertTrue(result["automerge"])
             self.assertFalse(result["dependencyDashboardApproval"])
 
-    def test_actionlint_publisher_bridge_keeps_one_atomic_manager_and_existing_admission(
+    def test_actionlint_uses_one_atomic_manager_and_existing_admission(
         self,
     ) -> None:
         config = _shared()
@@ -499,26 +499,26 @@ class PresetTests(unittest.TestCase):
             if "/^automation/tool-artifacts\\.json$/" in manager["managerFilePatterns"]
         ]
         self.assertEqual(len(owners), 1)
-        self.assertIn("rhysd/actionlint|kjanat/actionlint", owners[0]["matchStrings"][0])
+        self.assertIn("kjanat/actionlint", owners[0]["matchStrings"][0])
+        self.assertNotIn("rhysd/actionlint", owners[0]["matchStrings"][0])
         self.assertEqual(owners[0]["datasourceTemplate"], "github-release-attachments")
-        for publisher in ("rhysd/actionlint", "kjanat/actionlint"):
-            result = effective(
-                config,
-                {
-                    "manager": "custom.regex",
-                    "datasource": "github-release-attachments",
-                    "packageName": publisher,
-                    "fileName": "automation/tool-artifacts.json",
-                    "updateType": "major",
-                },
-            )
-            self.assertEqual(result["groupName"], "Canonical downloaded tools")
-            self.assertIs(result["pinDigests"], True)
-            self.assertIs(result["automerge"], True)
-            self.assertIs(result["dependencyDashboardApproval"], False)
-            self.assertEqual(result["minimumReleaseAge"], "3 days")
-            self.assertEqual(result["minimumReleaseAgeBehaviour"], "timestamp-required")
-            self.assertEqual(result["internalChecksFilter"], "strict")
+        result = effective(
+            config,
+            {
+                "manager": "custom.regex",
+                "datasource": "github-release-attachments",
+                "packageName": "kjanat/actionlint",
+                "fileName": "automation/tool-artifacts.json",
+                "updateType": "major",
+            },
+        )
+        self.assertEqual(result["groupName"], "Canonical downloaded tools")
+        self.assertIs(result["pinDigests"], True)
+        self.assertIs(result["automerge"], True)
+        self.assertIs(result["dependencyDashboardApproval"], False)
+        self.assertEqual(result["minimumReleaseAge"], "3 days")
+        self.assertEqual(result["minimumReleaseAgeBehaviour"], "timestamp-required")
+        self.assertEqual(result["internalChecksFilter"], "strict")
 
     def test_timestamp_optional_requires_exact_operational_source_manager_and_path(self) -> None:
         cases = [

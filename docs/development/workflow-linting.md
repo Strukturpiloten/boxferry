@@ -14,29 +14,42 @@ Schema-1 and source-aware schema-2 readers retain their existing integrity and c
 
 ## Publisher migration
 
-The maintainer selected `kjanat/actionlint` for its newer workflow checks and Ubuntu 26.04
-runner definitions. Publisher compatibility is an inert bridge: the active inventory still
-selects RH v1.7.12. The initial fork v1.17.1 archives passed checksum/provenance verification,
-but both binary advisory scans failed on Go 1.27.3's
-[GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859), fixed in Go 1.27.4. That release remains
-blocked. This change installs no fork artifact and grants no advisory waiver.
+The canonical inventory selects `kjanat/actionlint` v1.17.1 for Ubuntu 26.04 workflow
+linting. The existing Renovate manager keeps the two architecture archive checksums and
+release tags in the `Canonical downloaded tools` group with the existing age, integrity
+and approval rules. The publisher bridge from PR #658 is in the admitted preset used by
+BoxFerry. Historical immutable revisions retain their original publisher and owner.
+[Publisher bridge](https://github.com/Strukturpiloten/boxferry/pull/658)
 
-The selected delivery path waits for clean upstream binaries; no downstream compiler or
-source-build installer is introduced. A qualified fixed release and an admitted shared preset
-must precede an actual inventory switch. Current immutable consumers retain their RH owner. The candidate preset extends the existing atomic attachment manager and `Canonical
-downloaded tools` group to recognize both publishers, without a second manager or changed
-approval, age or integrity rules. Native Renovate SDK tests exercise extraction, actual
-publisher URLs, release/checksum replacement and grouping for current and isolated future
-metadata; synthetic tags are never operational releases. Ongoing adoption belongs to
-[issue #655](https://github.com/Strukturpiloten/boxferry/issues/655).
+Both release archives matched the upstream checksums and the GitHub release asset digests.
+The GitHub-hosted release workflow attested both archives at tag v1.17.1 and source commit
+`220b76cfa568e00ed8b3c476898f849a722b88e2`. The binaries report Go 1.27.3. Enforcing binary
+scans with `govulncheck` v1.9.0 exited 3 on both architectures and reported one advisory,
+[GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859), in `net/http`. Go 1.27.4 fixes the
+finding. [Release](https://github.com/kjanat/actionlint/releases/tag/v1.17.1) ·
+[Attested build](https://github.com/kjanat/actionlint/actions/runs/42603907655/attempts/1)
 
-Review the fork's default cache-safety findings at reusable `workflow_run` calls and
-set explicit reviewed cache ceilings before activating it. Keep those checks enabled;
-a new diagnostic alone does not justify an exception.
+The maintainer accepted that finding for these two Linux v1.17.1 release archive digests.
+
+| Architecture | SHA-256                                                            |
+| ------------ | ------------------------------------------------------------------ |
+| amd64        | `6bfe0f49f0e108b9b23732baf7de63bfa4d89174fa40f9cb98feb9676df3318f` |
+| arm64        | `81fa498f30f5dfadcc87fff0ff073281703fc56e9b50bc523b415c69aef0cccc` |
+
+Other findings and changed artifacts require their own qualification. The recheck is due
+11 December 2026. [Maintainer decision and recheck #666](https://github.com/Strukturpiloten/boxferry/issues/666) ·
+[Qualification and rollout #655](https://github.com/Strukturpiloten/boxferry/issues/655)
+
+The dependency eligibility service declares `cache-mode: none` because its reused
+workflow needs no Actions cache access. Its ordinary read and write permissions continue
+to govern the eligibility service operations.
+[Reusable workflow cache limits](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#controlling-cache-access-in-reusable-workflows)
 
 ## Local and hosted checks
 
-The complete local gate runs actual `actionlint` against the repository, then
+Both local gates install the candidate's checksum-pinned Actionlint in the worktree
+before linting, including when the Dev Container provides an older copy. The complete
+local gate runs actual `actionlint` against the repository, then
 [the CLI regression harness](../../scripts/test-workflow-lint.py) against the same installed
 executable. The existing hosted documentation job installs Actionlint using its candidate
 inventory, runs actual workflow lint from the root checkout, and runs the same harness.
@@ -45,9 +58,8 @@ Formatting-only checks still run no tests.
 
 The bounded harness verifies the actual version banner against the inventory and proves that
 a mismatched version is refused. Authored inert workflows require successful known Linux and
-ARM runner labels and rejected unknown labels, conflicting OS labels, invalid expressions and
-malformed YAML. RH uses Ubuntu 24.04 labels; a future fork selection must pass Ubuntu 26.04
-and ARM labels. No workflow or Action executes, no remote fixture is fetched, and every child
-process has finite time/output bounds. A temporary owned directory is removed after success
-or failure. A diagnostic build's runtime success cannot substitute for admitted artifact selection,
-native architecture evidence or complete caller gates.
+ARM runner labels for Ubuntu 26.04. They require rejection of unknown labels, conflicting OS
+labels, invalid expressions, malformed YAML and a reusable `workflow_run` call without an
+explicit cache ceiling. The harness lints local fixtures without executing their commands.
+Child processes have finite time and output bounds. The harness removes its temporary
+directory after success or failure.
