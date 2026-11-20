@@ -5,10 +5,10 @@
       "https://github.com/Strukturpiloten/boxferry/blob/ea264db2d6265454340b8e9e43fc99c3228eed8e/scripts/install-file-tools.sh",
       "https://github.com/Strukturpiloten/boxferry-website/blob/4f61114ef90c4da8c5d3e92b814a3cd5f418aa46/scripts/install-file-tools.sh"
     ],
-    "actionlintChecksums": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt",
+    "actionlintChecksums": "https://github.com/kjanat/actionlint/releases/download/v1.17.1/actionlint_1.17.1_checksums.txt",
     "lycheeChecksums": "https://github.com/lycheeverse/lychee/releases/expanded_assets/lychee-v0.24.2",
     "redistribution": "Asset identities and checksums only. Tool binaries are downloaded directly from their official upstream releases for development use.",
-    "notes": "No version upgrades. Hadolint ARM asset spelling corrected to official arm64 without changing its reviewed checksum.",
+    "notes": "Hadolint ARM asset spelling corrected to official arm64 without changing its reviewed checksum.",
     "gitChecksums": "https://www.kernel.org/pub/software/scm/git/sha256sums.asc",
     "gitLicense": "Git COPYING (GPL-2.0), retained with exact corresponding source URL and SHA256 in the installed prefix."
   },
@@ -95,23 +95,23 @@
     },
     {
       "tool": "actionlint",
-      "repository": "rhysd/actionlint",
+      "repository": "kjanat/actionlint",
       "architecture": "x86_64",
       "filenameTemplate": "actionlint_{version}_linux_amd64.tar.gz",
       "memberTemplate": "actionlint",
       "archive": "tar.gz",
-      "currentVersion": "v1.7.12",
-      "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+      "currentVersion": "v1.17.1",
+      "sha256": "6bfe0f49f0e108b9b23732baf7de63bfa4d89174fa40f9cb98feb9676df3318f"
     },
     {
       "tool": "actionlint",
-      "repository": "rhysd/actionlint",
+      "repository": "kjanat/actionlint",
       "architecture": "aarch64",
       "filenameTemplate": "actionlint_{version}_linux_arm64.tar.gz",
       "memberTemplate": "actionlint",
       "archive": "tar.gz",
-      "currentVersion": "v1.7.12",
-      "sha256": "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"
+      "currentVersion": "v1.17.1",
+      "sha256": "81fa498f30f5dfadcc87fff0ff073281703fc56e9b50bc523b415c69aef0cccc"
     },
     {
       "tool": "lychee",

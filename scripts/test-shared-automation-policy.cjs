@@ -105,7 +105,7 @@
         "downloaded tool",
         "regex",
         "github-release-attachments",
-        "rhysd/actionlint",
+        "kjanat/actionlint",
         "automation/tool-artifacts.json",
         "major",
       ],

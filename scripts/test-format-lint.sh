@@ -28,6 +28,10 @@ cat > "${test_root}/bin/mock" << 'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 command_name="${0##*/}"
+# The ambient Actionlint stub refuses to execute.
+if [[ "${command_name}" == actionlint && "${0%/*}" != */target/workflow-lint-tools ]]; then
+  exit 18
+fi
 {
   printf '%s' "${command_name}"
   if (("$#" != 0)); then
@@ -46,6 +50,14 @@ if [[ "${command_name}" == git && "${1:-}" == ls-files ]]; then
 fi
 if [[ "${command_name}" == python3 && "${2:-}" == install-uv ]]; then
   printf '%s/uv\n' "${0%/*}"
+fi
+if [[ "${command_name}" == python3 && "${1:-}" == automation/src/boxferry_ci/tooling.py ]]; then
+  if [[ "${FORMAT_LINT_TEST_FAIL_ACTIONLINT_INSTALL:-}" == 1 ]]; then
+    exit 17
+  fi
+  [[ "$2" == --destination && "$4" == --tools && "$5" == actionlint ]]
+  mkdir -p -- "$3"
+  ln -sf -- "${0%/*}/mock" "$3/actionlint"
 fi
 MOCK
 chmod +x "${test_root}/bin/mock"
@@ -121,6 +133,11 @@ for invalid_jobs in 0 -1 two '1.5'; do
   [[ "${status}" == 2 && ! -s "${test_root}/invalid_jobs.commands" ]]
 done
 unset BOXFERRY_LINT_JOBS
+
+status=0
+FORMAT_LINT_TEST_FAIL_ACTIONLINT_INSTALL=1 run_quality tool_failure --check || status=$?
+[[ "${status}" == 17 ]]
+[[ "$(tail -n 1 "${test_root}/tool_failure.commands")" == *"--tools actionlint [jobs=unset]" ]]
 
 export FORMAT_LINT_TEST_FAIL=actionlint
 status=0

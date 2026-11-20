@@ -62,7 +62,6 @@ run_step() {
 }
 
 required_tools=(
-  actionlint
   cargo
   cargo-deny
   cargo-llvm-cov
@@ -169,6 +168,14 @@ automation_uv="$(python3 automation/src/boxferry_ci/bootstrap.py install-uv \
   --project automation --cache-root target/shared-uv --no-path-uv)"
 readonly automation_uv
 PATH="$(dirname -- "${automation_uv}"):${PATH}"
+export PATH
+
+current_step="Install candidate-owned Actionlint"
+workflow_lint_tools="${repository_root}/target/workflow-lint-tools"
+python3 automation/src/boxferry_ci/tooling.py \
+  --destination "${workflow_lint_tools}" --tools actionlint
+test -x "${workflow_lint_tools}/actionlint"
+PATH="${workflow_lint_tools}:${PATH}"
 export PATH
 
 # Verify the same declared plugin/compiler pair used by shared hosted SemVer.

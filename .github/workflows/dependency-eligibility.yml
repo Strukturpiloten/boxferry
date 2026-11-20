@@ -6,6 +6,7 @@ on: # zizmor: ignore[dangerous-triggers] -- Trusted listener delegates only immu
     types: [requested, completed]
   schedule:
     - cron: "17 * * * *"
+cache-mode: none
 permissions:
   actions: write
   contents: read
@@ -23,6 +24,6 @@ jobs:
       contents: read
       pull-requests: write
       statuses: write
-    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@5c8a288f7b9ef9d7b2e582153811030919900a22 # automation-v1 interface v1
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@4a5e10c15d5866be2e073e80eeb0eb62601bacd1 # automation-v1 interface v1
     with:
-      automation-sha: 5c8a288f7b9ef9d7b2e582153811030919900a22
+      automation-sha: 4a5e10c15d5866be2e073e80eeb0eb62601bacd1

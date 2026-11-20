@@ -1570,10 +1570,9 @@ class NativeRenovateTests(unittest.TestCase):
     const file = "automation/tool-artifacts.json",
       active = fs.readFileSync(root + "/" + file, "utf8");
     const projection = JSON.parse(active);
-    if (process.argv[5] === "kjanat/actionlint") {
+    if (process.argv[5] === "future") {
       // Inert future fixture under candidate preset code, never a live adoption claim.
       for (const row of projection.assets) if (row.tool === "actionlint") {
-        row.repository = "kjanat/actionlint";
         row.currentVersion = "v9.8.7";
       }
     }
@@ -1742,8 +1741,8 @@ class NativeRenovateTests(unittest.TestCase):
   process.exit(1);
 });
 """
-        for publisher in ("rhysd/actionlint", "kjanat/actionlint"):
-            with self.subTest(publisher=publisher):
+        for inventory in ("active", "future"):
+            with self.subTest(inventory=inventory):
                 result = subprocess.run(
                     [
                         "node",
@@ -1753,7 +1752,7 @@ class NativeRenovateTests(unittest.TestCase):
                         str(ROOT),
                         str(config),
                         str(root_config),
-                        publisher,
+                        inventory,
                     ],
                     capture_output=True,
                     text=True,

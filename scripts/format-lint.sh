@@ -21,7 +21,7 @@ if [[ ! "${cargo_jobs}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 readonly cargo_jobs
 
-required_tools=(actionlint bash cargo git python3 zizmor)
+required_tools=(bash cargo git python3 zizmor)
 missing_tools=()
 for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" > /dev/null 2>&1; then
@@ -66,6 +66,13 @@ automation_uv="$(python3 automation/src/boxferry_ci/bootstrap.py install-uv \
   --project automation --cache-root target/shared-uv --no-path-uv)"
 readonly automation_uv
 PATH="$(dirname -- "${automation_uv}"):${PATH}"
+export PATH
+
+workflow_lint_tools="${repository_root}/target/workflow-lint-tools"
+python3 automation/src/boxferry_ci/tooling.py \
+  --destination "${workflow_lint_tools}" --tools actionlint
+test -x "${workflow_lint_tools}/actionlint"
+PATH="${workflow_lint_tools}:${PATH}"
 export PATH
 
 printf 'Using at most %s Cargo build jobs for linting.\n' "${cargo_jobs}"

@@ -2,8 +2,7 @@
 """Exercise the selected installed Actionlint CLI with authored inert workflows.
 
 Fixtures are authored MPL-2.0 and redistributable. They execute no Actions or
-workflow commands and use no network. The inventory remains the version authority;
-accepting a future publisher's metadata does not qualify or install its artifacts.
+workflow commands and use no network. The inventory remains the version authority.
 """
 
 from __future__ import annotations
@@ -24,7 +23,9 @@ class ContractError(ValueError):
     """A bounded, closed-vocabulary failure without raw child diagnostics."""
 
 
-def version(binary: Path, expected: str, directory: Path, environment: dict[str, str]) -> None:
+def version(
+    binary: Path, expected_banner: str, directory: Path, environment: dict[str, str]
+) -> None:
     result = runner.run(
         (str(binary), "-version"),
         cwd=directory,
@@ -34,11 +35,7 @@ def version(binary: Path, expected: str, directory: Path, environment: dict[str,
         environment=environment,
     )
     lines = result.stdout.splitlines()
-    if (
-        result.status != "success"
-        or not lines
-        or lines[0] not in {expected, expected.removeprefix("v")}
-    ):
+    if result.status != "success" or not lines or lines[0] != expected_banner:
         raise ContractError("installed Actionlint differs from the canonical inventory version")
 
 
@@ -52,9 +49,8 @@ def workflow(label: str) -> str:
 def exercise(binary: Path, manifest: Path = tooling.MANIFEST) -> int:
     inventory = tooling.load_manifest(manifest)
     selected = inventory["actionlint", tooling.host_architecture()]
-    # An explicit allowlist in the canonical reader admits publishers; this selects
-    # the expected current runner contract without inferring support from versions.
-    label = "ubuntu-26.04" if selected.repository == "kjanat/actionlint" else "ubuntu-24.04"
+    label = "ubuntu-26.04"
+    banner = "actionlint.kjanat.dev " + selected.tag.removeprefix("v")
     binary = binary.absolute()
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ContractError("Actionlint executable is missing or not executable")
@@ -66,13 +62,19 @@ def exercise(binary: Path, manifest: Path = tooling.MANIFEST) -> int:
             "XDG_CONFIG_HOME": str(directory),
             "NO_COLOR": "1",
         }
-        version(binary, selected.tag, directory, environment)
+        version(binary, banner, directory, environment)
         try:
-            version(binary, "v0.0.0", directory, environment)
+            version(binary, "actionlint.kjanat.dev 0.0.0", directory, environment)
         except ContractError:
             pass
         else:
             raise ContractError("Actionlint version mismatch was accepted")
+        cache_caller = (
+            "---\non:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\n"
+            "jobs:\n  metadata:\n"
+            "    uses: Strukturpiloten/boxferry/.github/workflows/"
+            "shared-dependency-eligibility.yml@" + "a" * 40 + "\n"
+        )
         cases = (
             ("known-runner", workflow(label), None),
             ("known-arm-runner", workflow(label + "-arm"), None),
@@ -84,6 +86,12 @@ def exercise(binary: Path, manifest: Path = tooling.MANIFEST) -> int:
                 "[expression]",
             ),
             ("malformed-yaml", "---\nname: malformed\non: [push\n", "[syntax-check]"),
+            (
+                "explicit-cache-ceiling",
+                cache_caller.replace("jobs:", "cache-mode: none\njobs:"),
+                None,
+            ),
+            ("missing-cache-ceiling", cache_caller, "[cache-call-unrestricted]"),
         )
         for name, content, diagnostic in cases:
             path = directory / (name + ".yml")
@@ -118,7 +126,7 @@ def exercise(binary: Path, manifest: Path = tooling.MANIFEST) -> int:
             print(f"Actionlint {name}: expected actual CLI result observed")
     print(
         f"Actionlint {selected.repository} {selected.tag}: "
-        "version and six workflow contracts passed"
+        f"version and {len(cases)} workflow contracts passed"
     )
     return 0
 
