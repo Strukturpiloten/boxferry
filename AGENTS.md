@@ -137,12 +137,13 @@ writes. The complete gate remains the primary agent's responsibility.
 Models: [defaults](.codex/config.toml), [roles](.codex/agents/),
 [`presentation_worker`](.codex/agents/presentation-worker.toml) (`gpt-6.1-terra`/`medium`).
 The primary manager always uses `gpt-6-sol` with `xhigh` reasoning. Implementation, specification
-research, and independent review default to `gpt-6.1-sol`/`high`; check-only verification uses
+research, and independent review default to `gpt-6.2-sol`/`high`; check-only verification uses
 `gpt-6-luna`/`high`. Use Luna for bounded read-only exploration and Sol for difficult failure diagnosis.
 
-Task-specific subagents may use `gpt-6.1-sol`, `gpt-6.1-terra`, or `gpt-6-luna` with `medium`, `high`, or `xhigh`
-reasoning. Use `gpt-6-astra` only with `xhigh` reasoning for particularly difficult architectural
-questions.
+Task-specific subagents may use `gpt-6.2-sol`, `gpt-6.1-terra`, `gpt-6-luna`, or `gpt-6.2-astra`
+with `medium`, `high`, or `xhigh` reasoning. Reserve `gpt-6.2-astra` for particularly difficult
+tasks, such as complex architectural questions. Use the generic worker for task-specific model
+and effort selections. Named roles set their model and reasoning effort in their role files.
 
 - Before delegating bounded parallel tasks, define the contract, repository, checkout, and file ownership.
 - Use up to eight concurrent subagents plus the primary manager (nine agents in total), subject to
