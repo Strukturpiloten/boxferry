@@ -7027,6 +7027,39 @@ fn acquire_docker_cassette(
 }
 
 #[test]
+fn forgejo_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/forgejo-application");
+    let manifest = read_manifest(&fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Forgejo Docker input")?;
+    assert_eq!(input.format_version, "28.2.0");
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(cassette.scenario_id(), "forgejo-application-docker-28.2.0-synthetic");
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    // Docker publishes the advertised range. The ordered replay verifies
+    // DockerLens's API 1.49 negotiation on the wire.
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
 fn forgejo_docker_source_rejects_invalid_observations_and_api_versions() -> Result<(), Box<dyn Error>> {
     let fixture = repository_root().join("fixtures/scenarios/forgejo-application");
     let manifest = read_manifest(&fixture)?;
@@ -7041,7 +7074,7 @@ fn forgejo_docker_source_rejects_invalid_observations_and_api_versions() -> Resu
     api_too_old.set_body(
         "/version",
         serde_json::json!({
-            "Version": "19.03.15", "ApiVersion": "1.40", "MinAPIVersion": "1.39",
+            "Version": "19.03.15", "ApiVersion": "1.40", "MinAPIVersion": "1.12",
         }),
     )?;
     api_too_old.truncate_after("/version")?;
