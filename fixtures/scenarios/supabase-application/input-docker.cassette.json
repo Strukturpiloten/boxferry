@@ -1,0 +1,568 @@
+{
+  "scenario_id": "supabase-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "SecurityOptions": ["name=seccomp,profile=builtin"],
+          "Rootless": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/2121212121212121212121212121212121212121212121212121212121212121/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "2121212121212121212121212121212121212121212121212121212121212121",
+          "Name": "/auth",
+          "Config": {
+            "Image": "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+            "Env": [
+              "GOTRUE_DB_DRIVER=postgres",
+              "GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/3232323232323232323232323232323232323232323232323232323232323232/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "3232323232323232323232323232323232323232323232323232323232323232",
+          "Name": "/db",
+          "Config": {
+            "Image": "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+            "Env": [
+              "POSTGRES_DB=postgres",
+              "POSTGRES_USER=supabase_admin",
+              "POSTGRES_PASSWORD=boxferry-public-supabase-db-password"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Destination": "/var/lib/postgresql/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.12"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/4343434343434343434343434343434343434343434343434343434343434343/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "4343434343434343434343434343434343434343434343434343434343434343",
+          "Name": "/functions",
+          "Config": {
+            "Image": "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+            "Env": [
+              "SUPABASE_DB_URL=postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres",
+              "SUPABASE_URL=http://kong:8000",
+              "VERIFY_JWT=false"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "deno-cache",
+              "Destination": "/root/.cache/deno",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.13"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/5454545454545454545454545454545454545454545454545454545454545454/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "5454545454545454545454545454545454545454545454545454545454545454",
+          "Name": "/imgproxy",
+          "Config": {
+            "Image": "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+            "Env": ["IMGPROXY_BIND=:5001", "IMGPROXY_LOCAL_FILESYSTEM_ROOT=/"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "storage",
+              "Destination": "/var/lib/storage",
+              "Mode": "ro",
+              "RW": false
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.14"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/6565656565656565656565656565656565656565656565656565656565656565/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "6565656565656565656565656565656565656565656565656565656565656565",
+          "Name": "/kong",
+          "Config": {
+            "Image": "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+            "Env": ["KONG_DATABASE=off", "KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "PortBindings": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            }
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.15"
+              },
+              "edge": {
+                "NetworkID": "e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8",
+                "IPAddress": "198.51.100.15"
+              }
+            },
+            "Ports": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/7676767676767676767676767676767676767676767676767676767676767676/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "7676767676767676767676767676767676767676767676767676767676767676",
+          "Name": "/meta",
+          "Config": {
+            "Image": "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+            "Env": ["PG_META_DB_HOST=db", "PG_META_DB_NAME=postgres"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.16"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/8787878787878787878787878787878787878787878787878787878787878787/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "8787878787878787878787878787878787878787878787878787878787878787",
+          "Name": "/realtime",
+          "Config": {
+            "Image": "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+            "Env": [
+              "DB_HOST=db",
+              "DB_NAME=postgres",
+              "DB_PASSWORD=boxferry-public-supabase-db-password"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.17"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/9898989898989898989898989898989898989898989898989898989898989898/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "9898989898989898989898989898989898989898989898989898989898989898",
+          "Name": "/rest",
+          "Config": {
+            "Image": "docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
+            "Env": [
+              "PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres",
+              "PGRST_DB_SCHEMAS=public"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.18"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9",
+          "Name": "/storage",
+          "Config": {
+            "Image": "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+            "Env": [
+              "DATABASE_URL=postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+              "POSTGREST_URL=http://rest:3000",
+              "IMGPROXY_URL=http://imgproxy:5001",
+              "STORAGE_BACKEND=file"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "storage",
+              "Destination": "/var/lib/storage",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.19"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/babababababababababababababababababababababababababababababababa/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "babababababababababababababababababababababababababababababababa",
+          "Name": "/studio",
+          "Config": {
+            "Image": "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+            "Env": ["STUDIO_PG_META_URL=http://meta:8080", "SUPABASE_URL=http://kong:8000"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.20"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+          "Name": "/supavisor",
+          "Config": {
+            "Image": "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+            "Env": ["POSTGRES_HOST=db", "POSTGRES_DB=postgres"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.21"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "2121212121212121212121212121212121212121212121212121212121212121": {
+              "Name": "auth",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "3232323232323232323232323232323232323232323232323232323232323232": {
+              "Name": "db",
+              "IPv4Address": "192.0.2.12/24"
+            },
+            "4343434343434343434343434343434343434343434343434343434343434343": {
+              "Name": "functions",
+              "IPv4Address": "192.0.2.13/24"
+            },
+            "5454545454545454545454545454545454545454545454545454545454545454": {
+              "Name": "imgproxy",
+              "IPv4Address": "192.0.2.14/24"
+            },
+            "6565656565656565656565656565656565656565656565656565656565656565": {
+              "Name": "kong",
+              "IPv4Address": "192.0.2.15/24"
+            },
+            "7676767676767676767676767676767676767676767676767676767676767676": {
+              "Name": "meta",
+              "IPv4Address": "192.0.2.16/24"
+            },
+            "8787878787878787878787878787878787878787878787878787878787878787": {
+              "Name": "realtime",
+              "IPv4Address": "192.0.2.17/24"
+            },
+            "9898989898989898989898989898989898989898989898989898989898989898": {
+              "Name": "rest",
+              "IPv4Address": "192.0.2.18/24"
+            },
+            "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9": {
+              "Name": "storage",
+              "IPv4Address": "192.0.2.19/24"
+            },
+            "babababababababababababababababababababababababababababababababa": {
+              "Name": "studio",
+              "IPv4Address": "192.0.2.20/24"
+            },
+            "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb": {
+              "Name": "supavisor",
+              "IPv4Address": "192.0.2.21/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "edge",
+          "Id": "e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8",
+          "Driver": "bridge",
+          "Internal": false,
+          "Containers": {
+            "6565656565656565656565656565656565656565656565656565656565656565": {
+              "Name": "kong",
+              "IPv4Address": "198.51.100.15/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/deno-cache"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "deno-cache",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/pgdata"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "pgdata",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/storage"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "storage",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}

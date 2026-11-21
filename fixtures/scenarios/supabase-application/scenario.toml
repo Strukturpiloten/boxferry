@@ -1,6 +1,6 @@
 schema = 1
 id = "supabase-application"
-source-capabilities = ["compose", "podman", "quadlet"]
+source-capabilities = ["compose", "podman", "quadlet", "docker"]
 target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = ["boxferry-public-supabase-db-password"]
 
@@ -148,11 +148,44 @@ selectors = [
 ]
 promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
 
+[[native-inputs]]
+id = "docker"
+importer = "docker"
+files = ["input-docker.cassette.json"]
+format-version = "28.2.0"
+import-diagnostics-file = "expected.docker-import.diagnostics"
+
+[native-inputs.docker]
+container-ids = [
+  "2121212121212121212121212121212121212121212121212121212121212121",
+  "3232323232323232323232323232323232323232323232323232323232323232",
+  "4343434343434343434343434343434343434343434343434343434343434343",
+  "5454545454545454545454545454545454545454545454545454545454545454",
+  "6565656565656565656565656565656565656565656565656565656565656565",
+  "7676767676767676767676767676767676767676767676767676767676767676",
+  "8787878787878787878787878787878787878787878787878787878787878787",
+  "9898989898989898989898989898989898989898989898989898989898989898",
+  "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9",
+  "babababababababababababababababababababababababababababababababa",
+  "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+]
+resource-decisions = [
+  "network:d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7=create:backend",
+  "network:e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8=create:edge",
+  "volume:deno-cache=create:docker-volume-1",
+  "volume:pgdata=create:docker-volume-2",
+  "volume:storage=create:docker-volume-3",
+]
+component-services = { auth = "docker-service-1", db = "docker-service-2", functions = "docker-service-3", imgproxy = "docker-service-4", kong = "docker-service-5", meta = "docker-service-6", realtime = "docker-service-7", rest = "docker-service-8", storage = "docker-service-9", studio = "docker-service-10", supavisor = "docker-service-11" }
+semantics-file = "expected.docker-semantics.toml"
+
 [provenance]
+# The synthetic replay uses the published Engine 28.2 API range.
+# See https://docs.docker.com/reference/api/engine/#api-version-matrix
 source = "authored"
 license = "MPL-2.0"
 privacy-reviewed = true
-test-data = "Repository-authored offline Compose, Quadlet, and deterministic Libpod replay inputs were written independently of BoxFerry output. Public canaries exercise report redaction; no runtime behavior is claimed."
+test-data = "Repository-authored Compose, Quadlet, Libpod and Docker Engine inputs were written independently of BoxFerry output. The 18-request synthetic Docker replay describes the eleven-service scenario and its four named-volume mounts. The separate live conformance profile owns the four shared-relabel binds. Public canaries exercise report redaction; no runtime behavior is claimed."
 image-evidence = "Reviewed Supabase application image identities match the separately catalogued live pins, but ordinary scenario tests never pull or execute them."
 
 [deployment]
@@ -856,4 +889,232 @@ docker-dependencies = [
   { service = "storage", dependency = "rest", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
   { service = "studio", dependency = "meta", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
   { service = "supavisor", dependency = "db", condition = "started", condition-explicit = false, required = true, required-explicit = false, restart = false, restart-explicit = false },
+]
+
+[[evidence]]
+input = "docker"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "The Compose document retains the storage topology and loopback publication. Required environment values need separate provisioning."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.docker-compose.diagnostics"
+allowed-losses-file = "expected.docker-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Withheld environment values do not round trip." }
+semantic-gaps = [
+  "environment:docker-service-1:GOTRUE_DB_DATABASE_URL",
+  "environment:docker-service-1:GOTRUE_DB_DRIVER",
+  "environment:docker-service-2:POSTGRES_DB",
+  "environment:docker-service-2:POSTGRES_PASSWORD",
+  "environment:docker-service-2:POSTGRES_USER",
+  "environment:docker-service-3:SUPABASE_DB_URL",
+  "environment:docker-service-3:SUPABASE_URL",
+  "environment:docker-service-3:VERIFY_JWT",
+  "environment:docker-service-4:IMGPROXY_BIND",
+  "environment:docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:docker-service-5:KONG_DATABASE",
+  "environment:docker-service-5:KONG_DECLARATIVE_CONFIG",
+  "environment:docker-service-6:PG_META_DB_HOST",
+  "environment:docker-service-6:PG_META_DB_NAME",
+  "environment:docker-service-7:DB_HOST",
+  "environment:docker-service-7:DB_NAME",
+  "environment:docker-service-7:DB_PASSWORD",
+  "environment:docker-service-8:PGRST_DB_SCHEMAS",
+  "environment:docker-service-8:PGRST_DB_URI",
+  "environment:docker-service-9:DATABASE_URL",
+  "environment:docker-service-9:IMGPROXY_URL",
+  "environment:docker-service-9:POSTGREST_URL",
+  "environment:docker-service-9:STORAGE_BACKEND",
+  "environment:docker-service-10:STUDIO_PG_META_URL",
+  "environment:docker-service-10:SUPABASE_URL",
+  "environment:docker-service-11:POSTGRES_DB",
+  "environment:docker-service-11:POSTGRES_HOST",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:GOTRUE_DB_DATABASE_URL",
+  "environment:docker-service-1:GOTRUE_DB_DRIVER",
+  "environment:docker-service-2:POSTGRES_DB",
+  "environment:docker-service-2:POSTGRES_PASSWORD",
+  "environment:docker-service-2:POSTGRES_USER",
+  "environment:docker-service-3:SUPABASE_DB_URL",
+  "environment:docker-service-3:SUPABASE_URL",
+  "environment:docker-service-3:VERIFY_JWT",
+  "environment:docker-service-4:IMGPROXY_BIND",
+  "environment:docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:docker-service-5:KONG_DATABASE",
+  "environment:docker-service-5:KONG_DECLARATIVE_CONFIG",
+  "environment:docker-service-6:PG_META_DB_HOST",
+  "environment:docker-service-6:PG_META_DB_NAME",
+  "environment:docker-service-7:DB_HOST",
+  "environment:docker-service-7:DB_NAME",
+  "environment:docker-service-7:DB_PASSWORD",
+  "environment:docker-service-8:PGRST_DB_SCHEMAS",
+  "environment:docker-service-8:PGRST_DB_URI",
+  "environment:docker-service-9:DATABASE_URL",
+  "environment:docker-service-9:IMGPROXY_URL",
+  "environment:docker-service-9:POSTGREST_URL",
+  "environment:docker-service-9:STORAGE_BACKEND",
+  "environment:docker-service-10:STUDIO_PG_META_URL",
+  "environment:docker-service-10:SUPABASE_URL",
+  "environment:docker-service-11:POSTGRES_DB",
+  "environment:docker-service-11:POSTGRES_HOST",
+]
+
+[[evidence]]
+input = "docker"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "The selected services lack required environment values, preventing publication of a complete Engine plan."
+artifacts = []
+diagnostics-file = "expected.docker-docker.diagnostics"
+allowed-losses-file = "expected.docker-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+semantic-gaps = []
+
+[[evidence]]
+input = "docker"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "The inert Podman plan omits required environment values, network settings, and the configured loopback publication."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.docker-podman.diagnostics"
+allowed-losses-file = "expected.docker-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:docker-service-1:GOTRUE_DB_DATABASE_URL",
+  "environment:docker-service-1:GOTRUE_DB_DRIVER",
+  "environment:docker-service-2:POSTGRES_DB",
+  "environment:docker-service-2:POSTGRES_PASSWORD",
+  "environment:docker-service-2:POSTGRES_USER",
+  "environment:docker-service-3:SUPABASE_DB_URL",
+  "environment:docker-service-3:SUPABASE_URL",
+  "environment:docker-service-3:VERIFY_JWT",
+  "environment:docker-service-4:IMGPROXY_BIND",
+  "environment:docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:docker-service-5:KONG_DATABASE",
+  "environment:docker-service-5:KONG_DECLARATIVE_CONFIG",
+  "environment:docker-service-6:PG_META_DB_HOST",
+  "environment:docker-service-6:PG_META_DB_NAME",
+  "environment:docker-service-7:DB_HOST",
+  "environment:docker-service-7:DB_NAME",
+  "environment:docker-service-7:DB_PASSWORD",
+  "environment:docker-service-8:PGRST_DB_SCHEMAS",
+  "environment:docker-service-8:PGRST_DB_URI",
+  "environment:docker-service-9:DATABASE_URL",
+  "environment:docker-service-9:IMGPROXY_URL",
+  "environment:docker-service-9:POSTGREST_URL",
+  "environment:docker-service-9:STORAGE_BACKEND",
+  "environment:docker-service-10:STUDIO_PG_META_URL",
+  "environment:docker-service-10:SUPABASE_URL",
+  "environment:docker-service-11:POSTGRES_DB",
+  "environment:docker-service-11:POSTGRES_HOST",
+  "network-internal:docker-network-1",
+  "network-internal:docker-network-2",
+  "port:docker-service-5:8000:Some(18000)",
+  "publication:docker-service-5:18000:8000/tcp",
+]
+podman-plan = { creatable-resources = ["container:auth", "container:db", "container:functions", "container:imgproxy", "container:kong", "container:meta", "container:realtime", "container:rest", "container:storage", "container:studio", "container:supavisor", "network:docker-network-1", "network:docker-network-2", "volume:docker-volume-1", "volume:docker-volume-2", "volume:docker-volume-3"], external-preconditions = [], image-operations = [
+  { resource = "docker-service-1-image", reference = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf", policy = "missing" },
+  { resource = "docker-service-10-image", reference = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8", policy = "missing" },
+  { resource = "docker-service-11-image", reference = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07", policy = "missing" },
+  { resource = "docker-service-2-image", reference = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00", policy = "missing" },
+  { resource = "docker-service-3-image", reference = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120", policy = "missing" },
+  { resource = "docker-service-4-image", reference = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d", policy = "missing" },
+  { resource = "docker-service-5-image", reference = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3", policy = "missing" },
+  { resource = "docker-service-6-image", reference = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300", policy = "missing" },
+  { resource = "docker-service-7-image", reference = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471", policy = "missing" },
+  { resource = "docker-service-8-image", reference = "docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962", policy = "missing" },
+  { resource = "docker-service-9-image", reference = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf", policy = "missing" },
+], start-order = ["auth", "db", "functions", "imgproxy", "kong", "meta", "realtime", "rest", "storage", "studio", "supavisor"] }
+
+[[evidence]]
+input = "docker"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "The Quadlet units retain the storage topology and loopback publication. Required environment values need separate provisioning."
+artifacts = ["docker-network-1.network", "docker-network-2.network", "docker-service-1.container", "docker-service-2.container", "docker-service-3.container", "docker-service-4.container", "docker-service-5.container", "docker-service-6.container", "docker-service-7.container", "docker-service-8.container", "docker-service-9.container", "docker-service-10.container", "docker-service-11.container", "docker-volume-1.volume", "docker-volume-2.volume", "docker-volume-3.volume"]
+diagnostics-file = "expected.docker-quadlet.diagnostics"
+allowed-losses-file = "expected.docker-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Withheld environment values do not round trip." }
+semantic-gaps = [
+  "environment:docker-service-1:GOTRUE_DB_DATABASE_URL",
+  "environment:docker-service-1:GOTRUE_DB_DRIVER",
+  "environment:docker-service-2:POSTGRES_DB",
+  "environment:docker-service-2:POSTGRES_PASSWORD",
+  "environment:docker-service-2:POSTGRES_USER",
+  "environment:docker-service-3:SUPABASE_DB_URL",
+  "environment:docker-service-3:SUPABASE_URL",
+  "environment:docker-service-3:VERIFY_JWT",
+  "environment:docker-service-4:IMGPROXY_BIND",
+  "environment:docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:docker-service-5:KONG_DATABASE",
+  "environment:docker-service-5:KONG_DECLARATIVE_CONFIG",
+  "environment:docker-service-6:PG_META_DB_HOST",
+  "environment:docker-service-6:PG_META_DB_NAME",
+  "environment:docker-service-7:DB_HOST",
+  "environment:docker-service-7:DB_NAME",
+  "environment:docker-service-7:DB_PASSWORD",
+  "environment:docker-service-8:PGRST_DB_SCHEMAS",
+  "environment:docker-service-8:PGRST_DB_URI",
+  "environment:docker-service-9:DATABASE_URL",
+  "environment:docker-service-9:IMGPROXY_URL",
+  "environment:docker-service-9:POSTGREST_URL",
+  "environment:docker-service-9:STORAGE_BACKEND",
+  "environment:docker-service-10:STUDIO_PG_META_URL",
+  "environment:docker-service-10:SUPABASE_URL",
+  "environment:docker-service-11:POSTGRES_DB",
+  "environment:docker-service-11:POSTGRES_HOST",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:GOTRUE_DB_DATABASE_URL",
+  "environment:docker-service-1:GOTRUE_DB_DRIVER",
+  "environment:docker-service-2:POSTGRES_DB",
+  "environment:docker-service-2:POSTGRES_PASSWORD",
+  "environment:docker-service-2:POSTGRES_USER",
+  "environment:docker-service-3:SUPABASE_DB_URL",
+  "environment:docker-service-3:SUPABASE_URL",
+  "environment:docker-service-3:VERIFY_JWT",
+  "environment:docker-service-4:IMGPROXY_BIND",
+  "environment:docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:docker-service-5:KONG_DATABASE",
+  "environment:docker-service-5:KONG_DECLARATIVE_CONFIG",
+  "environment:docker-service-6:PG_META_DB_HOST",
+  "environment:docker-service-6:PG_META_DB_NAME",
+  "environment:docker-service-7:DB_HOST",
+  "environment:docker-service-7:DB_NAME",
+  "environment:docker-service-7:DB_PASSWORD",
+  "environment:docker-service-8:PGRST_DB_SCHEMAS",
+  "environment:docker-service-8:PGRST_DB_URI",
+  "environment:docker-service-9:DATABASE_URL",
+  "environment:docker-service-9:IMGPROXY_URL",
+  "environment:docker-service-9:POSTGREST_URL",
+  "environment:docker-service-9:STORAGE_BACKEND",
+  "environment:docker-service-10:STUDIO_PG_META_URL",
+  "environment:docker-service-10:SUPABASE_URL",
+  "environment:docker-service-11:POSTGRES_DB",
+  "environment:docker-service-11:POSTGRES_HOST",
 ]

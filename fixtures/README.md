@@ -73,7 +73,7 @@ tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
 Podman scenarios declare cassette/promotion metadata, bind/network expectations, reimport
 evidence, and loss counts.
 
-The Forgejo, Nextcloud, Paperless-ngx, Immich, and Observability Docker Engine cases use synthetic
+The Forgejo, Nextcloud, Paperless-ngx, Immich, Observability, and Supabase Docker Engine cases use synthetic
 GET-only Unix socket replays with exact selections and caller-supplied resource
 decisions. Tests check neutral and runtime names, restarts, publications, mounts
 and default withholding across all four exporters. Deployment artifacts describe
