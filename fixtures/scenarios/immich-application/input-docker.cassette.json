@@ -1,0 +1,332 @@
+{
+  "scenario_id": "immich-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "SecurityOptions": ["name=seccomp,profile=builtin"],
+          "Rootless": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+          "Name": "/database",
+          "Config": {
+            "Image": "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+            "Env": [
+              "POSTGRES_DB=immich",
+              "POSTGRES_USER=immich",
+              "POSTGRES_PASSWORD=boxferry-public-immich-db-password-canary",
+              "POSTGRES_INITDB_ARGS=--data-checksums"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Destination": "/var/lib/postgresql/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9",
+          "Name": "/immich-machine-learning",
+          "Config": {
+            "Image": "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e"
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "model-cache",
+              "Destination": "/cache",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+                "IPAddress": "192.0.2.12"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+          "Name": "/immich-server",
+          "Config": {
+            "Image": "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb",
+            "Env": [
+              "DB_HOSTNAME=database",
+              "DB_DATABASE_NAME=immich",
+              "DB_USERNAME=immich",
+              "DB_PASSWORD=boxferry-public-immich-db-password-canary",
+              "REDIS_HOSTNAME=redis",
+              "IMMICH_MACHINE_LEARNING_URL=http://immich-machine-learning:3003",
+              "TZ=Etc/UTC"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "PortBindings": {
+              "2283/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18283"
+                }
+              ]
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "library",
+              "Destination": "/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+                "IPAddress": "192.0.2.13"
+              },
+              "edge": {
+                "NetworkID": "f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8",
+                "IPAddress": "198.51.100.13"
+              }
+            },
+            "Ports": {
+              "2283/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18283"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb",
+          "Name": "/redis",
+          "Config": {
+            "Image": "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "redisdata",
+              "Destination": "/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+                "IPAddress": "192.0.2.14"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8": {
+              "Name": "database",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9": {
+              "Name": "immich-machine-learning",
+              "IPv4Address": "192.0.2.12/24"
+            },
+            "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca": {
+              "Name": "immich-server",
+              "IPv4Address": "192.0.2.13/24"
+            },
+            "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb": {
+              "Name": "redis",
+              "IPv4Address": "192.0.2.14/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "edge",
+          "Id": "f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8",
+          "Driver": "bridge",
+          "Internal": false,
+          "Containers": {
+            "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca": {
+              "Name": "immich-server",
+              "IPv4Address": "198.51.100.13/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/library"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "library",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/model-cache"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "model-cache",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/pgdata"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "pgdata",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/redisdata"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "redisdata",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}

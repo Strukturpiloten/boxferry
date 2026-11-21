@@ -1,0 +1,78 @@
+# Named-volume lifecycle comes from explicit fixture decisions.
+# The synthetic observations establish mount identity and topology only.
+selected-resources = [
+  "network:docker-network-1",
+  "network:docker-network-2",
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "service:docker-service-3",
+  "service:docker-service-4",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+  "volume:docker-volume-3",
+  "volume:docker-volume-4",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+  "volume:docker-volume-3:application",
+  "volume:docker-volume-4:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-3",
+  "volume:docker-volume-2:consumers=docker-service-2",
+  "volume:docker-volume-3:consumers=docker-service-1",
+  "volume:docker-volume-4:consumers=docker-service-4",
+]
+required-mounts = [
+  "docker-service-1:docker-volume-3:/var/lib/postgresql/data",
+  "docker-service-2:docker-volume-2:/cache",
+  "docker-service-3:docker-volume-1:/data",
+  "docker-service-4:docker-volume-4:/data",
+]
+required-environment = [
+  "docker-service-1:POSTGRES_DB=immich",
+  "docker-service-1:POSTGRES_INITDB_ARGS=--data-checksums",
+  "docker-service-1:POSTGRES_PASSWORD=boxferry-public-immich-db-password-canary",
+  "docker-service-1:POSTGRES_USER=immich",
+  "docker-service-3:DB_DATABASE_NAME=immich",
+  "docker-service-3:DB_HOSTNAME=database",
+  "docker-service-3:DB_PASSWORD=boxferry-public-immich-db-password-canary",
+  "docker-service-3:DB_USERNAME=immich",
+  "docker-service-3:IMMICH_MACHINE_LEARNING_URL=http://immich-machine-learning:3003",
+  "docker-service-3:REDIS_HOSTNAME=redis",
+  "docker-service-3:TZ=Etc/UTC",
+]
+required-runtime-names = [
+  "docker-service-1:database",
+  "docker-service-2:immich-machine-learning",
+  "docker-service-3:immich-server",
+  "docker-service-4:redis",
+]
+required-restart = [
+  "docker-service-1:absent",
+  "docker-service-2:absent",
+  "docker-service-3:absent",
+  "docker-service-4:absent",
+]
+required-ports = ["docker-service-3:18283:2283/tcp"]
+unpublished-services = ["docker-service-1", "docker-service-2", "docker-service-4"]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+  { name = "docker-network-2", ownership = "application", internal = false },
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1",
+  "docker-service-3:docker-network-1,docker-network-2",
+  "docker-service-4:docker-network-1",
+]
+required-port-bindings = [
+  { service = "docker-service-3", container = 2283, published = 18283, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-1", source = "docker-volume-3", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "docker-service-2", source = "docker-volume-2", target = "/cache", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-1", target = "/data", read-only = false },
+  { service = "docker-service-4", source = "docker-volume-4", target = "/data", read-only = false },
+]

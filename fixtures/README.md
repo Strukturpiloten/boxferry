@@ -73,16 +73,14 @@ tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
 Podman scenarios declare cassette/promotion metadata, bind/network expectations, reimport
 evidence, and loss counts.
 
-The Forgejo, Nextcloud, and Paperless-ngx Docker Engine cases use synthetic GET-only Unix
-socket replays with exact container selections and caller-supplied resource
-decisions. The source expectations cover generated neutral keys, runtime names,
-restart policies, publications, mounts and withhold-by-default behavior.
-All four exporters exercise the existing neutral pipeline. Deployment artifacts
-cannot serve as observed Engine input. Nextcloud replays eight scenario roles,
-separate from its six-role conformance contract and Redis authentication overlay.
-Paperless-ngx replays the three-service base application with six named-volume
-bindings. The converter scenario, captured evidence, and storage custody have
-separate contracts.
+The Forgejo, Nextcloud, Paperless-ngx, and Immich Docker Engine cases use synthetic
+GET-only Unix socket replays with exact selections and caller-supplied resource
+decisions. Tests check neutral and runtime names, restarts, publications, mounts
+and default withholding across all four exporters. Deployment artifacts describe
+target intent. Nextcloud replays eight roles and has separate six-role conformance
+and Redis authentication contracts. Paperless-ngx covers three roles and six
+volumes, with separate converter, capture and custody contracts. Only the Immich
+server joins edge. The server and Redis use distinct `/data` volumes.
 
 Route artifact authorization is explicit. `environment-values = "include"` on an
 `[[evidence]]` route permits the CLI to retain literal environment values only for a
