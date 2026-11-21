@@ -35,7 +35,7 @@ jobs:
   release-metadata:
     name: Validate release metadata
     if: github.repository == 'Strukturpiloten/boxferry'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -81,7 +81,7 @@ jobs:
       always() && github.repository == 'Strukturpiloten/boxferry' &&
       needs.deterministic.result == 'success' && needs.release-metadata.result == 'success' &&
       needs.migration-readiness.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       actions: read
@@ -129,7 +129,7 @@ jobs:
     if: >-
       always() && github.repository == 'Strukturpiloten/boxferry' &&
       needs.deterministic.result == 'success' && needs.release-metadata.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       actions: read
@@ -189,7 +189,7 @@ jobs:
       github.repository == 'Strukturpiloten/boxferry' &&
       needs.release-validation.result == 'success' &&
       needs.release-validation.outputs.candidate_sha == github.sha
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -317,7 +317,7 @@ jobs:
       needs.release-validation.outputs.published_api_candidate_sha == github.sha &&
       needs.release-prepare.outputs.published_api_candidate_sha == github.sha
     environment: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
       RELEASE_GITHUB_API_VERSION: "2026-03-10"

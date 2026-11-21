@@ -47,7 +47,7 @@ jobs:
     name: Shared automation package
     needs: validation-plan
     if: needs.validation-plan.outputs.select_automation == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out the exact shared package candidate
@@ -109,7 +109,7 @@ jobs:
     name: Canonical tool artifact integrity
     needs: validation-plan
     if: needs.validation-plan.outputs.select_canonical_artifact_integrity == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The 600-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 15
     steps:
@@ -132,7 +132,7 @@ jobs:
     name: Kubernetes tool artifact integrity
     needs: validation-plan
     if: needs.validation-plan.outputs.select_kubernetes_artifact_integrity == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The 720-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 17
     steps:
@@ -153,7 +153,7 @@ jobs:
     name: Compose provider artifact integrity
     needs: validation-plan
     if: needs.validation-plan.outputs.select_compose_provider_integrity == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The 720-second checker budget leaves five minutes for checkout and Python setup.
     timeout-minutes: 17
     steps:
@@ -174,7 +174,7 @@ jobs:
 
   validation-plan:
     name: Validation plan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -287,7 +287,7 @@ jobs:
     name: Repository files and documentation
     needs: validation-plan
     if: needs.validation-plan.outputs.select_documentation == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - &checkout
@@ -354,7 +354,7 @@ jobs:
     name: Release metadata and changelog
     needs: validation-plan
     if: needs.validation-plan.outputs.select_release_metadata == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check out repository with release history
@@ -376,7 +376,7 @@ jobs:
       pull-requests: read
     needs: validation-plan
     if: needs.validation-plan.outputs.select_semver_release_type == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       release_type: ${{ steps.classify.outputs.release_type }}
@@ -458,7 +458,7 @@ jobs:
     name: Offline migration readiness
     needs: validation-plan
     if: needs.validation-plan.outputs.select_migration_readiness == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The 20-minute catalogue deadline leaves ten minutes for checkout and evidence handling.
     timeout-minutes: 30
     steps:
@@ -544,7 +544,7 @@ jobs:
         lockfile-release-age,
         devcontainer-validation,
       ]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}

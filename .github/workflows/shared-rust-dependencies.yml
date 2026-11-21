@@ -31,7 +31,7 @@ permissions:
 jobs:
   check:
     name: Dependency and license policy
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}
