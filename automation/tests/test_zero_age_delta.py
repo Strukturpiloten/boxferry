@@ -1863,20 +1863,19 @@ jobs:
 
 
 class IntegrationTests(unittest.TestCase):
-    def test_waiter_preserves_exact_receipt_and_required_ci_result_contract(self) -> None:
+    def test_current_waiter_has_no_route_from_the_historical_proof(self) -> None:
         workflow = (ROOT / WAITER).read_text()
         self.assertIn("timeout-minutes: 5", workflow)
-        self.assertIn("steps.zero.outputs.status != 'proved-zero'", workflow)
+        self.assertNotIn("boxferry_ci.zero_age_delta", workflow)
+        self.assertNotIn("proved-zero", workflow)
         self.assertIn("python -m boxferry_ci.eligibility wait", workflow)
         self.assertIn("admission_implementation_sha=%s", workflow)
-        self.assertIn("admission_evidence_kind=read-only-zero-age-delta", workflow)
+        self.assertIn("admission_evidence_kind=exact-A-service-receipt", workflow)
         self.assertNotIn("pull-requests:", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("statuses: write", workflow)
         self.assertNotIn("dependency-eligibility-state-v1", workflow)
         self.assertIn("admission_status=eligible", workflow)
-        # Selected-job aggregator behavior remains owned by untouched A CI, not
-        # this proof; a proof does not mark selected failures/skips successful.
         self.assertNotIn("not-applicable'", workflow)
 
     def test_fixture_provenance_and_renovate_exclusion(self) -> None:

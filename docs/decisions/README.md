@@ -23,14 +23,14 @@ and successful native/App qualification precede activation.
 
 ## Active decisions
 
+[ADR 0101](0101-retire-zero-age-delta-bootstrap.md) retires the two-repair proof from new shared
+waiter revisions and retains exact-base service admission and historical evidence.
+
 [ADR 0100](0100-git-worktree-source-identity.md) binds the complete Git runtime to
 explicit mounted source/index identity and a verified standalone-clone fallback.
 
 [ADR 0099](0099-candidate-coverage-tool-authority.md) selects one candidate-owned coverage
 CLI/compiler pair for local, shared CI and image validation while preserving scoped updater holds.
-
-[ADR 0097](0097-read-only-zero-age-delta-bootstrap.md) defines the exact two-repair read-only
-zero-age-delta proof, preserving exact-A policy, live canonical source custody and normal receipts.
 
 [ADR 0096](0096-development-and-published-api-baselines.md) separates trusted development
 API comparisons from published release compatibility and exact-candidate evidence.
@@ -142,6 +142,7 @@ the diagnostic ZIP dependency without changing its privacy or writer-only bounda
 | [0030](0030-native-compose-same-format-canonicalization.md) | Same-format Compose shortcut                                     |
 | [0036](0036-local-podman-cli-discovery-and-selectors.md)    | Mandatory Podman selector policy                                 |
 | [0065](0065-trusted-reviewed-pr-application-validation.md)  | Byte-identical catalogue requirement for reviewed-PR diagnostics |
+| [0097](0097-read-only-zero-age-delta-bootstrap.md)          | Two-repair bootstrap proof retired from new waiter revisions     |
 
 ## Status and changes
 
