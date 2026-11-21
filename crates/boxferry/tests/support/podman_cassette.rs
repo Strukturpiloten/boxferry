@@ -1,4 +1,4 @@
-//! Bounded Unix HTTP replay for the checked-in Podman cassette corpus.
+//! Bounded Unix HTTP replay for authored and captured scenario cassettes.
 //!
 //! Authored fixtures use exact order by default. Captured production acquisition
 //! may schedule independent resource inspections concurrently, so those fixtures
@@ -22,15 +22,18 @@ use serde::Deserialize;
 
 static SOCKET_ID: AtomicU64 = AtomicU64::new(0);
 
+pub(crate) type PodmanCassette = HttpCassette;
+pub(crate) type PodmanCassetteServer = HttpCassetteServer;
+
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct PodmanCassette {
+pub(crate) struct HttpCassette {
     scenario_id: String,
     engine_version: String,
     execution_context: String,
     interactions: Vec<Interaction>,
 }
 
-impl PodmanCassette {
+impl HttpCassette {
     pub(crate) fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
         Ok(serde_json::from_slice(&fs::read(path)?)?)
     }
@@ -49,6 +52,13 @@ impl PodmanCassette {
 
     pub(crate) fn interaction_count(&self) -> usize {
         self.interactions.len()
+    }
+
+    #[allow(dead_code, reason = "used by the scenario suite's early acquisition refusals")]
+    pub(crate) fn truncate_after(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
+        let index = self.unique_interaction_index(path)?;
+        self.interactions.truncate(index + 1);
+        Ok(())
     }
 
     pub(crate) fn set_status(&mut self, path: &str, status: u16) -> Result<(), Box<dyn Error>> {
@@ -80,6 +90,11 @@ impl PodmanCassette {
     }
 
     fn unique_interaction_mut(&mut self, path: &str) -> Result<&mut Interaction, Box<dyn Error>> {
+        let index = self.unique_interaction_index(path)?;
+        Ok(&mut self.interactions[index])
+    }
+
+    fn unique_interaction_index(&self, path: &str) -> Result<usize, Box<dyn Error>> {
         let matches = self
             .interactions
             .iter()
@@ -93,7 +108,7 @@ impl PodmanCassette {
             )
             .into());
         };
-        Ok(&mut self.interactions[*index])
+        Ok(*index)
     }
 }
 
@@ -116,23 +131,28 @@ struct RecordedResponse {
     body: Option<serde_json::Value>,
 }
 
-pub(crate) struct PodmanCassetteServer {
+pub(crate) struct HttpCassetteServer {
     socket: PathBuf,
     shutdown: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<(), String>>>,
 }
 
-impl PodmanCassetteServer {
-    pub(crate) fn start(cassette: PodmanCassette) -> Result<Self, Box<dyn Error>> {
+impl HttpCassetteServer {
+    pub(crate) fn start(cassette: HttpCassette) -> Result<Self, Box<dyn Error>> {
+        if cassette.execution_context() == "synthetic-docker-engine"
+            && (cassette.interactions.is_empty() || cassette.interactions.iter().any(|row| row.request.method != "GET"))
+        {
+            return Err("Docker scenario replay requires GET-only evidence".into());
+        }
         Self::start_with_order(cassette, true)
     }
 
     #[allow(dead_code)]
-    pub(crate) fn start_unordered(cassette: PodmanCassette) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn start_unordered(cassette: HttpCassette) -> Result<Self, Box<dyn Error>> {
         Self::start_with_order(cassette, false)
     }
 
-    fn start_with_order(cassette: PodmanCassette, exact_order: bool) -> Result<Self, Box<dyn Error>> {
+    fn start_with_order(cassette: HttpCassette, exact_order: bool) -> Result<Self, Box<dyn Error>> {
         let id = SOCKET_ID.fetch_add(1, Ordering::Relaxed);
         let socket = std::env::temp_dir().join(format!("bfc-{}-{id}.sock", std::process::id()));
         if socket.exists() {
@@ -213,7 +233,7 @@ fn replay_unordered(
     Ok(())
 }
 
-impl Drop for PodmanCassetteServer {
+impl Drop for HttpCassetteServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {

@@ -1,6 +1,6 @@
 schema = 1
 id = "forgejo-application"
-source-capabilities = ["compose", "podman", "quadlet"]
+source-capabilities = ["compose", "docker", "podman", "quadlet"]
 target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = [
   "boxferry-public-db-password-canary",
@@ -67,6 +67,27 @@ selectors = [
   { kind = "volume", exact = "forgejo-data" },
 ]
 promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[[native-inputs]]
+id = "docker"
+importer = "docker"
+files = ["input-docker.cassette.json"]
+format-version = "28.0.0"
+import-diagnostics-file = "expected.docker-import.diagnostics"
+
+[native-inputs.docker]
+container-ids = [
+  "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+]
+resource-decisions = [
+  "network:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3=create:backend",
+  "network:d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4=external:docker-network-2",
+  "volume:db-data=create:docker-volume-1",
+  "volume:forgejo-data=create:docker-volume-2",
+]
+component-services = { db = "docker-service-1", forgejo = "docker-service-2" }
+semantics-file = "expected.docker-semantics.toml"
 
 [provenance]
 source = "authored"
@@ -467,3 +488,121 @@ native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Inert Docker create requests are desired intent, not observed Docker inventory." }
 semantic-gaps = []
+
+[[evidence]]
+input = "docker"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Withheld environment values require manual provisioning on the target."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.docker-compose.diagnostics"
+allowed-losses-file = "expected.docker-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Withheld environment values do not round trip." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_DB",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-2:FORGEJO__database__HOST",
+  "environment:docker-service-2:FORGEJO__database__PASSWD",
+  "environment:docker-service-2:FORGEJO__security__SECRET_KEY",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_DB",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-2:FORGEJO__database__HOST",
+  "environment:docker-service-2:FORGEJO__database__PASSWD",
+  "environment:docker-service-2:FORGEJO__security__SECRET_KEY",
+]
+
+[[evidence]]
+input = "docker"
+exporter = "docker"
+docker-target = "upstream-29.8.1-rootful"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required environment values are withheld; a complete Engine create plan would misrepresent both containers."
+artifacts = []
+diagnostics-file = "expected.docker-docker.diagnostics"
+allowed-losses-file = "expected.docker-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+semantic-gaps = []
+
+[[evidence]]
+input = "docker"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "The Podman plan omits the required environment, driver and internal-network settings, and HTTP/SSH publications."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.docker-podman.diagnostics"
+allowed-losses-file = "expected.docker-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_DB",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-2:FORGEJO__database__HOST",
+  "environment:docker-service-2:FORGEJO__database__PASSWD",
+  "environment:docker-service-2:FORGEJO__security__SECRET_KEY",
+  "network-internal:docker-network-1",
+  "port:docker-service-2:3000:Some(13000)",
+  "port:docker-service-2:2222:Some(12222)",
+  "publication:docker-service-2:13000:3000/tcp",
+  "publication:docker-service-2:12222:2222/tcp",
+]
+podman-plan = { creatable-resources = ["container:db", "container:forgejo", "network:docker-network-1", "volume:docker-volume-1", "volume:docker-volume-2"], external-preconditions = ["network:docker-network-2"], image-operations = [
+  { resource = "docker-service-1-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" },
+  { resource = "docker-service-2-image", reference = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685", policy = "missing" },
+], start-order = ["db", "forgejo"] }
+
+[[evidence]]
+input = "docker"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Withheld environment values require manual provisioning on the target."
+artifacts = ["docker-network-1.network", "docker-service-1.container", "docker-service-2.container", "docker-volume-1.volume", "docker-volume-2.volume"]
+diagnostics-file = "expected.docker-quadlet.diagnostics"
+allowed-losses-file = "expected.docker-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Withheld environment values and the combined User value do not round trip; Restart= is a systemd approximation." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_DB",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-2:FORGEJO__database__HOST",
+  "environment:docker-service-2:FORGEJO__database__PASSWD",
+  "environment:docker-service-2:FORGEJO__security__SECRET_KEY",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_DB",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-2:FORGEJO__database__HOST",
+  "environment:docker-service-2:FORGEJO__database__PASSWD",
+  "environment:docker-service-2:FORGEJO__security__SECRET_KEY",
+]
+reimport-diagnostics = [
+  "BFQ1003|<global>",
+  "BFQ1004|<global>",
+]
+reimport-allowed-losses = [
+  { rule = "BFQ1003", subject = "services.docker-service-2.user", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-2.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+]

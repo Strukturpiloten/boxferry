@@ -73,6 +73,14 @@ tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
 Podman scenarios declare cassette/promotion metadata, bind/network expectations, reimport
 evidence, and loss counts.
 
+The Forgejo Docker Engine case uses an explicitly synthetic GET-only Unix
+socket replay with an exact container selection and caller-supplied resource
+decisions. Its source expectations track Docker's generated neutral keys,
+observed runtime names, restart, publications and mounts, and default value
+withholding. The four route rows exercise the same neutral pipeline as other
+scenario inputs. The cassette describes a bounded source observation. Engine
+create plans and Podman deployment plans cannot serve as input evidence.
+
 Route artifact authorization is explicit. `environment-values = "include"` on an
 `[[evidence]]` route permits the CLI to retain literal environment values only for a
 privacy-reviewed, repository-authored input and a Compose or Quadlet output.

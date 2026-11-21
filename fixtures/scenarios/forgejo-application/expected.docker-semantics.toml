@@ -1,0 +1,58 @@
+# Docker inspection establishes current settings and membership. Resource
+# ownership comes from explicit caller decisions in the scenario, not the peer.
+selected-resources = [
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "network:docker-network-1",
+  "network:docker-network-2",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-1",
+  "volume:docker-volume-2:consumers=docker-service-2",
+]
+required-mounts = [
+  "docker-service-1:docker-volume-1:/var/lib/postgresql/data",
+  "docker-service-2:docker-volume-2:/var/lib/gitea",
+]
+required-environment = [
+  "docker-service-1:POSTGRES_DB=forgejo",
+  "docker-service-1:POSTGRES_PASSWORD=boxferry-public-db-password-canary",
+  "docker-service-2:FORGEJO__database__HOST=db:5432",
+  "docker-service-2:FORGEJO__database__PASSWD=boxferry-public-db-password-canary",
+  "docker-service-2:FORGEJO__security__SECRET_KEY=boxferry-public-forgejo-secret-canary",
+]
+required-users = ["docker-service-2:1000:1000"]
+required-runtime-names = ["docker-service-1:db", "docker-service-2:forgejo"]
+required-restart = ["docker-service-1:absent", "docker-service-2:always"]
+required-ports = ["docker-service-2:13000:3000/tcp", "docker-service-2:12222:2222/tcp"]
+unpublished-services = ["docker-service-1"]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+  { name = "docker-network-2", ownership = "external" },
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1,docker-network-2",
+]
+required-commands = [
+  { service = "docker-service-1", kind = "absent" },
+  { service = "docker-service-2", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "docker-service-1", kind = "absent" },
+  { service = "docker-service-2", kind = "absent" },
+]
+required-port-bindings = [
+  { service = "docker-service-2", container = 3000, published = 13000, host-address = "127.0.0.1", protocol = "tcp" },
+  { service = "docker-service-2", container = 2222, published = 12222, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-1", source = "docker-volume-1", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "docker-service-2", source = "docker-volume-2", target = "/var/lib/gitea", read-only = false },
+]
