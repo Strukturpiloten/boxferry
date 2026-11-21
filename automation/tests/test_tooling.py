@@ -24,6 +24,8 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+from native_preset_source import pinned_preset_input
+
 from boxferry_ci import bootstrap, runner
 from boxferry_ci import tooling as subject
 from boxferry_ci.runner import Diagnostic, RunResult
@@ -1544,19 +1546,7 @@ class NativeRenovateTests(unittest.TestCase):
       base + "workers/repository/update/branch/auto-replace.js",
     );
     const { applyPackageRules } = require(base + "util/package-rules/index.js");
-    const memory = require(base + "util/cache/memory/index.js");
-    memory.init();
-    // Resolve the actual inherited rules through the pinned SDK without network access.
-    // These fixture bytes are the same canonical preset inputs under test, not defaults.
-    for (const reference of rootConfig.extends || []) {
-      if (!reference.startsWith("github>Strukturpiloten/boxferry//renovate-presets/")) continue;
-      const pattern =
-        /^github>Strukturpiloten\/boxferry\/\/renovate-presets\/(common|rust)#([a-f0-9]{40})$/;
-      const match = pattern.exec(reference);
-      assert.ok(match, "inherited first-party presets must retain immutable scoped references");
-      memory.set("preset:" + reference,
-        JSON.parse(fs.readFileSync(root + "/renovate-presets/" + match[1] + ".json")));
-    }
+    require(root + "/automation/tests/native_preset_source.cjs")(base);
     const { resolveConfigPresets } = require(base + "config/presets/index.js");
     const { config: resolvedRoot } = await resolveConfigPresets(rootConfig);
     const { get: versioning } = require(base + "modules/versioning/index.js");
@@ -1741,6 +1731,7 @@ class NativeRenovateTests(unittest.TestCase):
   process.exit(1);
 });
 """
+        preset_input = pinned_preset_input(ROOT, CONSUMERS)
         for inventory in ("active", "future"):
             with self.subTest(inventory=inventory):
                 result = subprocess.run(
@@ -1754,6 +1745,7 @@ class NativeRenovateTests(unittest.TestCase):
                         str(root_config),
                         inventory,
                     ],
+                    input=preset_input,
                     capture_output=True,
                     text=True,
                     check=False,
