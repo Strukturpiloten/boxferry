@@ -1,0 +1,146 @@
+# Offline current-state projection. The caller chooses destination lifecycle.
+# Application dependencies and native readiness are absent from Engine inspection.
+selected-resources = [
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "service:docker-service-3",
+  "service:docker-service-4",
+  "service:docker-service-5",
+  "service:docker-service-6",
+  "service:docker-service-7",
+  "service:docker-service-8",
+  "network:docker-network-1",
+  "network:docker-network-2",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+  "volume:docker-volume-3",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+  "volume:docker-volume-3:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-4",
+  "volume:docker-volume-2:consumers=docker-service-1,docker-service-3,docker-service-6,docker-service-7",
+  "volume:docker-volume-3:consumers=docker-service-2",
+]
+required-mounts = [
+  "docker-service-1:docker-volume-2:/var/www/html",
+  "docker-service-2:docker-volume-3:/data",
+  "docker-service-3:docker-volume-2:/var/www/html",
+  "docker-service-4:docker-volume-1:/var/lib/postgresql/data",
+  "docker-service-6:docker-volume-2:/var/www/html",
+  "docker-service-7:docker-volume-2:/var/www/html",
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1",
+  "docker-service-3:docker-network-1",
+  "docker-service-4:docker-network-1",
+  "docker-service-5:docker-network-2",
+  "docker-service-6:docker-network-1,docker-network-2",
+  "docker-service-7:docker-network-1",
+  "docker-service-8:docker-network-2",
+]
+required-bind-mounts = [
+  { service = "docker-service-5", source = "/srv/boxferry-fixture/nextcloud-application/edge-proxy.conf", target = "/etc/nginx/conf.d/edge.conf", read-only = true, selinux-relabel = "private" },
+  { service = "docker-service-6", source = "/srv/boxferry-fixture/nextcloud-application/frontend.conf", target = "/etc/nginx/conf.d/nextcloud.conf", read-only = true, selinux-relabel = "private" },
+  { service = "docker-service-7", source = "/srv/boxferry-fixture/nextcloud-application/nextcloud.config.php", target = "/opt/boxferry/config.php", read-only = true, selinux-relabel = "private" },
+]
+required-environment = [
+  "docker-service-1:POSTGRES_HOST=db",
+  "docker-service-1:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "docker-service-1:REDIS_HOST=cache",
+  "docker-service-1:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+  "docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD=boxferry-test-cache-password-not-secret",
+  "docker-service-3:POSTGRES_HOST=db",
+  "docker-service-3:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "docker-service-3:REDIS_HOST=cache",
+  "docker-service-3:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+  "docker-service-4:POSTGRES_DB=nextcloud_test",
+  "docker-service-4:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "docker-service-4:POSTGRES_USER=nextcloud_test",
+  "docker-service-5:BOXFERRY_EDGE_TEST_TOKEN=boxferry-test-edge-token-not-secret",
+  "docker-service-7:NEXTCLOUD_ADMIN_PASSWORD=boxferry-test-admin-password-not-secret",
+  "docker-service-7:NEXTCLOUD_ADMIN_USER=boxferry-test-admin",
+  "docker-service-7:POSTGRES_HOST=db",
+  "docker-service-7:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "docker-service-7:REDIS_HOST=cache",
+  "docker-service-7:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+]
+required-healthchecks = [
+  { service = "docker-service-1", command-kind = "exec", command = ["/usr/local/bin/nextcloud-health"] },
+  { service = "docker-service-2", command-kind = "exec", command = ["redis-cli", "ping"] },
+  { service = "docker-service-4", command-kind = "exec", command = ["pg_isready", "-U", "nextcloud_test"] },
+  { service = "docker-service-5", command-kind = "exec", command = ["nginx", "-t"] },
+  { service = "docker-service-6", command-kind = "exec", command = ["nginx", "-t"] },
+  { service = "docker-service-8", command-kind = "exec", command = ["/bin/true"] },
+]
+required-ports = [
+  "docker-service-5:18443:8443/tcp",
+]
+required-restart = [
+  "docker-service-1:always",
+  "docker-service-2:always",
+  "docker-service-3:always",
+  "docker-service-4:always",
+  "docker-service-5:always",
+  "docker-service-6:always",
+  "docker-service-7:never",
+  "docker-service-8:always",
+]
+required-runtime-names = [
+  "docker-service-1:app",
+  "docker-service-2:cache",
+  "docker-service-3:cron",
+  "docker-service-4:db",
+  "docker-service-5:edge-proxy",
+  "docker-service-6:frontend",
+  "docker-service-7:init",
+  "docker-service-8:second-app",
+]
+unpublished-services = [
+  "docker-service-1",
+  "docker-service-2",
+  "docker-service-3",
+  "docker-service-4",
+  "docker-service-6",
+  "docker-service-7",
+  "docker-service-8",
+]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+  { name = "docker-network-2", ownership = "application", internal = false },
+]
+required-commands = [
+  { service = "docker-service-1", kind = "absent" },
+  { service = "docker-service-2", kind = "absent" },
+  { service = "docker-service-3", kind = "exec", values = ["/cron.sh"] },
+  { service = "docker-service-4", kind = "absent" },
+  { service = "docker-service-5", kind = "absent" },
+  { service = "docker-service-6", kind = "absent" },
+  { service = "docker-service-7", kind = "exec", values = ["/opt/boxferry/init-nextcloud", "--non-interactive"] },
+  { service = "docker-service-8", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "docker-service-1", kind = "absent" },
+  { service = "docker-service-2", kind = "absent" },
+  { service = "docker-service-3", kind = "absent" },
+  { service = "docker-service-4", kind = "absent" },
+  { service = "docker-service-5", kind = "absent" },
+  { service = "docker-service-6", kind = "absent" },
+  { service = "docker-service-7", kind = "absent" },
+  { service = "docker-service-8", kind = "absent" },
+]
+required-port-bindings = [
+  { service = "docker-service-5", container = 8443, published = 18443, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-1", source = "docker-volume-2", target = "/var/www/html", read-only = false },
+  { service = "docker-service-2", source = "docker-volume-3", target = "/data", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-2", target = "/var/www/html", read-only = false },
+  { service = "docker-service-4", source = "docker-volume-1", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "docker-service-6", source = "docker-volume-2", target = "/var/www/html", read-only = true },
+  { service = "docker-service-7", source = "docker-volume-2", target = "/var/www/html", read-only = false },
+]

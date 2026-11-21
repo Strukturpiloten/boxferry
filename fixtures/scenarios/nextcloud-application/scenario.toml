@@ -1,6 +1,6 @@
 schema = 1
 id = "nextcloud-application"
-source-capabilities = ["compose", "podman", "quadlet"]
+source-capabilities = ["compose", "docker", "podman", "quadlet"]
 target-capabilities = ["compose", "docker", "podman", "quadlet"]
 protected-values = [
   "boxferry-test-db-password-not-secret",
@@ -126,6 +126,35 @@ selectors = [
   { kind = "volume", exact = "redis-data" },
 ]
 promotion-policy = { effective-bind-mounts = true, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[[native-inputs]]
+id = "docker"
+importer = "docker"
+files = ["input-docker.cassette.json"]
+format-version = "28.0.0"
+import-diagnostics-file = "expected.docker-import.diagnostics"
+
+[native-inputs.docker]
+container-ids = [
+  "1111111111111111111111111111111111111111111111111111111111111111",
+  "1212121212121212121212121212121212121212121212121212121212121212",
+  "1313131313131313131313131313131313131313131313131313131313131313",
+  "1414141414141414141414141414141414141414141414141414141414141414",
+  "1515151515151515151515151515151515151515151515151515151515151515",
+  "1616161616161616161616161616161616161616161616161616161616161616",
+  "1717171717171717171717171717171717171717171717171717171717171717",
+  "1818181818181818181818181818181818181818181818181818181818181818",
+]
+resource-decisions = [
+  "network:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1=create:docker-network-1",
+  "network:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2=create:docker-network-2",
+  "volume:db-data=create:docker-volume-1",
+  "volume:nextcloud-data=create:docker-volume-2",
+  "volume:redis-data=create:docker-volume-3",
+]
+component-services = { app = "docker-service-1", cache = "docker-service-2", cron = "docker-service-3", db = "docker-service-4", edge-proxy = "docker-service-5", frontend = "docker-service-6", init = "docker-service-7", second-app = "docker-service-8" }
+semantics-file = "expected.docker-semantics.toml"
+same-host-bind-mounts = true
 
 [provenance]
 source = "authored"
@@ -724,3 +753,237 @@ allowed-losses-file = "expected.podman-docker.losses.tsv"
 native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "docker"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Withheld environment and inspected health checks require manual provisioning."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.docker-compose.diagnostics"
+allowed-losses-file = "expected.docker-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Reimport omits the withheld values and unsupported health checks." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_HOST",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-1:REDIS_HOST",
+  "environment:docker-service-1:REDIS_PASSWORD",
+  "environment:docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:docker-service-3:POSTGRES_HOST",
+  "environment:docker-service-3:POSTGRES_PASSWORD",
+  "environment:docker-service-3:REDIS_HOST",
+  "environment:docker-service-3:REDIS_PASSWORD",
+  "environment:docker-service-4:POSTGRES_DB",
+  "environment:docker-service-4:POSTGRES_PASSWORD",
+  "environment:docker-service-4:POSTGRES_USER",
+  "environment:docker-service-5:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_USER",
+  "environment:docker-service-7:POSTGRES_HOST",
+  "environment:docker-service-7:POSTGRES_PASSWORD",
+  "environment:docker-service-7:REDIS_HOST",
+  "environment:docker-service-7:REDIS_PASSWORD",
+  "healthcheck:docker-service-1",
+  "healthcheck:docker-service-2",
+  "healthcheck:docker-service-4",
+  "healthcheck:docker-service-5",
+  "healthcheck:docker-service-6",
+  "healthcheck:docker-service-8",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_HOST",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-1:REDIS_HOST",
+  "environment:docker-service-1:REDIS_PASSWORD",
+  "environment:docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:docker-service-3:POSTGRES_HOST",
+  "environment:docker-service-3:POSTGRES_PASSWORD",
+  "environment:docker-service-3:REDIS_HOST",
+  "environment:docker-service-3:REDIS_PASSWORD",
+  "environment:docker-service-4:POSTGRES_DB",
+  "environment:docker-service-4:POSTGRES_PASSWORD",
+  "environment:docker-service-4:POSTGRES_USER",
+  "environment:docker-service-5:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_USER",
+  "environment:docker-service-7:POSTGRES_HOST",
+  "environment:docker-service-7:POSTGRES_PASSWORD",
+  "environment:docker-service-7:REDIS_HOST",
+  "environment:docker-service-7:REDIS_PASSWORD",
+  "healthcheck:docker-service-1",
+  "healthcheck:docker-service-2",
+  "healthcheck:docker-service-4",
+  "healthcheck:docker-service-5",
+  "healthcheck:docker-service-6",
+  "healthcheck:docker-service-8",
+]
+
+[[evidence]]
+input = "docker"
+exporter = "docker"
+target-implementation = "docker"
+target-minimum = "29.8.1"
+target-maximum = "29.8.1"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required environment values were withheld, so a complete Engine create plan is refused."
+artifacts = []
+diagnostics-file = "expected.docker-docker.diagnostics"
+allowed-losses-file = "expected.docker-docker.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+semantic-gaps = []
+reimport-semantic-gaps = []
+docker-target = "upstream-29.8.1-rootful"
+
+[[evidence]]
+input = "docker"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "The inert plan omits protected values, health checks, bind paths and relabel, bridge settings and the loopback publication."
+artifacts = [
+  "podman-commands.sh",
+  "podman.json",
+]
+diagnostics-file = "expected.docker-podman.diagnostics"
+allowed-losses-file = "expected.docker-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_HOST",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-1:REDIS_HOST",
+  "environment:docker-service-1:REDIS_PASSWORD",
+  "environment:docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:docker-service-3:POSTGRES_HOST",
+  "environment:docker-service-3:POSTGRES_PASSWORD",
+  "environment:docker-service-3:REDIS_HOST",
+  "environment:docker-service-3:REDIS_PASSWORD",
+  "environment:docker-service-4:POSTGRES_DB",
+  "environment:docker-service-4:POSTGRES_PASSWORD",
+  "environment:docker-service-4:POSTGRES_USER",
+  "environment:docker-service-5:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_USER",
+  "environment:docker-service-7:POSTGRES_HOST",
+  "environment:docker-service-7:POSTGRES_PASSWORD",
+  "environment:docker-service-7:REDIS_HOST",
+  "environment:docker-service-7:REDIS_PASSWORD",
+  "healthcheck:docker-service-1",
+  "healthcheck:docker-service-2",
+  "healthcheck:docker-service-4",
+  "healthcheck:docker-service-5",
+  "healthcheck:docker-service-6",
+  "healthcheck:docker-service-8",
+  "bind-mount:docker-service-5:/etc/nginx/conf.d/edge.conf",
+  "bind-mount:docker-service-6:/etc/nginx/conf.d/nextcloud.conf",
+  "bind-mount:docker-service-7:/opt/boxferry/config.php",
+  "network-internal:docker-network-1",
+  "network-internal:docker-network-2",
+  "port:docker-service-5:8443:Some(18443)",
+  "publication:docker-service-5:18443:8443/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:app", "container:cache", "container:cron", "container:db", "container:edge-proxy", "container:frontend", "container:init", "container:second-app", "network:docker-network-1", "network:docker-network-2", "volume:docker-volume-1", "volume:docker-volume-2", "volume:docker-volume-3"], external-preconditions = [], image-operations = [{ resource = "docker-service-1-image", reference = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d", policy = "missing" }, { resource = "docker-service-2-image", reference = "docker.io/library/redis@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232", policy = "missing" }, { resource = "docker-service-3-image", reference = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d", policy = "missing" }, { resource = "docker-service-4-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" }, { resource = "docker-service-5-image", reference = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8", policy = "missing" }, { resource = "docker-service-6-image", reference = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8", policy = "missing" }, { resource = "docker-service-7-image", reference = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d", policy = "missing" }, { resource = "docker-service-8-image", reference = "docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce", policy = "missing" }], start-order = ["app", "cache", "cron", "db", "edge-proxy", "frontend", "init", "second-app"] }
+
+[[evidence]]
+input = "docker"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Withheld environment values need manual provisioning and seven container restart policies become systemd approximations."
+artifacts = [
+  "docker-network-1.network",
+  "docker-network-2.network",
+  "docker-service-1.container",
+  "docker-service-2.container",
+  "docker-service-3.container",
+  "docker-service-4.container",
+  "docker-service-5.container",
+  "docker-service-6.container",
+  "docker-service-7.container",
+  "docker-service-8.container",
+  "docker-volume-1.volume",
+  "docker-volume-2.volume",
+  "docker-volume-3.volume",
+]
+diagnostics-file = "expected.docker-quadlet.diagnostics"
+allowed-losses-file = "expected.docker-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Reimport omits the withheld values and approximates seven Always policies." }
+semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_HOST",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-1:REDIS_HOST",
+  "environment:docker-service-1:REDIS_PASSWORD",
+  "environment:docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:docker-service-3:POSTGRES_HOST",
+  "environment:docker-service-3:POSTGRES_PASSWORD",
+  "environment:docker-service-3:REDIS_HOST",
+  "environment:docker-service-3:REDIS_PASSWORD",
+  "environment:docker-service-4:POSTGRES_DB",
+  "environment:docker-service-4:POSTGRES_PASSWORD",
+  "environment:docker-service-4:POSTGRES_USER",
+  "environment:docker-service-5:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_USER",
+  "environment:docker-service-7:POSTGRES_HOST",
+  "environment:docker-service-7:POSTGRES_PASSWORD",
+  "environment:docker-service-7:REDIS_HOST",
+  "environment:docker-service-7:REDIS_PASSWORD",
+]
+reimport-semantic-gaps = [
+  "environment:docker-service-1:POSTGRES_HOST",
+  "environment:docker-service-1:POSTGRES_PASSWORD",
+  "environment:docker-service-1:REDIS_HOST",
+  "environment:docker-service-1:REDIS_PASSWORD",
+  "environment:docker-service-2:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:docker-service-3:POSTGRES_HOST",
+  "environment:docker-service-3:POSTGRES_PASSWORD",
+  "environment:docker-service-3:REDIS_HOST",
+  "environment:docker-service-3:REDIS_PASSWORD",
+  "environment:docker-service-4:POSTGRES_DB",
+  "environment:docker-service-4:POSTGRES_PASSWORD",
+  "environment:docker-service-4:POSTGRES_USER",
+  "environment:docker-service-5:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:docker-service-7:NEXTCLOUD_ADMIN_USER",
+  "environment:docker-service-7:POSTGRES_HOST",
+  "environment:docker-service-7:POSTGRES_PASSWORD",
+  "environment:docker-service-7:REDIS_HOST",
+  "environment:docker-service-7:REDIS_PASSWORD",
+]
+reimport-diagnostics = [
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+  "BFQ1004|<global>",
+]
+reimport-allowed-losses = [
+  { rule = "BFQ1004", subject = "services.docker-service-1.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-2.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-3.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-4.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-5.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-6.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFQ1004", subject = "services.docker-service-8.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+]

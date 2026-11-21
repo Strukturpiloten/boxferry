@@ -87,6 +87,8 @@ pub(crate) struct DockerInput {
     pub resource_decisions: Vec<String>,
     pub component_services: BTreeMap<String, String>,
     pub semantics_file: String,
+    #[serde(default)]
+    pub same_host_bind_mounts: bool,
 }
 
 impl DockerInput {
