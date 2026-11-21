@@ -14,13 +14,14 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 import stat
 import urllib.request
 import uuid
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, ClassVar, Self, cast
+from typing import IO, Any, ClassVar, Self, cast
 from unittest.mock import Mock, patch
 
 from test_provider_probe_controller import OfflineCase, S
@@ -616,6 +617,138 @@ class ProtocolTests(FreshProtocolCase):
                 2,
             )
         self.assertEqual(json.loads(fixture.e.state_path.read_bytes())["requests"], spent)
+
+    def test_e_copy_syncs_original_writers_and_refuses_writer_failure(self) -> None:
+        for failure in (None, "sync", "wrap"):
+            with self.subTest(failure=failure):
+                case = FreshProtocolCase()
+                case.setUp()
+                try:
+                    self.check_e_copy_writer_sync(case, failure)
+                finally:
+                    case.doCleanups()
+
+    def check_e_copy_writer_sync(self, case: FreshProtocolCase, failure: str | None) -> None:
+        fixture = EFixture(case).prepare(freeze=False)
+        fixture.freeze_layout()
+        destination = fixture.root / "durable"
+        destination.mkdir(mode=0o700)
+        target = destination.stat()
+        identity = (target.st_dev, target.st_ino)
+        expected = {item["path"] for item in fixture.e.state["files"]} | {
+            "state.json",
+            "storage-attestation.json",
+        }
+        real_open, real_fdopen, real_fsync = os.open, os.fdopen, os.fsync
+        created: dict[int, str] = {}
+        writers: dict[tuple[int, int], tuple[str, io.BufferedWriter]] = {}
+        synced: list[str] = []
+        failed_syncs: list[str] = []
+        failed_wrappers: list[int] = []
+        wrap_target = fixture.e.state["files"][1]["path"]
+        peak_writers = 0
+        directory_syncs = 0
+
+        def track_open(
+            name: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+        ) -> int:
+            descriptor = real_open(name, flags, mode, dir_fd=dir_fd)
+            if dir_fd is not None and flags & os.O_EXCL:
+                entry = os.fstat(dir_fd)
+                if (entry.st_dev, entry.st_ino) == identity:
+                    created[descriptor] = name
+            return descriptor
+
+        def track_writer(
+            descriptor: int, mode: str, *, encoding: str | None = None, closefd: bool = True
+        ) -> IO[bytes] | IO[str]:
+            nonlocal peak_writers
+            if failure == "wrap" and created.get(descriptor) == wrap_target:
+                failed_wrappers.append(descriptor)
+                raise OSError("synthetic failure before writer wrapper assumes ownership")
+            stream = real_fdopen(descriptor, mode, encoding=encoding, closefd=closefd)
+            if descriptor in created:
+                self.assertEqual(mode, "wb")
+                entry = os.fstat(descriptor)
+                writers[(entry.st_dev, entry.st_ino)] = (
+                    created.pop(descriptor),
+                    cast(io.BufferedWriter, stream),
+                )
+                peak_writers = max(
+                    peak_writers, sum(not writer.closed for _, writer in writers.values())
+                )
+            return stream
+
+        def check_sync(descriptor: int) -> None:
+            nonlocal directory_syncs
+            entry = os.fstat(descriptor)
+            key = (entry.st_dev, entry.st_ino)
+            if key == identity:
+                self.assertCountEqual(synced, expected)
+                self.assertTrue(all(writer.closed for _, writer in writers.values()))
+                directory_syncs += 1
+            if key in writers:
+                name, writer = writers[key]
+                self.assertFalse(writer.closed, name)
+                self.assertEqual(descriptor, writer.fileno(), name)
+                self.assertEqual(entry.st_size, writer.tell(), name)
+                if failure == "sync" and name == "storage-attestation.json":
+                    failed_syncs.append(name)
+                    raise OSError("synthetic writer writeback error")
+                real_fsync(descriptor)
+                synced.append(name)
+                return
+            real_fsync(descriptor)
+
+        spent = fixture.e.state["requests"]
+        output = io.StringIO()
+        with (
+            patch.object(C.os, "open", side_effect=track_open),
+            patch.object(C.os, "fdopen", side_effect=track_writer),
+            patch.object(C.os, "fsync", side_effect=check_sync),
+            contextlib.redirect_stdout(output),
+        ):
+            code = C.main(
+                [
+                    "--custody",
+                    str(fixture.custody),
+                    "copy-e",
+                    "--durable-custody",
+                    str(destination),
+                    "--storage-reviewed",
+                ]
+            )
+        if failure == "wrap":
+            self.assertEqual(len(failed_wrappers), 1)
+            for descriptor in failed_wrappers:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            self.assertEqual(len(writers), 1)
+            self.assertEqual(synced, [])
+            self.assertEqual(failed_syncs, [])
+        else:
+            self.assertEqual(failed_wrappers, [])
+            self.assertCountEqual([name for name, _ in writers.values()], expected)
+        self.assertTrue(all(writer.closed for _, writer in writers.values()))
+        self.assertLessEqual(peak_writers, 8)
+        state = json.loads(fixture.e.state_path.read_bytes())
+        self.assertEqual(state["requests"], spent)
+        self.assertNotIn("cancel:E", state["controller_v5"]["effects"])
+        self.assertEqual(fixture.posts, [])
+        if failure is None:
+            self.assertEqual(code, 0)
+            self.assertCountEqual(synced, expected)
+            self.assertEqual(failed_syncs, [])
+            self.assertEqual(directory_syncs, 1)
+            self.assertIn("E_copy_verified", state["controller_v5"])
+        else:
+            self.assertEqual(code, 2)
+            if failure == "sync":
+                self.assertEqual(failed_syncs, ["storage-attestation.json"])
+            self.assertEqual(directory_syncs, 0)
+            self.assertEqual(json.loads(output.getvalue())["refusal_code"], "E_COPY_IO")
+            self.assertTrue(state["controller_v5"]["aborted"])
+            self.assertNotIn("E_copy_verified", state["controller_v5"])
 
     def test_e_copy_success_does_not_extend_hold_freshness(self) -> None:
         fixture = EFixture(self).prepare()

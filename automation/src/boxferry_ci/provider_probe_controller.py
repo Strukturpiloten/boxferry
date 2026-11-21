@@ -20,10 +20,14 @@ import stat
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from itertools import batched
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
+DURABLE_SYNC_WORKERS = 8
 CONTROLLER_SCHEMA = "boxferry.provider-probe.controller.v1"
 REPOSITORY = "Strukturpiloten/boxferry"
 PREFIX = "/repos/" + REPOSITORY
@@ -1695,6 +1699,43 @@ class Controller:
             raise self.o.Inconclusive("E durable file I/O failed") from None
         return retained
 
+    def write_durable_batch(
+        self, target: int, records: tuple[dict[str, Any], ...], controls: dict[str, bytes]
+    ) -> None:
+        with ExitStack() as writers:
+            descriptors = []
+            for item in records:
+                name, length = item["path"], item["bytes"]
+                self.o.require(
+                    name not in {"", ".", ".."}
+                    and Path(name).name == name
+                    and type(length) is int
+                    and 0 <= length <= self.o.MAX_CUSTODY,
+                    "durable proof index missing or changed",
+                )
+                raw = controls.get(name)
+                if raw is None:
+                    raw = self.o.read_regular(self.e.directory / name, length)
+                    self.o.require(
+                        len(raw) == length and hashlib.sha256(raw).hexdigest() == item["sha256"],
+                        "E indexed evidence bytes changed",
+                    )
+                descriptor = os.open(
+                    name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=target,
+                )
+                writers.callback(os.close, descriptor)
+                stream = writers.enter_context(os.fdopen(descriptor, "wb", closefd=False))
+                stream.write(raw)
+                stream.flush()
+                descriptors.append(descriptor)
+            # Report writeback failures on the original open descriptions. The
+            # pool joins before ExitStack closes any writer, including on error.
+            with ThreadPoolExecutor(max_workers=DURABLE_SYNC_WORKERS) as executor:
+                list(executor.map(os.fsync, descriptors))
+
     @diagnostic_phase("DURABLE_E_COPY")
     def copy_e(self, directory: str | Path) -> None:
         self.o.require(
@@ -1739,33 +1780,8 @@ class Controller:
                     sum(item["bytes"] for item in records) <= self.o.MAX_CUSTODY,
                     "aggregate custody byte budget exhausted",
                 )
-                for item in records:
-                    name, length = item["path"], item["bytes"]
-                    self.o.require(
-                        name not in {"", ".", ".."}
-                        and Path(name).name == name
-                        and type(length) is int
-                        and 0 <= length <= self.o.MAX_CUSTODY,
-                        "durable proof index missing or changed",
-                    )
-                    raw = controls.get(name)
-                    if raw is None:
-                        raw = self.o.read_regular(self.e.directory / name, length)
-                        self.o.require(
-                            len(raw) == length
-                            and hashlib.sha256(raw).hexdigest() == item["sha256"],
-                            "E indexed evidence bytes changed",
-                        )
-                    descriptor = os.open(
-                        name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o600,
-                        dir_fd=target,
-                    )
-                    with os.fdopen(descriptor, "wb") as stream:
-                        stream.write(raw)
-                        stream.flush()
-                        os.fsync(stream.fileno())
+                for batch in batched(records, DURABLE_SYNC_WORKERS, strict=False):
+                    self.write_durable_batch(target, batch, controls)
                 os.fsync(target)
         except OSError:
             raise self.o.Inconclusive("E durable file I/O failed") from None
