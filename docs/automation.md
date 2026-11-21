@@ -4,7 +4,10 @@
 
 ## Revisions and admission
 
-The [zero-age-delta bootstrap](decisions/0097-read-only-zero-age-delta-bootstrap.md) covers only reviewed Podman PR159/Quadlet PR175 permission repairs. Complete immutable trees stay inert; isolated exact A confirms unchanged inputs. Live canonical S supplies proof; A retains policy authority. Only `proved-zero` bypasses receipts. Unknown or changed inputs use the service path; invalid custody fails and selected CI remains required. Proof is no service receipt; hosted accessibility/recovery require separate evidence.
+[ADR 0101](decisions/0101-retire-zero-age-delta-bootstrap.md) retires the zero-age proof from
+new waiter revisions. Both registered permission repairs merged. Historical pinned workflows and
+the original [bootstrap decision](decisions/0097-read-only-zero-age-delta-bootstrap.md) retain
+the reviewed proof and its evidence.
 
 Immutable caller identities: `candidate_sha` is tested `github.sha`; `automation_sha` matches the reusable workflow's full BoxFerry SHA; `policy_sha` is the trusted PR/merge-queue base, or candidate for other events. Validate policy paths against the trusted checkout. The [admission reader](../.github/workflows/shared-dependency-wait.yml) reads the exact base manifest: for base A/candidate B, A checks the exact candidate, reporting implementation A; CI validates B. There is no candidate fallback. Ordinary changed dependencies retain the 72-hour hold and the complete first-party Lens exemption; push/manual/release validation adds no age hold. See [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md) and [ADR 0095](decisions/0095-bounded-older-base-dependency-recovery.md).
 

@@ -355,6 +355,47 @@ class Admission(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_required_waiter_uses_the_exact_reader_and_propagates_refusal(self) -> None:
+        workflow = WORKFLOW.read_text()
+        waiter, result = workflow.split(
+            "      - name: Read the exact candidate receipt under A's policy\n", 1
+        )[1].split("      - name: Expose successful admission evidence", 1)
+        self.assertIn("        if: steps.policy.outputs.required == 'true'\n", waiter)
+        self.assertNotIn("continue-on-error:", waiter)
+        self.assertNotIn("        if:", result)
+        script = textwrap.dedent(waiter.split("        run: |\n", 1)[1])
+        stub = 'uv() { printf "%s\\n" "$@"; return "${WAIT_STATUS}"; }\n'
+        environment = dict(
+            os.environ,
+            GITHUB_REPOSITORY=self.context.repository,
+            GITHUB_STEP_SUMMARY=str(self.root / "summary"),
+            CANDIDATE_SHA=CANDIDATE,
+            ADMISSION_SHA=OLD_AUTOMATION,
+            EXPECTED_BASE_SHA=POLICY,
+        )
+        for contract, status in (("1", 0), ("2", 0), ("2", 1), ("unknown", 2)):
+            with self.subTest(contract=contract, status=status):
+                completed = subprocess.run(
+                    ["bash", "-c", stub + script],
+                    env=dict(environment, READER_CONTRACT=contract, WAIT_STATUS=str(status)),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                )
+                self.assertEqual(completed.returncode, status, completed.stderr)
+                argv = completed.stdout.splitlines()
+                if contract == "unknown":
+                    self.assertEqual(argv, [])
+                    continue
+                self.assertIn("_automation/automation", argv)
+                self.assertEqual(argv[argv.index("--candidate-sha") + 1], CANDIDATE)
+                self.assertEqual(argv[argv.index("--implementation-revision") + 1], OLD_AUTOMATION)
+                if contract == "2":
+                    self.assertEqual(argv[argv.index("--expected-base-sha") + 1], POLICY)
+                else:
+                    self.assertNotIn("--expected-base-sha", argv)
+
 
 if __name__ == "__main__":
     unittest.main()
