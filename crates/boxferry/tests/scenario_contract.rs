@@ -6982,6 +6982,7 @@ fn load_docker_cassette(input: &NativeInput, path: &Path) -> Result<HttpCassette
 
 const DOCKER_SCENARIO_MAX_REQUESTS: usize = 16;
 const DOCKER_SCENARIO_CONTEXT_REQUESTS: usize = 2;
+const FULL_SUPABASE_MAX_REQUESTS: usize = 18;
 
 fn acquire_docker_cassette(
     application: &str,
@@ -6998,21 +6999,33 @@ fn acquire_docker_cassette(
     for decision in &docker.resource_decisions {
         decisions.add(decision.parse::<DockerResourceDecision>()?)?;
     }
-    let max_inspects = DOCKER_SCENARIO_MAX_REQUESTS - DOCKER_SCENARIO_CONTEXT_REQUESTS;
+    // The reviewed Supabase manifest selects eleven containers. Its fixed
+    // allowance covers those containers, two networks and three volumes.
+    let full_supabase = application == "supabase-application" && input.id == "docker" && ids.len() == 11;
+    let max_requests = if full_supabase {
+        FULL_SUPABASE_MAX_REQUESTS
+    } else {
+        DOCKER_SCENARIO_MAX_REQUESTS
+    };
+    let max_inspects = max_requests - DOCKER_SCENARIO_CONTEXT_REQUESTS;
     let max_selected_resources = ids.len().min(max_inspects);
     // DockerLens counts container as well as related-resource inspections.
     // Retain the original budget for Forgejo, including its truncated refusal cases.
-    let max_expansions = cassette
-        .interaction_count()
-        .saturating_sub(DOCKER_SCENARIO_CONTEXT_REQUESTS)
-        .clamp(8, max_inspects);
+    let max_expansions = if full_supabase {
+        max_inspects
+    } else {
+        cassette
+            .interaction_count()
+            .saturating_sub(DOCKER_SCENARIO_CONTEXT_REQUESTS)
+            .clamp(8, max_inspects)
+    };
     let server = HttpCassetteServer::start(cassette)?;
     let source = acquire_docker_source(
         Identifier::new(application)?,
         &Endpoint::unix_socket(server.socket().to_path_buf()),
         Selector::ContainerIds(ids),
         Limits {
-            max_requests: DOCKER_SCENARIO_MAX_REQUESTS,
+            max_requests,
             max_selected_resources,
             max_expansions,
             max_response_bytes: 16 * 1024,
@@ -7631,6 +7644,160 @@ fn observability_docker_replay_distinguishes_log_access_and_withholds_values() -
         .err()
         .ok_or("Observability source assertions accepted promoted Grafana values")?;
     assert_no_protected_environment_values(&view, &error, "Observability privacy assertion")?;
+    assert_eq!(error, "Docker source must retain only required environment names");
+    Ok(())
+}
+
+#[test]
+fn supabase_docker_replay_negotiates_with_full_inspection_budget() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::{acquisition::LimitError, version::ApiVersion};
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Supabase Docker input")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(input.format_version, "28.2.0");
+    assert_eq!(cassette.scenario_id(), "supabase-application-docker-28.2.0-synthetic");
+    // Two context reads, eleven containers, two networks and three volumes.
+    assert_eq!(cassette.interaction_count(), 18);
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette.clone())?;
+    let version = &source.inventory().version;
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    assert_eq!(source.inventory().containers.len(), 11);
+    assert_eq!(source.inventory().networks.len(), 2);
+    assert_eq!(source.inventory().volumes.len(), 3);
+
+    // Put the extra volume after the three authored names in inspection
+    // order. The 18 replies are consumed before a seventeenth inspection
+    // would reach the transport.
+    let mut excess = cassette;
+    let last = input
+        .docker
+        .as_ref()
+        .and_then(|docker| docker.container_ids.last())
+        .ok_or("missing Supabase pooler ID")?;
+    let path = format!("/v1.49/containers/{last}/json");
+    excess.insert_body_field(
+        &path,
+        "Mounts",
+        serde_json::json!([
+            { "Type": "volume", "Name": "zz-budget-overflow", "Destination": "/synthetic", "Mode": "rw", "RW": true }
+        ]),
+    )?;
+    let error = acquire_docker_cassette(&manifest.application.name, input, excess)
+        .err()
+        .ok_or("Supabase replay accepted a seventeenth inspection")?;
+    assert_no_protected_environment_values(&manifest, &format!("{error} {error:?}"), "Supabase budget refusal")?;
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Budget(
+            LimitError::Expansions
+        )))
+    ));
+    Ok(())
+}
+
+#[test]
+fn supabase_docker_replay_checks_shared_storage_and_withholds_uri_passwords() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/supabase-application");
+    let path = fixture.join("scenario.toml");
+    let manifest = read_manifest_file(&path)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Supabase Docker input")?;
+    let view = docker_scenario_view(&path, input, &fixture)?.ok_or("missing Docker semantics")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let [_, _, _, imgproxy, _, _, _, _, storage, _, _] = docker.container_ids.as_slice() else {
+        return Err("Supabase replay must select eleven distinct role IDs".into());
+    };
+    let storage_path = format!("/v1.49/containers/{storage}/json");
+    let source = acquire_docker_cassette(&view.application.name, input, cassette.clone())?;
+    let importer = DockerImporter::new()?;
+    let observation = importer.import(&source);
+    let application = observation
+        .application()
+        .ok_or("missing Supabase neutral application")?;
+    validate_docker_source_application(&view, application)?;
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().dependencies().is_empty())
+    );
+    assert_no_protected_environment_values(&view, &format!("{:?}", observation.diagnostics()), "Supabase replay")?;
+
+    let mut reversed = cassette.clone();
+    for (id, mode, writable) in [(imgproxy, "rw", true), (storage, "ro", false)] {
+        let endpoint = format!("/v1.49/containers/{id}/json");
+        reversed.insert_body_field(
+            &endpoint,
+            "Mounts",
+            serde_json::json!([
+                { "Type": "volume", "Name": "storage", "Destination": "/var/lib/storage", "Mode": mode, "RW": writable }
+            ]),
+        )?;
+    }
+    let reversed = importer.import(&acquire_docker_cassette(&view.application.name, input, reversed)?);
+    let reversed = reversed
+        .application()
+        .ok_or("reversed access should remain well-formed Engine evidence")?;
+    assert_eq!(reversed.services().len(), 11);
+    assert_eq!(reversed.volumes().len(), 3);
+    assert_eq!(
+        reversed
+            .services()
+            .iter()
+            .map(|service| service.value().mounts().len())
+            .sum::<usize>(),
+        4
+    );
+    let error = validate_docker_source_application(&view, reversed)
+        .err()
+        .ok_or("Supabase view accepted reversed storage permissions")?;
+    assert_no_protected_environment_values(&view, &error, "Supabase storage assertion")?;
+    assert!(error.contains("volume-mount:docker-service-4:/var/lib/storage"));
+    assert!(error.contains("volume-mount:docker-service-9:/var/lib/storage"));
+
+    let mut wrong_id = cassette;
+    wrong_id.insert_body_field(&storage_path, "Id", serde_json::json!(imgproxy))?;
+    wrong_id.truncate_after(&storage_path)?;
+    let error = acquire_docker_cassette(&view.application.name, input, wrong_id)
+        .err()
+        .ok_or("storage inspection accepted the imgproxy identity")?;
+    let diagnostic = format!("{error} {error:?}");
+    assert_no_protected_environment_values(&view, &diagnostic, "Supabase identity refusal")?;
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Shape))
+    ));
+    assert!(docker.container_ids.iter().all(|id| !diagnostic.contains(id)));
+
+    let policy = DockerPromotionPolicy::portable_application().with_protected_environment_values(true);
+    let promoted = importer.import(&source.with_promotion_policy(policy));
+    let promoted = promoted.application().ok_or("missing promoted Supabase test model")?;
+    let error = validate_docker_source_application(&view, promoted)
+        .err()
+        .ok_or("Supabase source assertions accepted promoted environment values")?;
+    assert_no_protected_environment_values(&view, &error, "Supabase privacy assertion")?;
     assert_eq!(error, "Docker source must retain only required environment names");
     Ok(())
 }

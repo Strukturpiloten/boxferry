@@ -1,0 +1,119 @@
+# Named-volume lifecycle comes from explicit fixture decisions.
+# The synthetic observations establish mount identity and topology only.
+selected-resources = [
+  "network:docker-network-1",
+  "network:docker-network-2",
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "service:docker-service-3",
+  "service:docker-service-4",
+  "service:docker-service-5",
+  "service:docker-service-6",
+  "service:docker-service-7",
+  "service:docker-service-8",
+  "service:docker-service-9",
+  "service:docker-service-10",
+  "service:docker-service-11",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+  "volume:docker-volume-3",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+  "volume:docker-volume-3:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-3",
+  "volume:docker-volume-2:consumers=docker-service-2",
+  "volume:docker-volume-3:consumers=docker-service-4,docker-service-9",
+]
+required-mounts = [
+  "docker-service-2:docker-volume-2:/var/lib/postgresql/data",
+  "docker-service-3:docker-volume-1:/root/.cache/deno",
+  "docker-service-4:docker-volume-3:/var/lib/storage",
+  "docker-service-9:docker-volume-3:/var/lib/storage",
+]
+required-environment = [
+  "docker-service-1:GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+  "docker-service-1:GOTRUE_DB_DRIVER=postgres",
+  "docker-service-2:POSTGRES_DB=postgres",
+  "docker-service-2:POSTGRES_PASSWORD=boxferry-public-supabase-db-password",
+  "docker-service-2:POSTGRES_USER=supabase_admin",
+  "docker-service-3:SUPABASE_DB_URL=postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres",
+  "docker-service-3:SUPABASE_URL=http://kong:8000",
+  "docker-service-3:VERIFY_JWT=false",
+  "docker-service-4:IMGPROXY_BIND=:5001",
+  "docker-service-4:IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
+  "docker-service-5:KONG_DATABASE=off",
+  "docker-service-5:KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml",
+  "docker-service-6:PG_META_DB_HOST=db",
+  "docker-service-6:PG_META_DB_NAME=postgres",
+  "docker-service-7:DB_HOST=db",
+  "docker-service-7:DB_NAME=postgres",
+  "docker-service-7:DB_PASSWORD=boxferry-public-supabase-db-password",
+  "docker-service-8:PGRST_DB_SCHEMAS=public",
+  "docker-service-8:PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres",
+  "docker-service-9:DATABASE_URL=postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+  "docker-service-9:IMGPROXY_URL=http://imgproxy:5001",
+  "docker-service-9:POSTGREST_URL=http://rest:3000",
+  "docker-service-9:STORAGE_BACKEND=file",
+  "docker-service-10:STUDIO_PG_META_URL=http://meta:8080",
+  "docker-service-10:SUPABASE_URL=http://kong:8000",
+  "docker-service-11:POSTGRES_DB=postgres",
+  "docker-service-11:POSTGRES_HOST=db",
+]
+required-runtime-names = [
+  "docker-service-1:auth",
+  "docker-service-2:db",
+  "docker-service-3:functions",
+  "docker-service-4:imgproxy",
+  "docker-service-5:kong",
+  "docker-service-6:meta",
+  "docker-service-7:realtime",
+  "docker-service-8:rest",
+  "docker-service-9:storage",
+  "docker-service-10:studio",
+  "docker-service-11:supavisor",
+]
+required-restart = [
+  "docker-service-1:absent",
+  "docker-service-2:absent",
+  "docker-service-3:absent",
+  "docker-service-4:absent",
+  "docker-service-5:absent",
+  "docker-service-6:absent",
+  "docker-service-7:absent",
+  "docker-service-8:absent",
+  "docker-service-9:absent",
+  "docker-service-10:absent",
+  "docker-service-11:absent",
+]
+required-ports = ["docker-service-5:18000:8000/tcp"]
+unpublished-services = ["docker-service-1", "docker-service-2", "docker-service-3", "docker-service-4", "docker-service-6", "docker-service-7", "docker-service-8", "docker-service-9", "docker-service-10", "docker-service-11"]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+  { name = "docker-network-2", ownership = "application", internal = false },
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1",
+  "docker-service-3:docker-network-1",
+  "docker-service-4:docker-network-1",
+  "docker-service-5:docker-network-1,docker-network-2",
+  "docker-service-6:docker-network-1",
+  "docker-service-7:docker-network-1",
+  "docker-service-8:docker-network-1",
+  "docker-service-9:docker-network-1",
+  "docker-service-10:docker-network-1",
+  "docker-service-11:docker-network-1",
+]
+required-port-bindings = [
+  { service = "docker-service-5", container = 8000, published = 18000, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-2", source = "docker-volume-2", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-1", target = "/root/.cache/deno", read-only = false },
+  { service = "docker-service-4", source = "docker-volume-3", target = "/var/lib/storage", read-only = true },
+  { service = "docker-service-9", source = "docker-volume-3", target = "/var/lib/storage", read-only = false },
+]
