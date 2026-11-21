@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 from . import eligibility as core
 from .admission import MANIFEST_PATH, parse_manifest
+from .eligibility_state import validate_state
 
 HINT_FILE = "dependency-candidate-hint.json"
 HINT_LIMIT = 16 * 1024
@@ -40,6 +41,7 @@ READER_CLOSURE = (
     "automation/src/boxferry_ci/dependencies.py",
     "automation/src/boxferry_ci/dependency_snapshots.py",
     "automation/src/boxferry_ci/eligibility.py",
+    "automation/src/boxferry_ci/eligibility_state.py",
     "automation/src/boxferry_ci/git_source.py",
     "automation/src/boxferry_ci/operational.py",
     "automation/src/boxferry_ci/queue_tree.py",
@@ -851,7 +853,7 @@ def checkpoint_payload(
     if type(identifier) is not int or identifier < 1 or type(attempt) is not int or attempt < 1:
         raise RecoveryRefused("checkpoint run/attempt identity is malformed")
     created = core.utc(run.get("created_at"))
-    payload = core.validate_state(
+    payload = validate_state(
         core.run_artifact(api, identifier),
         repository=api.repository,
         run_id=identifier,
