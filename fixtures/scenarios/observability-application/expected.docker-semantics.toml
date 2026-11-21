@@ -1,0 +1,99 @@
+# Named-volume lifecycle comes from explicit fixture decisions.
+# The synthetic observations establish mount identity and topology only.
+selected-resources = [
+  "network:docker-network-1",
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "service:docker-service-3",
+  "service:docker-service-4",
+  "service:docker-service-5",
+  "service:docker-service-6",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+  "volume:docker-volume-3",
+  "volume:docker-volume-4",
+  "volume:docker-volume-5",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+  "volume:docker-volume-3:application",
+  "volume:docker-volume-4:application",
+  "volume:docker-volume-5:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-1",
+  "volume:docker-volume-2:consumers=docker-service-2",
+  "volume:docker-volume-3:consumers=docker-service-4",
+  "volume:docker-volume-4:consumers=docker-service-6",
+  "volume:docker-volume-5:consumers=docker-service-1,docker-service-3",
+]
+required-mounts = [
+  "docker-service-1:docker-volume-1:/var/lib/alloy/data",
+  "docker-service-1:docker-volume-5:/var/log/boxferry",
+  "docker-service-2:docker-volume-2:/var/lib/grafana",
+  "docker-service-3:docker-volume-5:/var/log/boxferry",
+  "docker-service-4:docker-volume-3:/loki",
+  "docker-service-6:docker-volume-4:/prometheus",
+]
+required-environment = [
+  "docker-service-2:GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false",
+  "docker-service-2:GF_PLUGINS_PREINSTALL_DISABLED=true",
+  "docker-service-2:GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary",
+]
+required-runtime-names = [
+  "docker-service-1:alloy",
+  "docker-service-2:grafana",
+  "docker-service-3:log-producer",
+  "docker-service-4:loki",
+  "docker-service-5:metrics-producer",
+  "docker-service-6:prometheus",
+]
+required-restart = [
+  "docker-service-1:absent",
+  "docker-service-2:absent",
+  "docker-service-3:absent",
+  "docker-service-4:absent",
+  "docker-service-5:absent",
+  "docker-service-6:absent",
+]
+required-ports = ["docker-service-2:13000:3000/tcp"]
+unpublished-services = ["docker-service-1", "docker-service-3", "docker-service-4", "docker-service-5", "docker-service-6"]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1",
+  "docker-service-3:docker-network-1",
+  "docker-service-4:docker-network-1",
+  "docker-service-5:docker-network-1",
+  "docker-service-6:docker-network-1",
+]
+required-commands = [
+  { service = "docker-service-1", kind = "exec", values = ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"] },
+  { service = "docker-service-2", kind = "absent" },
+  { service = "docker-service-3", kind = "exec", values = ["sleep", "86400"] },
+  { service = "docker-service-4", kind = "exec", values = ["-config.file=/etc/loki/local-config.yaml"] },
+  { service = "docker-service-5", kind = "exec", values = ["sleep", "86400"] },
+  { service = "docker-service-6", kind = "exec", values = ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=24h", "--web.enable-remote-write-receiver"] },
+]
+required-entrypoints = [
+  { service = "docker-service-1", kind = "absent" },
+  { service = "docker-service-2", kind = "absent" },
+  { service = "docker-service-3", kind = "absent" },
+  { service = "docker-service-4", kind = "absent" },
+  { service = "docker-service-5", kind = "absent" },
+  { service = "docker-service-6", kind = "absent" },
+]
+required-port-bindings = [
+  { service = "docker-service-2", container = 3000, published = 13000, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-1", source = "docker-volume-1", target = "/var/lib/alloy/data", read-only = false },
+  { service = "docker-service-1", source = "docker-volume-5", target = "/var/log/boxferry", read-only = true },
+  { service = "docker-service-2", source = "docker-volume-2", target = "/var/lib/grafana", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-5", target = "/var/log/boxferry", read-only = false },
+  { service = "docker-service-4", source = "docker-volume-3", target = "/loki", read-only = false },
+  { service = "docker-service-6", source = "docker-volume-4", target = "/prometheus", read-only = false },
+]
