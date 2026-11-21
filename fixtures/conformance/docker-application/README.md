@@ -704,13 +704,14 @@ complete BoxFerry #366.
 
 ## Forgejo topology and dependency-sidecar review
 
-[`docker-application-schedule.py`](../../../scripts/lib/docker-application-schedule.py) adds one
-reviewed Forgejo/Nextcloud offline check of the actual native plan, existing topology admission, and unpublished
-BoxFerry dependency sidecar as an inseparable review set. It reuses `validate_application` above;
-there is no second native decoder, request renderer, or runtime client. The canonical CLI calls
-`check_sources` before reading artifacts. Its pure `validate_schedule` takes the three raw byte
-documents and the independently supplied catalogue, application, lane, profile, image aliases,
-prefix, run ID, and fixture root; embedded callers must separately check the source bindings.
+[`docker-application-schedule.py`](../../../scripts/lib/docker-application-schedule.py) reviews the
+native plan, topology admission, and dependency sidecar together for Forgejo, Nextcloud, Immich,
+Observability, and full eleven-service Supabase. Paperless uses its
+[separate prepared choreography](README-paperless-prepared.md). The scheduler reuses
+`validate_application`, and its CLI calls `check_sources` before reading artifacts. The pure
+`validate_schedule` takes the three raw byte documents and the caller-supplied catalogue,
+application, lane, profile, image aliases, prefix, run ID, and fixture root. Embedded callers must
+check the source bindings separately and also supply `redis_config_bytes` for Nextcloud.
 The catalogue and selected profile are caller trust inputs, not authority inferred from output.
 All JSON uses the existing 1-MiB/depth-32 parser, rejecting duplicate keys and nonfinite numbers.
 CLI file reads reject nonregular files and final-component symlinks before a bounded read.
@@ -753,7 +754,7 @@ the result or rejection diagnostics.
 
 Every result says `offline-contract-prerequisite`, `native_execution: false`,
 `replay_authority: false`, `native_admission: false`, `runtime_evidence: "unmeasured"`, and null
-budget measurements. Command/environment/health semantics, actual external-resource existence,
+budget measurements. Runtime command, environment and health behavior, actual external-resource existence,
 image loading, startup/readiness/restart behavior, Git/SSH/persistence/isolation acceptance,
 apply/reacquire, native capability admission, and measured budgets remain separate requirements.
 No runtime runner or new application lane is enabled; #343 and #366 remain incomplete.
@@ -778,10 +779,14 @@ offline evidence, not downloaded software pins or native admission.
 
 ## Nextcloud dependency schedule and authored init/cron intent
 
-The same canonical schedule validator accepts `--application nextcloud`; omitting that option keeps
-the existing Forgejo CLI and result unchanged. Other applications remain unreviewed. Nextcloud uses
-the same bounded parser, source-first CLI check, caller-selected authority, and three exact raw-byte
-bindings described above, with no separate decoder, renderer, interpolation engine, or runtime client.
+Select `--application nextcloud`. The CLI defaults to Forgejo. For this offline fixture, load
+Nextcloud's [base Compose file](../nextcloud-application/compose.yaml) first and then its
+[Docker overlay](../nextcloud-application/compose.docker.yaml). Use the public, disposable fixture
+value `boxferry-public-cache-canary` for `BF_REDIS_PASSWORD` to match
+[`redis.docker.conf`](../nextcloud-application/redis.docker.conf). The overlay adds the read-only
+config bind. The CLI reads that file, and embedded callers pass its exact bytes as
+`redis_config_bytes`. The validator checks the bytes against the literal fixture and its catalogue
+hash.
 The independently literal contract contains exactly six app-owned services and five required,
 non-restarting dependency decisions:
 
@@ -796,17 +801,19 @@ arrays may be empty; provenance retains the existing finite-category boundary ra
 origins. Missing, extra, repeated, self-referencing, reversed, or cyclic edges, altered conditions,
 runtime identities, flags, and unreviewed provenance categories are rejected.
 
-The validator separately requires init's native `Cmd` to be exactly
-`["php", "/var/www/html/occ", "status"]` and `User` to be `"www-data"`, and cron's native `Cmd` to be
-exactly `["/cron.sh"]`. These checks bind authored field intent only: they do not inspect or infer
-image-default `Entrypoint`, protected environment fidelity, health, successful initialization,
-successful exit status, actual cron execution, or runtime compatibility. Missing, null, wrong-type,
-changed, or exchanged authored fields fail without returning their values.
+The validator requires init's `Cmd` of `["php", "/var/www/html/occ", "status"]` and `User` of
+`"www-data"`, and cron's `Cmd` of `["/cron.sh"]`. For Redis, it checks the cache command
+`["redis-server", "/usr/local/etc/redis/redis.conf"]`, the exact config bytes, the cache's
+`REDISCLI_AUTH`, and the `redis-cli -e ping` healthcheck with a two-second interval and timeout and
+60 retries. It also checks `REDIS_HOST=cache` and the matching `REDIS_HOST_PASSWORD` for app,
+init, and cron. These checks establish authored field intent. Missing or changed fields fail
+without returning their values.
 
 The schema-1 result kind is `boxferry-docker-nextcloud-offline-schedule`. Its service review layers
 are `[["cache", "db"], ["app"], ["frontend", "init"], ["cron"]]`, never native start requests or
-observed readiness. `authored_checks` contains only `init.command`, `init.user`, and `cron.command`,
-not command/user bodies. `shared_service_expectations` retains only the shared proxy's prefixed
+observed readiness. `authored_checks` reports the field labels `init.command`, `init.user`,
+`cron.command`, `cache.command`, `cache.config`, `cache.authentication`, `cache.health`, and
+`redis.client-authentication`. `shared_service_expectations` retains only the shared proxy's prefixed
 identity, `ownership: "shared"`, and `runtime_evidence: "unmeasured"`; it proves neither existence nor
 ownership. The proxy remains a separately owned external declaration, not a seventh admitted
 container or attachment. Attempted proxy and excluded-peer create/connect requests are rejected
