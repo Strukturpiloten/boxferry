@@ -189,6 +189,14 @@
         {
           "path": "scripts/lib/nextcloud-application-probes.sh",
           "sha256": "22215d4af4e4be5479e39753297905ca8ec6ec872e3ff3836668bca8b5c4cd71"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/compose.docker.yaml",
+          "sha256": "e0fd04239cc1935950ee4e7eca9edf324027acbc875fb87d294574d6feff5ac0"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/redis.docker.conf",
+          "sha256": "78ca7ed779f7cb8db87a1178c925f6b1c81777bbf16583fea62bbfb798c0f330"
         }
       ],
       "image_catalogue": "fixtures/conformance/nextcloud-application/images.tsv",
@@ -247,6 +255,12 @@
               "source": "redis",
               "target": "/data",
               "read_only": false
+            },
+            {
+              "kind": "bind",
+              "source": "redis.docker.conf",
+              "target": "/usr/local/etc/redis/redis.conf",
+              "read_only": true
             }
           ],
           "ingress": []

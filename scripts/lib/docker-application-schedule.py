@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reviewed Forgejo/Nextcloud offline intent; never replay or native admission."""
+"""Review five authored Docker application schedules offline."""
 
 from __future__ import annotations
 
@@ -20,15 +20,52 @@ assert SPEC is not None and SPEC.loader is not None
 topology = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(topology)
 
-EXPECTED_EDGE = {"service": "forgejo", "dependency": "db", "condition": "healthy",
-                 "required": True, "restart": False}
-NEXTCLOUD_EDGES = [
-    {"service": "app", "dependency": "db", "condition": "healthy", "required": True, "restart": False},
-    {"service": "app", "dependency": "cache", "condition": "healthy", "required": True, "restart": False},
-    {"service": "init", "dependency": "app", "condition": "healthy", "required": True, "restart": False},
-    {"service": "cron", "dependency": "init", "condition": "completed_successfully", "required": True, "restart": False},
-    {"service": "frontend", "dependency": "app", "condition": "healthy", "required": True, "restart": False},
-]
+# Authored independently of the caller's catalogue and dependency sidecar.
+SCHEDULE_GRAPHS = {
+    "forgejo": ({"db", "forgejo"}, [
+        ("forgejo", "db", "healthy"),
+    ]),
+    "nextcloud": ({"db", "cache", "app", "init", "cron", "frontend"}, [
+        ("app", "db", "healthy"),
+        ("app", "cache", "healthy"),
+        ("init", "app", "healthy"),
+        ("cron", "init", "completed_successfully"),
+        ("frontend", "app", "healthy"),
+    ]),
+    "immich": ({"database", "redis", "immich-machine-learning", "immich-server"}, [
+        ("immich-server", "database", "healthy"),
+        ("immich-server", "redis", "healthy"),
+        ("immich-server", "immich-machine-learning", "healthy"),
+    ]),
+    "observability": ({"alloy", "grafana", "log-producer", "loki", "metrics-producer", "prometheus"}, [
+        ("prometheus", "metrics-producer", "started"),
+        ("alloy", "prometheus", "started"),
+        ("alloy", "loki", "started"),
+        ("alloy", "log-producer", "started"),
+        ("grafana", "prometheus", "started"),
+        ("grafana", "loki", "started"),
+        ("grafana", "alloy", "started"),
+    ]),
+    "supabase": ({"auth", "db", "functions", "imgproxy", "kong", "meta", "realtime", "rest",
+                  "storage", "studio", "supavisor"}, [
+        ("auth", "db", "healthy"),
+        ("rest", "db", "healthy"),
+        ("realtime", "db", "healthy"),
+        ("storage", "db", "healthy"),
+        ("meta", "db", "healthy"),
+        ("supavisor", "db", "healthy"),
+        ("functions", "db", "healthy"),
+        ("storage", "imgproxy", "healthy"),
+        ("storage", "rest", "healthy"),
+        ("studio", "meta", "started"),
+        ("kong", "auth", "healthy"),
+        ("kong", "functions", "healthy"),
+        ("kong", "realtime", "healthy"),
+        ("kong", "rest", "healthy"),
+        ("kong", "storage", "healthy"),
+        ("kong", "studio", "healthy"),
+    ]),
+}
 PROVENANCE = {"source_document", "runtime_observation", "user_override",
               "implementation_default", "conversion_decision"}
 
@@ -56,23 +93,28 @@ def validate_schedule(
     plan_bytes: bytes, admission_bytes: bytes, sidecar_bytes: bytes | None, *,
     catalogue_bytes: bytes, application: str, lane: str, profile: dict[str, Any],
     image_aliases: dict[str, str], prefix: str, run_id: str, fixture_root: str,
+    redis_config_bytes: bytes | None = None,
 ) -> dict[str, Any]:
-    """Pure, bounded review of two independently authored application contracts.
+    """Pure, bounded review of independently authored application contracts.
 
     The CLI checks source bytes first; embedded callers must separately call
     topology.check_sources. Caller-selected profile/catalogue authority is not
     established by the artifact or this result. No native request is rendered,
-    applied or authorized. Only Nextcloud's authored init/cron fields are checked;
-    environment, image defaults, health and actual completion remain unproved.
+    applied or authorized. Nextcloud also checks its authored init/cron and Redis fixture
+    fields. Other environment and health fields, image defaults and completion remain unproved.
+    Nextcloud callers also supply the exact hash-bound authored Redis config bytes.
     """
-    topology.require(isinstance(application, str) and application in {"forgejo", "nextcloud"},
+    topology.require(isinstance(application, str) and application in SCHEDULE_GRAPHS,
                      "schedule application is unreviewed")
     topology.validate_application(plan_bytes, admission_bytes, catalogue_bytes=catalogue_bytes,
         application=application, lane=lane, profile=profile, image_aliases=image_aliases,
         prefix=prefix, run_id=run_id, fixture_root=fixture_root)
     app = topology.catalogue(catalogue_bytes)["applications"][application]
-    expected_edges = [EXPECTED_EDGE] if application == "forgejo" else NEXTCLOUD_EDGES
-    expected_services = {"db", "forgejo"} if application == "forgejo" else {"db", "cache", "app", "init", "cron", "frontend"}
+    expected_services, authored_edges = SCHEDULE_GRAPHS[application]
+    expected_edges = [
+        {"service": service, "dependency": dependency, "condition": condition, "required": True, "restart": False}
+        for service, dependency, condition in authored_edges
+    ]
     topology.require(set(app["services"]) == expected_services
                      and topology.same(app["dependencies"], expected_edges),
                      "authored service or dependency contract differs")
@@ -120,11 +162,15 @@ def validate_schedule(
             topology.require(isinstance(values, list) and len(values) <= 32
                              and all(isinstance(value, str) and value in PROVENANCE for value in values),
                              "dependency provenance contains an unreviewed category")
-        if application == "nextcloud":
-            topology.require(decision["condition_explicit"] and not decision["required_explicit"]
+        if application != "forgejo":
+            condition_explicit = application != "observability"  # Observability authors short dependency lists.
+            topology.require(decision["condition_explicit"] is condition_explicit and not decision["required_explicit"]
                              and not decision["restart_explicit"], "authored dependency explicitness differs")
     layers = dependency_layers(decisions, services)
-    projected_edges = [{key: decision[key] for key in EXPECTED_EDGE} for decision in decisions]
+    projected_edges = [
+        {key: decision[key] for key in ("service", "dependency", "condition", "required", "restart")}
+        for decision in decisions
+    ]
     topology.require(len(decisions) == len(expected_edges)
                      and all(edge in projected_edges for edge in expected_edges),
                      "dependency edges differ from authored expectations")
@@ -136,6 +182,30 @@ def validate_schedule(
     if application == "nextcloud":
         containers = {row["path"][len(api_prefix):].removeprefix("containers/create?name="): row["body"]
                       for row in plan["requests"] if row["path"][len(api_prefix):].startswith("containers/create?name=")}
+        # A finite authored fixture contract, not a general Redis config parser.
+        topology.require(isinstance(redis_config_bytes, bytes) and redis_config_bytes == (
+            b"dir /data\nappendonly yes\nrequirepass boxferry-public-cache-canary\n"),
+            "authored Redis configuration missing or differs")
+        config_sources = [row for row in app["sources"] if row["path"] ==
+                          "fixtures/conformance/nextcloud-application/redis.docker.conf"]
+        topology.require(len(config_sources) == 1 and config_sources[0]["sha256"] ==
+                         hashlib.sha256(redis_config_bytes).hexdigest(), "Redis config source binding differs")
+        cache = containers[services["cache"]]
+        topology.require(topology.same(cache.get("Cmd"), ["redis-server", "/usr/local/etc/redis/redis.conf"]),
+                         "authored Redis command missing or differs")
+        topology.require(topology.same(cache.get("Env"), ["REDISCLI_AUTH=boxferry-public-cache-canary"]),
+                         "authored Redis authentication environment missing or differs")
+        health = cache.get("Healthcheck")
+        topology.require(topology.same(health, {"Test": ["CMD", "redis-cli", "-e", "ping"],
+                                              "Interval": 2_000_000_000, "Timeout": 2_000_000_000, "Retries": 60}),
+                         "authored Redis health command missing or differs")
+        for role in ("app", "init", "cron"):
+            environment = containers[services[role]].get("Env")
+            topology.require(isinstance(environment, list) and all(isinstance(entry, str) for entry in environment),
+                             "authored Nextcloud Redis client environment missing or differs")
+            for key, expected in (("REDIS_HOST", "cache"), ("REDIS_HOST_PASSWORD", "boxferry-public-cache-canary")):
+                topology.require([entry for entry in environment if entry.split("=", 1)[0] == key] == [key + "=" + expected],
+                                 "authored Nextcloud Redis client environment missing or differs")
         initialization, cron = containers[services["init"]], containers[services["cron"]]
         topology.require(topology.same(initialization.get("Cmd"), ["php", "/var/www/html/occ", "status"]),
                          "authored initialization command missing or differs")
@@ -178,7 +248,8 @@ def validate_schedule(
             "native_request_order": list(range(len(plan["requests"]))), "review_operations": review_order,
             "service_review_layers": layers, "dependency_decisions": decisions}
     if application == "nextcloud":
-        result["authored_checks"] = ["init.command", "init.user", "cron.command"]
+        result["authored_checks"] = ["init.command", "init.user", "cron.command", "cache.command",
+                                     "cache.config", "cache.authentication", "cache.health", "redis.client-authentication"]
         result["shared_service_expectations"] = [
             {"identity": f"{prefix}-{row['runtime_suffix']}", "ownership": "shared", "runtime_evidence": "unmeasured"}
             for row in app["shared_services"]]
@@ -211,12 +282,14 @@ def main() -> int:
         result = validate_schedule(read_document(args.plan), read_document(args.admission), read_document(args.sidecar),
             catalogue_bytes=catalogue_bytes, application=args.application, lane=args.lane,
             profile=topology.document(read_document(args.profile)), image_aliases=topology.document(read_document(args.image_aliases)),
-            prefix=args.prefix, run_id=args.run_id, fixture_root=args.fixture_root)
+            prefix=args.prefix, run_id=args.run_id, fixture_root=args.fixture_root,
+            redis_config_bytes=read_document(args.repository / "fixtures/conformance/nextcloud-application/redis.docker.conf")
+            if args.application == "nextcloud" else None)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (topology.ExpectationError, OSError) as error:
         category = str(error) if isinstance(error, topology.ExpectationError) else "input unavailable"
-        application_label = {"forgejo": "Forgejo", "nextcloud": "Nextcloud"}.get(args.application, "application")
+        application_label = args.application.capitalize() if args.application in SCHEDULE_GRAPHS else "application"
         print(f"offline {application_label} schedule rejected: {category}", file=sys.stderr)
         return 1
 
