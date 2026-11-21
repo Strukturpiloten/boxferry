@@ -1,6 +1,6 @@
 {
-  "scenario_id": "nextcloud-application-docker-28.0.0-synthetic",
-  "engine_version": "28.0.0",
+  "scenario_id": "nextcloud-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
   "execution_context": "synthetic-docker-engine",
   "interactions": [
     {
@@ -12,9 +12,9 @@
         "status": 200,
         "headers": [["Content-Type", "application/json"]],
         "body": {
-          "Version": "28.0.0",
+          "Version": "28.2.0",
           "ApiVersion": "1.50",
-          "MinAPIVersion": "1.41"
+          "MinAPIVersion": "1.24"
         }
       }
     },
@@ -27,7 +27,7 @@
         "status": 200,
         "headers": [["Content-Type", "application/json"]],
         "body": {
-          "ServerVersion": "28.0.0",
+          "ServerVersion": "28.2.0",
           "Rootless": false,
           "SecurityOptions": ["name=seccomp,profile=builtin"]
         }

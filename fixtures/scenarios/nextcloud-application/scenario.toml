@@ -131,7 +131,7 @@ promotion-policy = { effective-bind-mounts = true, effective-named-volume-mounts
 id = "docker"
 importer = "docker"
 files = ["input-docker.cassette.json"]
-format-version = "28.0.0"
+format-version = "28.2.0"
 import-diagnostics-file = "expected.docker-import.diagnostics"
 
 [native-inputs.docker]
@@ -157,6 +157,8 @@ semantics-file = "expected.docker-semantics.toml"
 same-host-bind-mounts = true
 
 [provenance]
+# The synthetic Docker replay uses the published Engine 28.2 API range.
+# See https://docs.docker.com/reference/api/engine/#api-version-matrix
 source = "authored"
 license = "MPL-2.0"
 privacy-reviewed = true

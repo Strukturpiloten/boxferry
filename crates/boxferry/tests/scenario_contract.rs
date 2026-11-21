@@ -7116,6 +7116,39 @@ fn forgejo_docker_source_rejects_invalid_observations_and_api_versions() -> Resu
 }
 
 #[test]
+fn nextcloud_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let manifest = read_manifest_file(&fixture.join("scenario.toml"))?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Nextcloud Docker input")?;
+    assert_eq!(input.format_version, "28.2.0");
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(cassette.scenario_id(), "nextcloud-application-docker-28.2.0-synthetic");
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    // Docker's matrix fixes the advertised range for Engine 28.2. DockerLens
+    // caps negotiation at 1.49, which the ordered replay checks on the wire.
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
 fn nextcloud_docker_replay_keeps_edge_roles_distinct_and_values_withheld() -> Result<(), Box<dyn Error>> {
     let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
     let path = fixture.join("scenario.toml");
