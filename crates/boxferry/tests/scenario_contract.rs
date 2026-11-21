@@ -7382,6 +7382,127 @@ fn paperless_docker_replay_preserves_mount_identity_and_withholds_values() -> Re
     Ok(())
 }
 
+#[test]
+fn immich_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/immich-application");
+    let manifest = read_manifest(&fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Immich Docker input")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(input.format_version, "28.2.0");
+    assert_eq!(cassette.scenario_id(), "immich-application-docker-28.2.0-synthetic");
+    // Two context reads, four containers, two networks and four volumes.
+    assert_eq!(cassette.interaction_count(), 12);
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
+fn immich_docker_replay_distinguishes_data_mount_consumers_and_withholds_values() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/immich-application");
+    let path = fixture.join("scenario.toml");
+    let manifest = read_manifest_file(&path)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Immich Docker input")?;
+    let view = docker_scenario_view(&path, input, &fixture)?.ok_or("missing Docker semantics")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let [_, _, server, redis] = docker.container_ids.as_slice() else {
+        return Err("Immich replay must select four distinct container IDs".into());
+    };
+
+    let source = acquire_docker_cassette(&view.application.name, input, cassette.clone())?;
+    let importer = DockerImporter::new()?;
+    let observation = importer.import(&source);
+    let application = observation
+        .application()
+        .ok_or("missing Immich Docker neutral application")?;
+    validate_docker_source_application(&view, application)?;
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().dependencies().is_empty()),
+        "Engine observations must not invent the authored Compose dependencies"
+    );
+
+    // Both services still mount /data and all four named volumes remain
+    // present, but the library and Redis storage have the wrong consumers.
+    let mut swapped = cassette.clone();
+    for (id, volume_name) in [(server, "redisdata"), (redis, "library")] {
+        let endpoint = format!("/v1.49/containers/{id}/json");
+        swapped.insert_body_field(
+            &endpoint,
+            "Mounts",
+            serde_json::json!([
+                { "Type": "volume", "Name": volume_name, "Destination": "/data", "Mode": "rw", "RW": true }
+            ]),
+        )?;
+    }
+    let swapped = importer.import(&acquire_docker_cassette(&view.application.name, input, swapped)?);
+    let swapped = swapped
+        .application()
+        .ok_or("swapped mounts should remain well-formed Engine evidence")?;
+    assert_eq!(swapped.volumes().len(), 4);
+    assert!(
+        swapped
+            .services()
+            .iter()
+            .all(|service| service.value().mounts().len() == 1)
+    );
+    let error = validate_docker_source_application(&view, swapped)
+        .err()
+        .ok_or("Immich view accepted switched library and redisdata consumers")?;
+    assert_eq!(error, "volume docker-volume-1 shared consumer boundary changed");
+    assert_no_protected_environment_values(&view, &error, "Immich storage assertion")?;
+
+    let mut wrong_volume = cassette;
+    wrong_volume.insert_body_field("/v1.49/volumes/redisdata", "Name", serde_json::json!("library"))?;
+    let error = acquire_docker_cassette(&view.application.name, input, wrong_volume)
+        .err()
+        .ok_or("Redis volume inspection accepted the Immich library identity")?;
+    let diagnostic = format!("{error} {error:?}");
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Shape))
+    ));
+    assert!(!diagnostic.contains("redisdata") && !diagnostic.contains("library"));
+    assert!(docker.container_ids.iter().all(|id| !diagnostic.contains(id)));
+    assert_no_protected_environment_values(&view, &diagnostic, "Immich volume identity refusal")?;
+
+    let policy = DockerPromotionPolicy::portable_application().with_protected_environment_values(true);
+    let promoted = importer.import(&source.with_promotion_policy(policy));
+    let promoted = promoted.application().ok_or("missing promoted Immich test model")?;
+    let error = validate_docker_source_application(&view, promoted)
+        .err()
+        .ok_or("Immich source assertions accepted promoted fixture values")?;
+    assert_eq!(error, "Docker source must retain only required environment names");
+    assert_no_protected_environment_values(&view, &error, "Immich privacy assertion")?;
+    Ok(())
+}
+
 enum DockerRefusal {
     Version,
     Decode,
