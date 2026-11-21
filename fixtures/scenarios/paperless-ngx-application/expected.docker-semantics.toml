@@ -1,0 +1,83 @@
+# Named-volume lifecycle comes from explicit fixture decisions.
+# The synthetic observations establish mount identity and topology only.
+selected-resources = [
+  "network:docker-network-1",
+  "service:docker-service-1",
+  "service:docker-service-2",
+  "service:docker-service-3",
+  "volume:docker-volume-1",
+  "volume:docker-volume-2",
+  "volume:docker-volume-3",
+  "volume:docker-volume-4",
+  "volume:docker-volume-5",
+  "volume:docker-volume-6",
+]
+ownership-boundaries = [
+  "volume:docker-volume-1:application",
+  "volume:docker-volume-2:application",
+  "volume:docker-volume-3:application",
+  "volume:docker-volume-4:application",
+  "volume:docker-volume-5:application",
+  "volume:docker-volume-6:application",
+]
+shared-boundaries = [
+  "volume:docker-volume-1:consumers=docker-service-3",
+  "volume:docker-volume-2:consumers=docker-service-3",
+  "volume:docker-volume-3:consumers=docker-service-3",
+  "volume:docker-volume-4:consumers=docker-service-3",
+  "volume:docker-volume-5:consumers=docker-service-2",
+  "volume:docker-volume-6:consumers=docker-service-1",
+]
+required-mounts = [
+  "docker-service-1:docker-volume-6:/data",
+  "docker-service-2:docker-volume-5:/var/lib/postgresql",
+  "docker-service-3:docker-volume-1:/usr/src/paperless/consume",
+  "docker-service-3:docker-volume-2:/usr/src/paperless/data",
+  "docker-service-3:docker-volume-3:/usr/src/paperless/export",
+  "docker-service-3:docker-volume-4:/usr/src/paperless/media",
+]
+required-environment = [
+  "docker-service-2:POSTGRES_DB=paperless",
+  "docker-service-2:POSTGRES_PASSWORD=boxferry-public-paperless-db-password-canary",
+  "docker-service-2:POSTGRES_USER=paperless",
+  "docker-service-3:PAPERLESS_DBHOST=db",
+  "docker-service-3:PAPERLESS_DBNAME=paperless",
+  "docker-service-3:PAPERLESS_DBPASS=boxferry-public-paperless-db-password-canary",
+  "docker-service-3:PAPERLESS_DBUSER=paperless",
+  "docker-service-3:USERMAP_GID=1000",
+  "docker-service-3:PAPERLESS_OCR_LANGUAGE=eng",
+  "docker-service-3:PAPERLESS_REDIS=redis://broker:6379",
+  "docker-service-3:PAPERLESS_SECRET_KEY=boxferry-public-paperless-secret-key-canary",
+  "docker-service-3:PAPERLESS_TASK_WORKERS=1",
+  "docker-service-3:PAPERLESS_THREADS_PER_WORKER=1",
+  "docker-service-3:PAPERLESS_TIME_ZONE=Europe/Berlin",
+  "docker-service-3:USERMAP_UID=1000",
+  "docker-service-3:PAPERLESS_WEBSERVER_WORKERS=1",
+]
+required-runtime-names = [
+  "docker-service-1:broker",
+  "docker-service-2:db",
+  "docker-service-3:webserver",
+]
+required-restart = ["docker-service-1:absent", "docker-service-2:absent", "docker-service-3:absent"]
+required-ports = ["docker-service-3:18000:8000/tcp"]
+unpublished-services = ["docker-service-1", "docker-service-2"]
+required-networks = [
+  { name = "docker-network-1", ownership = "application", internal = true },
+]
+exact-network-memberships = [
+  "docker-service-1:docker-network-1",
+  "docker-service-2:docker-network-1",
+  "docker-service-3:docker-network-1",
+]
+required-port-bindings = [
+  { service = "docker-service-3", container = 8000, published = 18000, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "docker-service-1", source = "docker-volume-6", target = "/data", read-only = false },
+  { service = "docker-service-2", source = "docker-volume-5", target = "/var/lib/postgresql", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-1", target = "/usr/src/paperless/consume", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-2", target = "/usr/src/paperless/data", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-3", target = "/usr/src/paperless/export", read-only = false },
+  { service = "docker-service-3", source = "docker-volume-4", target = "/usr/src/paperless/media", read-only = false },
+]

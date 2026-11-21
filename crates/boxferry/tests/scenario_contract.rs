@@ -7256,6 +7256,132 @@ fn nextcloud_docker_replay_keeps_edge_roles_distinct_and_values_withheld() -> Re
     Ok(())
 }
 
+#[test]
+fn paperless_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/paperless-ngx-application");
+    let manifest = read_manifest(&fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Paperless Docker input")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(input.format_version, "28.2.0");
+    assert_eq!(
+        cassette.scenario_id(),
+        "paperless-ngx-application-docker-28.2.0-synthetic"
+    );
+    // Two context reads plus three containers, one network and six volumes.
+    assert_eq!(cassette.interaction_count(), 12);
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
+fn paperless_docker_replay_preserves_mount_identity_and_withholds_values() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/paperless-ngx-application");
+    let path = fixture.join("scenario.toml");
+    let manifest = read_manifest_file(&path)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Paperless Docker input")?;
+    let view = docker_scenario_view(&path, input, &fixture)?.ok_or("missing Docker semantics")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let [_, _, webserver] = docker.container_ids.as_slice() else {
+        return Err("Paperless replay must select three distinct container IDs".into());
+    };
+
+    let source = acquire_docker_cassette(&view.application.name, input, cassette.clone())?;
+    let importer = DockerImporter::new()?;
+    let observation = importer.import(&source);
+    let application = observation
+        .application()
+        .ok_or("missing Paperless Docker neutral application")?;
+    validate_docker_source_application(&view, application)?;
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().dependencies().is_empty()),
+        "Engine observations must not invent the authored Compose dependencies"
+    );
+
+    // Exchange the two source volumes at their original targets. The same
+    // six volumes are inspected and the webserver still has four mounts.
+    let mut swapped = cassette.clone();
+    let swapped_mounts = [("consume", "data"), ("media", "media"), ("data", "consume"), ("export", "export")]
+        .map(|(name, target)| serde_json::json!({
+            "Type": "volume", "Name": name, "Destination": format!("/usr/src/paperless/{target}"), "Mode": "rw", "RW": true,
+        }));
+    let webserver_path = format!("/v1.49/containers/{webserver}/json");
+    swapped.insert_body_field(&webserver_path, "Mounts", serde_json::json!(swapped_mounts))?;
+    let swapped = importer.import(&acquire_docker_cassette(&view.application.name, input, swapped)?);
+    let swapped = swapped
+        .application()
+        .ok_or("swapped mounts should remain well-formed Engine evidence")?;
+    assert_eq!(swapped.volumes().len(), 6);
+    assert_eq!(
+        swapped
+            .services()
+            .iter()
+            .map(|service| service.value().mounts().len())
+            .sum::<usize>(),
+        6
+    );
+    let error = validate_docker_source_application(&view, swapped)
+        .err()
+        .ok_or("Paperless view accepted switched consume and data volumes")?;
+    assert_eq!(
+        error,
+        "required mount docker-service-3:docker-volume-1:/usr/src/paperless/consume is absent"
+    );
+    assert_no_protected_environment_values(&view, &error, "Paperless mount assertion")?;
+
+    let mut wrong_volume = cassette;
+    let broker_volume_path = "/v1.49/volumes/redisdata";
+    wrong_volume.insert_body_field(broker_volume_path, "Name", serde_json::json!("pgdata"))?;
+    let error = acquire_docker_cassette(&view.application.name, input, wrong_volume)
+        .err()
+        .ok_or("broker volume inspection accepted the database volume identity")?;
+    let diagnostic = format!("{error} {error:?}");
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Shape))
+    ));
+    assert!(!diagnostic.contains("redisdata") && !diagnostic.contains("pgdata"));
+    assert!(docker.container_ids.iter().all(|id| !diagnostic.contains(id)));
+    assert_no_protected_environment_values(&view, &diagnostic, "Paperless volume identity refusal")?;
+
+    let policy = DockerPromotionPolicy::portable_application().with_protected_environment_values(true);
+    let promoted = importer.import(&source.with_promotion_policy(policy));
+    let promoted = promoted.application().ok_or("missing promoted Paperless test model")?;
+    let error = validate_docker_source_application(&view, promoted)
+        .err()
+        .ok_or("Paperless source assertions accepted promoted fixture values")?;
+    assert_eq!(error, "Docker source must retain only required environment names");
+    assert_no_protected_environment_values(&view, &error, "Paperless privacy assertion")?;
+    Ok(())
+}
+
 enum DockerRefusal {
     Version,
     Decode,

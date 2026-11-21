@@ -1,0 +1,319 @@
+{
+  "scenario_id": "paperless-ngx-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "SecurityOptions": ["name=seccomp,profile=builtin"],
+          "Rootless": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+          "Name": "/broker",
+          "Config": {
+            "Image": "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b"
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "redisdata",
+              "Destination": "/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+          "Name": "/db",
+          "Config": {
+            "Image": "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+            "Env": [
+              "POSTGRES_DB=paperless",
+              "POSTGRES_USER=paperless",
+              "POSTGRES_PASSWORD=boxferry-public-paperless-db-password-canary"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Destination": "/var/lib/postgresql",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.12"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6",
+          "Name": "/webserver",
+          "Config": {
+            "Image": "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+            "Env": [
+              "PAPERLESS_REDIS=redis://broker:6379",
+              "PAPERLESS_DBHOST=db",
+              "PAPERLESS_DBNAME=paperless",
+              "PAPERLESS_DBUSER=paperless",
+              "PAPERLESS_DBPASS=boxferry-public-paperless-db-password-canary",
+              "PAPERLESS_SECRET_KEY=boxferry-public-paperless-secret-key-canary",
+              "USERMAP_UID=1000",
+              "USERMAP_GID=1000",
+              "PAPERLESS_TIME_ZONE=Europe/Berlin",
+              "PAPERLESS_OCR_LANGUAGE=eng",
+              "PAPERLESS_TASK_WORKERS=1",
+              "PAPERLESS_THREADS_PER_WORKER=1",
+              "PAPERLESS_WEBSERVER_WORKERS=1"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "PortBindings": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "data",
+              "Destination": "/usr/src/paperless/data",
+              "Mode": "rw",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "media",
+              "Destination": "/usr/src/paperless/media",
+              "Mode": "rw",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "consume",
+              "Destination": "/usr/src/paperless/consume",
+              "Mode": "rw",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "export",
+              "Destination": "/usr/src/paperless/export",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+                "IPAddress": "192.0.2.13"
+              }
+            },
+            "Ports": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4": {
+              "Name": "broker",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5": {
+              "Name": "db",
+              "IPv4Address": "192.0.2.12/24"
+            },
+            "c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6": {
+              "Name": "webserver",
+              "IPv4Address": "192.0.2.13/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/consume"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "consume",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/export"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "export",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/media"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "media",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/pgdata"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "pgdata",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/redisdata"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "redisdata",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}
