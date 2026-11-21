@@ -7503,6 +7503,138 @@ fn immich_docker_replay_distinguishes_data_mount_consumers_and_withholds_values(
     Ok(())
 }
 
+#[test]
+fn observability_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/observability-application");
+    let manifest = read_manifest(&fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Observability Docker input")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(input.format_version, "28.2.0");
+    assert_eq!(
+        cassette.scenario_id(),
+        "observability-application-docker-28.2.0-synthetic"
+    );
+    // Two context reads, six containers, one network and five volumes.
+    assert_eq!(cassette.interaction_count(), 14);
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
+fn observability_docker_replay_distinguishes_log_access_and_withholds_values() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/observability-application");
+    let path = fixture.join("scenario.toml");
+    let manifest = read_manifest_file(&path)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Observability Docker input")?;
+    let view = docker_scenario_view(&path, input, &fixture)?.ok_or("missing Docker semantics")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let [alloy, _, log_producer, _, metrics_producer, _] = docker.container_ids.as_slice() else {
+        return Err("Observability replay must select six distinct container IDs".into());
+    };
+    let alloy_path = format!("/v1.49/containers/{alloy}/json");
+    let writer_path = format!("/v1.49/containers/{log_producer}/json");
+    let mount_counts = |model: &boxferry::Application| {
+        model
+            .services()
+            .iter()
+            .map(|service| service.value().mounts().len())
+            .collect::<Vec<_>>()
+    };
+    let source = acquire_docker_cassette(&view.application.name, input, cassette.clone())?;
+    let importer = DockerImporter::new()?;
+    let observation = importer.import(&source);
+    let application = observation
+        .application()
+        .ok_or("missing Observability neutral application")?;
+    validate_docker_source_application(&view, application)?;
+    assert_eq!(mount_counts(application), [2, 1, 1, 1, 0, 1]);
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().dependencies().is_empty())
+    );
+
+    // Keep all identities, destinations and mounts, and reverse both access modes.
+    let mut reversed = cassette.clone();
+    reversed.insert_body_field(
+        &alloy_path,
+        "Mounts",
+        serde_json::json!([
+            { "Type": "volume", "Name": "alloy-data", "Destination": "/var/lib/alloy/data", "Mode": "rw", "RW": true },
+            { "Type": "volume", "Name": "telemetry-logs", "Destination": "/var/log/boxferry", "Mode": "rw", "RW": true }
+        ]),
+    )?;
+    reversed.insert_body_field(&writer_path, "Mounts", serde_json::json!([
+        { "Type": "volume", "Name": "telemetry-logs", "Destination": "/var/log/boxferry", "Mode": "ro", "RW": false }
+    ]))?;
+    let reversed = importer.import(&acquire_docker_cassette(&view.application.name, input, reversed)?);
+    let reversed = reversed
+        .application()
+        .ok_or("reversed access should remain well-formed Engine evidence")?;
+    assert_eq!(reversed.volumes().len(), 5);
+    assert_eq!(mount_counts(reversed), [2, 1, 1, 1, 0, 1]);
+    let error = validate_docker_source_application(&view, reversed)
+        .err()
+        .ok_or("Observability view accepted reversed log reader and writer permissions")?;
+    assert_no_protected_environment_values(&view, &error, "Observability log mount assertion")?;
+    assert!(error.contains("volume-mount:docker-service-1:/var/log/boxferry"));
+    assert!(error.contains("volume-mount:docker-service-3:/var/log/boxferry"));
+
+    // The producers share an image and command, but the inspect reply must
+    // still match the selected log producer rather than the metrics producer.
+    let mut wrong_id = cassette;
+    wrong_id.insert_body_field(&writer_path, "Id", serde_json::json!(metrics_producer))?;
+    wrong_id.truncate_after(&writer_path)?;
+    let error = acquire_docker_cassette(&view.application.name, input, wrong_id)
+        .err()
+        .ok_or("log producer inspection accepted the metrics producer identity")?;
+    let diagnostic = format!("{error} {error:?}");
+    assert_no_protected_environment_values(&view, &diagnostic, "Observability producer identity refusal")?;
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Shape))
+    ));
+    assert!(docker.container_ids.iter().all(|id| !diagnostic.contains(id)));
+
+    let policy = DockerPromotionPolicy::portable_application().with_protected_environment_values(true);
+    let promoted = importer.import(&source.with_promotion_policy(policy));
+    let promoted = promoted
+        .application()
+        .ok_or("missing promoted Observability test model")?;
+    let error = validate_docker_source_application(&view, promoted)
+        .err()
+        .ok_or("Observability source assertions accepted promoted Grafana values")?;
+    assert_no_protected_environment_values(&view, &error, "Observability privacy assertion")?;
+    assert_eq!(error, "Docker source must retain only required environment names");
+    Ok(())
+}
+
 enum DockerRefusal {
     Version,
     Decode,

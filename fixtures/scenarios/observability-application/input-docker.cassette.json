@@ -1,0 +1,401 @@
+{
+  "scenario_id": "observability-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "SecurityOptions": ["name=seccomp,profile=builtin"],
+          "Rootless": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9",
+          "Name": "/alloy",
+          "Config": {
+            "Image": "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+            "Cmd": ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "alloy-data",
+              "Destination": "/var/lib/alloy/data",
+              "Mode": "rw",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "telemetry-logs",
+              "Destination": "/var/log/boxferry",
+              "Mode": "ro",
+              "RW": false
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/babababababababababababababababababababababababababababababababa/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "babababababababababababababababababababababababababababababababa",
+          "Name": "/grafana",
+          "Config": {
+            "Image": "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+            "Env": [
+              "GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false",
+              "GF_PLUGINS_PREINSTALL_DISABLED=true",
+              "GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "PortBindings": {
+              "3000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "13000"
+                }
+              ]
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "grafana-data",
+              "Destination": "/var/lib/grafana",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.12"
+              }
+            },
+            "Ports": {
+              "3000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "13000"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+          "Name": "/log-producer",
+          "Config": {
+            "Image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "Cmd": ["sleep", "86400"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "telemetry-logs",
+              "Destination": "/var/log/boxferry",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.13"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc",
+          "Name": "/loki",
+          "Config": {
+            "Image": "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+            "Cmd": ["-config.file=/etc/loki/local-config.yaml"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "loki-data",
+              "Destination": "/loki",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.14"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/edededededededededededededededededededededededededededededededed/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "edededededededededededededededededededededededededededededededed",
+          "Name": "/metrics-producer",
+          "Config": {
+            "Image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "Cmd": ["sleep", "86400"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.15"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
+          "Name": "/prometheus",
+          "Config": {
+            "Image": "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+            "Cmd": [
+              "--config.file=/etc/prometheus/prometheus.yml",
+              "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=24h",
+              "--web.enable-remote-write-receiver"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "prometheus-data",
+              "Destination": "/prometheus",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "1717171717171717171717171717171717171717171717171717171717171717",
+                "IPAddress": "192.0.2.16"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/1717171717171717171717171717171717171717171717171717171717171717"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "1717171717171717171717171717171717171717171717171717171717171717",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9": {
+              "Name": "alloy",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "babababababababababababababababababababababababababababababababa": {
+              "Name": "grafana",
+              "IPv4Address": "192.0.2.12/24"
+            },
+            "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb": {
+              "Name": "log-producer",
+              "IPv4Address": "192.0.2.13/24"
+            },
+            "dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc": {
+              "Name": "loki",
+              "IPv4Address": "192.0.2.14/24"
+            },
+            "edededededededededededededededededededededededededededededededed": {
+              "Name": "metrics-producer",
+              "IPv4Address": "192.0.2.15/24"
+            },
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe": {
+              "Name": "prometheus",
+              "IPv4Address": "192.0.2.16/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/alloy-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "alloy-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/grafana-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "grafana-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/loki-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "loki-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/prometheus-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "prometheus-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/telemetry-logs"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "telemetry-logs",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}
