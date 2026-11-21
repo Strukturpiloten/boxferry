@@ -18,7 +18,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    time::Duration,
 };
 
 use boxferry::compose::compose_lens::{
@@ -39,14 +40,20 @@ use boxferry::{
     convert_imported,
 };
 #[cfg(feature = "docker")]
-use boxferry::{DockerEnvironmentPolicy, DockerExporter};
+use boxferry::{
+    DockerEnvironmentPolicy, DockerExporter, DockerImporter, DockerPromotionPolicy, DockerResourceDecision,
+    DockerResourceDecisions, DockerSource, DockerSourceError, acquire_docker_source,
+    docker::docker_lens::acquisition::{AcquisitionError, Endpoint, Limits, NativeId, Selector},
+    docker::docker_lens::decoder::DecodeError,
+};
 use serde::Deserialize;
 #[cfg(feature = "docker")]
 use sha2::{Digest, Sha256};
 use support::{
-    Dimension, DimensionState, NativeInput, Outcome, PodmanCassette, PodmanCassetteServer, RouteExpectation,
-    RouteObservation, ScenarioManifest, diagnostic_facts, load_loss_expectations, load_string_expectations,
-    observe_prerequisites, validate_diagnostics, validate_evidence, validate_exporter_coverage, validate_losses,
+    Dimension, DimensionState, HttpCassette, HttpCassetteServer, NativeInput, Outcome, PodmanCassette,
+    PodmanCassetteServer, RouteExpectation, RouteObservation, ScenarioManifest, diagnostic_facts,
+    load_loss_expectations, load_string_expectations, observe_prerequisites, validate_diagnostics,
+    validate_docker_source_application, validate_evidence, validate_exporter_coverage, validate_losses,
     validate_manifest, validate_neutral_application, validate_withheld_reimport,
 };
 
@@ -396,10 +403,12 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
         })?;
         validate_exporter_coverage(&manifest, &capability_routes()?)?;
         for input in &manifest.native_inputs {
+            let docker_view = docker_scenario_view(&registration.manifest, input, fixture)?;
+            let manifest = docker_view.as_ref().unwrap_or(&manifest);
             let sources = input.files.iter().map(|file| fixture.join(file)).collect::<Vec<_>>();
             if input.outcome == Outcome::ExpectedRejection {
                 for route in manifest.evidence.iter().filter(|route| route.input == input.id) {
-                    run_import_rejection(&manifest, route, &sources, fixture).map_err(|error| {
+                    run_import_rejection(manifest, route, &sources, fixture).map_err(|error| {
                         format!(
                             "scenario {} input {} exporter {}: {error}",
                             manifest.id, input.id, route.exporter
@@ -408,11 +417,10 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
                 }
                 continue;
             }
-            let imported = import_native_input(&manifest, input, fixture)
+            let imported = import_native_input(manifest, input, fixture)
                 .map_err(|error| format!("scenario {} input {}: {error}", manifest.id, input.id))?;
-            validate_no_error_diagnostics(imported.diagnostics())?;
             assert_no_protected_environment_values(
-                &manifest,
+                manifest,
                 &format!("{:?}", imported.diagnostics()),
                 "library diagnostics",
             )?;
@@ -428,14 +436,28 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
                     )?
                 };
             validate_diagnostics(&expected_import_diagnostics, &diagnostic_facts(imported.diagnostics()))?;
-            validate_neutral_application(
-                &manifest,
-                imported.application().ok_or("missing imported Application")?,
-                &manifest.semantics.required_environment_order,
-                &[],
-            )?;
+            validate_no_error_diagnostics(imported.diagnostics())?;
+            let application = imported.application().ok_or("missing imported Application")?;
+            if input.docker.is_some() {
+                validate_docker_source_application(manifest, application)?;
+                validate_docker_source_users(manifest, application, DockerUserView::Combined)?;
+                if application
+                    .services()
+                    .iter()
+                    .any(|service| !service.value().labels().is_empty())
+                {
+                    return Err("Docker source promoted an unapproved label".into());
+                }
+            } else {
+                validate_neutral_application(
+                    manifest,
+                    application,
+                    &manifest.semantics.required_environment_order,
+                    &[],
+                )?;
+            }
             for route in manifest.evidence.iter().filter(|route| route.input == input.id) {
-                run_route(&manifest, route, &sources, fixture, imported.clone()).map_err(|error| {
+                run_route(manifest, route, &sources, fixture, imported.clone()).map_err(|error| {
                     format!(
                         "scenario {} input {} exporter {}: {error}",
                         manifest.id, input.id, route.exporter
@@ -945,10 +967,20 @@ fn run_route(
     let report = convert_cli(manifest, sources, route, output.path())?;
     let diagnostics = report_diagnostic_facts(&report)?;
     validate_diagnostics(&expected_diagnostics, &diagnostics)?;
-    if route.cli_withheld_losses_delta_file.is_some() {
+    let docker_input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == route.input && input.docker.is_some());
+    if route.cli_withheld_losses_delta_file.is_some() || docker_input.is_some() {
         validate_cli_loss_aggregate(&expected_losses, route, &report)?;
     }
     let artifacts = assert_route_artifact_inventory(output.path(), expected_artifacts)?;
+    if let Some(input) = docker_input {
+        verify_docker_route_evidence(manifest, input, &report, output.path(), &artifacts)?;
+        if route.outcome == Outcome::ExpectedRejection && report["status"] != "blocked" {
+            return Err("Docker source route must report policy refusal".into());
+        }
+    }
     if report["status"] != "success" {
         if route.outcome != Outcome::ExpectedRejection {
             return Err("CLI failure is not an expected rejection".into());
@@ -972,6 +1004,33 @@ fn run_route(
         reimport,
     };
     validate_evidence(route, &observation)?;
+    Ok(())
+}
+
+fn verify_docker_route_evidence(
+    manifest: &ScenarioManifest,
+    input: &NativeInput,
+    report: &serde_json::Value,
+    output: &Path,
+    artifacts: &[String],
+) -> Result<(), Box<dyn Error>> {
+    let choices = report["choices"].as_array().ok_or("Docker CLI report lacks choices")?;
+    assert!(choices.iter().any(|choice| choice["name"] == "observed_docker_engine_release"
+        && choice["value"] == input.format_version));
+    let docker = input.docker.as_ref().ok_or("missing Docker metadata")?;
+    let report_text = report.to_string();
+    assert!(
+        !docker.container_ids.iter().any(|id| report_text.contains(id)),
+        "CLI report exposed native container IDs"
+    );
+    for artifact in artifacts {
+        let text = fs::read_to_string(output.join(artifact))?;
+        assert_no_protected_environment_values(manifest, &text, artifact)?;
+        assert!(
+            !docker.container_ids.iter().any(|id| text.contains(id)),
+            "artifact exposed native container IDs"
+        );
+    }
     Ok(())
 }
 
@@ -2277,6 +2336,44 @@ fn assert_observability_expected_generation_failure_rejected() -> Result<(), Box
     Ok(())
 }
 
+fn source_setting<'a>(settings: &'a [String], service: &str) -> Option<&'a str> {
+    settings
+        .iter()
+        .filter_map(|setting| setting.split_once(':'))
+        .find_map(|(owner, value)| (owner == service).then_some(value))
+}
+
+#[derive(Clone, Copy)]
+enum DockerUserView {
+    Combined,
+    Split,
+    Absent,
+}
+
+fn validate_docker_source_users(
+    manifest: &ScenarioManifest,
+    application: &boxferry::Application,
+    view: DockerUserView,
+) -> Result<(), Box<dyn Error>> {
+    for service in application.services() {
+        let service = service.value();
+        let expected = source_setting(&manifest.semantics.required_users, service.name().as_str());
+        let (expected_user, expected_group) = match (view, expected) {
+            (DockerUserView::Split, Some(value)) => value
+                .split_once(':')
+                .map_or((Some(value), None), |(user, group)| (Some(user), Some(group))),
+            (DockerUserView::Combined, value) => (value, None),
+            _ => (None, None),
+        };
+        if service.user().map(|user| user.value().expose()) != expected_user
+            || service.group().map(|group| group.value().expose()) != expected_group
+        {
+            return Err(format!("Docker-derived user projection differs for {}", service.name().as_str()).into());
+        }
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "keeps every native exporter observation in one transaction"
@@ -2303,6 +2400,10 @@ fn observe_native_output(
         fixture,
         "route reimport losses",
     )?;
+    let from_docker = manifest
+        .native_inputs
+        .iter()
+        .any(|input| input.id == route.input && input.docker.is_some());
     Ok(match route.exporter.as_str() {
         "compose" => {
             let reimport = import_compose(
@@ -2322,6 +2423,9 @@ fn observe_native_output(
                 &diagnostic_facts(reimport.diagnostics()),
             )?;
             let reimported = reimport.application().ok_or("Compose reimport failed")?;
+            if from_docker {
+                validate_docker_source_users(manifest, reimported, DockerUserView::Split)?;
+            }
             if route.includes_environment_values() {
                 validate_neutral_application(
                     manifest,
@@ -2384,6 +2488,14 @@ fn observe_native_output(
                 &diagnostic_facts(reimport.diagnostics()),
             )?;
             let reimported = reimport.application().ok_or("Quadlet reimport failed")?;
+            if from_docker {
+                validate_docker_source_users(manifest, reimported, DockerUserView::Absent)?;
+                for required in &manifest.semantics.required_users {
+                    let (service, user) = required.split_once(':').ok_or("invalid authored user assertion")?;
+                    let unit = fs::read_to_string(output.join(format!("{service}.container")))?;
+                    assert!(unit.lines().any(|line| line.strip_prefix("User=") == Some(user)));
+                }
+            }
             if route.includes_environment_values() {
                 validate_neutral_application(
                     manifest,
@@ -2420,6 +2532,10 @@ fn observe_native_output(
         "podman" => {
             let native: serde_json::Value = serde_json::from_str(&fs::read_to_string(output.join("podman.json"))?)?;
             let observed_gaps = podman_semantics(manifest, route, &native)?;
+            if from_docker {
+                validate_docker_derived_podman_settings(manifest, &native)?;
+            }
+
             validate_diagnostics(&route.semantic_gaps, &observed_gaps)?;
             (observed_gaps.is_empty(), Dimension::not_applicable(NO_PODMAN_REIMPORT))
         }
@@ -4935,6 +5051,56 @@ fn podman_semantics(
     Ok(gaps)
 }
 
+fn validate_docker_derived_podman_settings(
+    manifest: &ScenarioManifest,
+    native: &serde_json::Value,
+) -> Result<(), Box<dyn Error>> {
+    let operations = native["operations"].as_array().ok_or("native Podman operations")?;
+    for component in &manifest.components {
+        let name = expected_podman_container_name(manifest, &component.name);
+        let create = operations
+            .iter()
+            .find(|op| {
+                op["action"] == "create" && op["resource"]["kind"] == "container" && op["resource"]["name"] == name
+            })
+            .ok_or("missing Docker-derived Podman container")?;
+        let argv = create["cli"]["argv"]
+            .as_array()
+            .ok_or("missing Podman create arguments")?;
+        let body = &create["libpod"]["body"]["json"];
+        let expected_user = source_setting(&manifest.semantics.required_users, &component.name);
+        let expected_restart = match source_setting(&manifest.semantics.required_restart, &component.name) {
+            Some("absent") => None,
+            Some("always") => Some("always"),
+            _ => return Err("unreviewed Docker-derived Podman restart expectation".into()),
+        };
+        for (option, field, expected) in [
+            ("--user", "user", expected_user),
+            ("--restart", "restart_policy", expected_restart),
+        ] {
+            assert_eq!(option_values(argv, &[option]), expected.into_iter().collect::<Vec<_>>());
+            assert_eq!(body.get(field), expected.map(serde_json::Value::from).as_ref());
+        }
+        let networks = source_setting(&manifest.semantics.exact_network_memberships, &component.name)
+            .ok_or("missing authored Docker-derived Podman membership")?;
+        let expected = networks.split(',').collect::<BTreeSet<_>>();
+        let actual = option_values(argv, &["--network"]);
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual.into_iter().collect::<BTreeSet<_>>(), expected);
+        let observed = body["Networks"]
+            .as_object()
+            .ok_or("missing Podman network API settings")?;
+        assert_eq!(observed.keys().map(String::as_str).collect::<BTreeSet<_>>(), expected);
+        assert!(
+            observed
+                .values()
+                .all(|options| options.as_object().is_some_and(serde_json::Map::is_empty)),
+            "input runtime network addresses must not become Podman network settings"
+        );
+    }
+    Ok(())
+}
+
 fn expected_podman_container_name<'a>(manifest: &'a ScenarioManifest, service: &'a str) -> &'a str {
     // Expectations come from authored semantic declarations, never observed output.
     manifest
@@ -6504,6 +6670,7 @@ fn compose_mutation_input(environment_files: Vec<String>, environment: Vec<Strin
         import_diagnostics: None,
         import_diagnostics_file: None,
         podman: None,
+        docker: None,
     }
 }
 
@@ -6766,6 +6933,12 @@ fn import_native_input(
 ) -> Result<ImportResult, Box<dyn Error>> {
     match input.importer.as_str() {
         "compose" => import_compose_files(input, fixture, &manifest.application.name),
+        "docker" => {
+            let path = fixture.join(input.files.first().ok_or("missing Docker cassette")?);
+            let cassette = load_docker_cassette(input, &path)?;
+            let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+            Ok(DockerImporter::new()?.import(&source))
+        }
         "quadlet" => import_quadlet_files(input, fixture, &manifest.application.name),
         "podman" => {
             let source = input.files.first().ok_or("missing Podman cassette")?;
@@ -6773,6 +6946,198 @@ fn import_native_input(
         }
         _ => Err("unimplemented scenario input loader".into()),
     }
+}
+
+fn docker_scenario_view(
+    path: &Path,
+    input: &NativeInput,
+    fixture: &Path,
+) -> Result<Option<ScenarioManifest>, Box<dyn Error>> {
+    let Some(docker) = &input.docker else {
+        return Ok(None);
+    };
+    let mut manifest = read_manifest_file(path)?;
+    manifest.semantics = docker.load_semantics(fixture)?;
+    for component in &mut manifest.components {
+        component.name = docker
+            .component_services
+            .get(&component.name)
+            .ok_or("missing Docker component binding")?
+            .clone();
+    }
+    Ok(Some(manifest))
+}
+
+fn load_docker_cassette(input: &NativeInput, path: &Path) -> Result<HttpCassette, Box<dyn Error>> {
+    let cassette = HttpCassette::load(path)?;
+    if cassette.execution_context() != "synthetic-docker-engine" {
+        return Err("Docker scenario replay requires explicitly synthetic evidence".into());
+    }
+    if cassette.engine_version() != input.format_version {
+        return Err("Docker cassette metadata disagrees with the declared Engine version".into());
+    }
+    Ok(cassette)
+}
+
+fn acquire_docker_cassette(
+    application: &str,
+    input: &NativeInput,
+    cassette: HttpCassette,
+) -> Result<DockerSource, Box<dyn Error>> {
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let ids = docker
+        .container_ids
+        .iter()
+        .map(|id| NativeId::new(id.clone()).ok_or("invalid Docker fixture ID"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut decisions = DockerResourceDecisions::new();
+    for decision in &docker.resource_decisions {
+        decisions.add(decision.parse::<DockerResourceDecision>()?)?;
+    }
+    let server = HttpCassetteServer::start(cassette)?;
+    let source = acquire_docker_source(
+        Identifier::new(application)?,
+        &Endpoint::unix_socket(server.socket().to_path_buf()),
+        Selector::ContainerIds(ids),
+        Limits {
+            max_requests: 16,
+            max_selected_resources: 2,
+            max_expansions: 8,
+            max_response_bytes: 16 * 1024,
+            max_total_bytes: 64 * 1024,
+            max_elapsed: Duration::from_secs(5),
+        },
+        &AtomicBool::new(false),
+    );
+    server.finish()?;
+    let source = source?;
+    let release = source
+        .inventory()
+        .version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("Docker source version missing")?;
+    if release.as_str() != input.format_version {
+        return Err("Docker Engine response disagrees with the declared version".into());
+    }
+    Ok(source
+        .with_promotion_policy(DockerPromotionPolicy::portable_application())
+        .with_resource_decisions(decisions))
+}
+
+#[test]
+fn forgejo_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/forgejo-application");
+    let manifest = read_manifest(&fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Forgejo Docker input")?;
+    assert_eq!(input.format_version, "28.2.0");
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(cassette.scenario_id(), "forgejo-application-docker-28.2.0-synthetic");
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    // Docker publishes the advertised range. The ordered replay verifies
+    // DockerLens's API 1.49 negotiation on the wire.
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
+fn forgejo_docker_source_rejects_invalid_observations_and_api_versions() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/forgejo-application");
+    let manifest = read_manifest(&fixture)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Forgejo Docker input")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    let mut api_too_old = cassette.clone();
+    api_too_old.set_body(
+        "/version",
+        serde_json::json!({
+            "Version": "19.03.15", "ApiVersion": "1.40", "MinAPIVersion": "1.12",
+        }),
+    )?;
+    api_too_old.truncate_after("/version")?;
+
+    let mut malformed = cassette.clone();
+    let canary = "boxferry-public-forgejo-secret-canary";
+    malformed.set_body("/v1.49/info", serde_json::json!([canary]))?;
+
+    let mut inconsistent = cassette;
+    let [first, second] = input
+        .docker
+        .as_ref()
+        .ok_or("missing Docker metadata")?
+        .container_ids
+        .as_slice()
+    else {
+        return Err("Forgejo Docker replay must select two exact container IDs".into());
+    };
+    let path = format!("/v1.49/containers/{first}/json");
+    inconsistent.insert_body_field(&path, "Id", serde_json::json!(second))?;
+    inconsistent.truncate_after(&path)?;
+
+    for (cassette, matches_expected) in [
+        (api_too_old, DockerRefusal::Version),
+        (malformed, DockerRefusal::Decode),
+        (inconsistent, DockerRefusal::Identity),
+    ] {
+        let error = acquire_docker_cassette(&manifest.application.name, input, cassette)
+            .err()
+            .ok_or("invalid Docker observation was accepted")?;
+        let error = error
+            .downcast::<DockerSourceError>()
+            .map_err(|_| "expected a typed Docker source error")?;
+        let diagnostic = format!("{error} {error:?}");
+        assert_no_protected_environment_values(&manifest, &diagnostic, "Docker source refusal")?;
+        assert!(
+            !diagnostic.contains(first) && !diagnostic.contains(second),
+            "Docker source refusal exposed a selected container ID"
+        );
+        assert!(
+            matches!(
+                (matches_expected, error.as_ref()),
+                (
+                    DockerRefusal::Version,
+                    DockerSourceError::Acquisition(AcquisitionError::Version)
+                ) | (
+                    DockerRefusal::Identity,
+                    DockerSourceError::Acquisition(AcquisitionError::Shape)
+                ) | (
+                    DockerRefusal::Decode,
+                    DockerSourceError::Decode(DecodeError::InvalidShape(_))
+                )
+            ),
+            "{error:?}"
+        );
+    }
+    Ok(())
+}
+
+enum DockerRefusal {
+    Version,
+    Decode,
+    Identity,
 }
 
 fn import_compose_files(input: &NativeInput, fixture: &Path, name: &str) -> Result<ImportResult, Box<dyn Error>> {
@@ -7113,6 +7478,22 @@ fn convert_cli(
             }
             server = Some(cassette_server);
         }
+        "docker" => {
+            let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+            let source = sources.first().ok_or("missing Docker cassette")?;
+            let cassette_server = HttpCassetteServer::start(load_docker_cassette(input, source)?)?;
+            command
+                .arg("--docker-socket")
+                .arg(cassette_server.socket())
+                .args(["--application-name", &manifest.application.name]);
+            for id in &docker.container_ids {
+                command.args(["--docker-container-id", id]);
+            }
+            for decision in &docker.resource_decisions {
+                command.args(["--docker-resource-decision", decision]);
+            }
+            server = Some(cassette_server);
+        }
         _ => return Err("unimplemented scenario CLI input".into()),
     }
     command
@@ -7160,6 +7541,7 @@ fn convert_cli(
         .arg(&report_path)
         .output()?;
     assert_no_protected_environment_values(manifest, &String::from_utf8_lossy(&result.stdout), "CLI stdout")?;
+    assert_no_protected_environment_values(manifest, &String::from_utf8_lossy(&result.stderr), "CLI stderr")?;
     if let Some(server) = server {
         server.finish()?;
     }

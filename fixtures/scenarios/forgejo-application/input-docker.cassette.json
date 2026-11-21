@@ -1,0 +1,237 @@
+{
+  "scenario_id": "forgejo-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "SecurityOptions": ["name=seccomp,profile=builtin"],
+          "Rootless": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "Name": "/db",
+          "Config": {
+            "Image": "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
+            "Env": ["POSTGRES_DB=forgejo", "POSTGRES_PASSWORD=boxferry-public-db-password-canary"]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend"
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "db-data",
+              "Destination": "/var/lib/postgresql/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "Name": "/forgejo",
+          "Config": {
+            "Image": "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685",
+            "User": "1000:1000",
+            "Env": [
+              "FORGEJO__database__HOST=db:5432",
+              "FORGEJO__database__PASSWD=boxferry-public-db-password-canary",
+              "FORGEJO__security__SECRET_KEY=boxferry-public-forgejo-secret-canary"
+            ],
+            "Labels": {
+              "org.example.private": "boxferry-public-forgejo-secret-canary"
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "PortBindings": {
+              "2222/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "12222"
+                }
+              ],
+              "3000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "13000"
+                }
+              ]
+            },
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "forgejo-data",
+              "Destination": "/var/lib/gitea",
+              "Mode": "rw",
+              "RW": true
+            }
+          ],
+          "NetworkSettings": {
+            "Ports": {
+              "2222/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "12222"
+                }
+              ],
+              "3000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "13000"
+                }
+              ]
+            },
+            "Networks": {
+              "backend": {
+                "NetworkID": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+                "IPAddress": "192.0.2.12"
+              },
+              "edge": {
+                "NetworkID": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "IPAddress": "198.51.100.12"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+              "Name": "db",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+              "Name": "forgejo",
+              "IPv4Address": "192.0.2.12/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "edge",
+          "Id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+          "Driver": "bridge",
+          "Internal": false,
+          "Containers": {
+            "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+              "Name": "forgejo",
+              "IPv4Address": "198.51.100.12/24"
+            },
+            "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5": {
+              "Name": "boundary-peer",
+              "IPv4Address": "198.51.100.13/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/db-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "db-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/forgejo-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "forgejo-data",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}

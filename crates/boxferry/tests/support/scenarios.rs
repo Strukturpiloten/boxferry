@@ -73,10 +73,32 @@ pub(crate) struct NativeInput {
     pub import_diagnostics: Option<Vec<String>>,
     pub import_diagnostics_file: Option<String>,
     pub podman: Option<PodmanInput>,
+    pub docker: Option<DockerInput>,
 }
 
 const fn default_input_outcome() -> Outcome {
     Outcome::MigrationSuccess
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct DockerInput {
+    pub container_ids: Vec<String>,
+    pub resource_decisions: Vec<String>,
+    pub component_services: BTreeMap<String, String>,
+    pub semantics_file: String,
+}
+
+impl DockerInput {
+    /// Inspect keys differ from the historic Compose/Podman/Quadlet service identities.
+    pub(crate) fn load_semantics(&self, directory: &Path) -> Result<Semantics, String> {
+        contained_file(directory, &self.semantics_file)?;
+        let text = fs::read_to_string(directory.join(&self.semantics_file)).map_err(|error| error.to_string())?;
+        let semantics =
+            toml::from_str(&text).map_err(|error| format!("invalid Docker source expectations: {error}"))?;
+        validate_semantics(&semantics)?;
+        Ok(semantics)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -870,6 +892,9 @@ pub(crate) fn validate_manifest(manifest: &ScenarioManifest, location: &Path) ->
             contained_file(directory, file)?;
         }
         validate_native_input(input, &manifest.application.name)?;
+        if let Some(docker) = &input.docker {
+            validate_docker_input(docker, manifest, directory)?;
+        }
     }
     for value in [
         &manifest.provenance.source,
@@ -1784,7 +1809,12 @@ pub(crate) fn validate_neutral_application(
     environment_order: &[String],
     expected_gaps: &[String],
 ) -> Result<(), String> {
-    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order, false)?;
+    let gaps = validate_neutral_application_collecting_gaps(
+        manifest,
+        application,
+        environment_order,
+        EnvExpectation::Literal,
+    )?;
     validate_diagnostics(expected_gaps, &gaps)
 }
 
@@ -1805,15 +1835,60 @@ pub(crate) fn validate_withheld_reimport(
             }
         }
     }
-    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order, true)?;
+    let gaps =
+        validate_neutral_application_collecting_gaps(manifest, application, environment_order, EnvExpectation::Absent)?;
     validate_diagnostics(expected_gaps, &gaps)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvExpectation {
+    Literal,
+    Absent,
+    Required,
+}
+
+pub(crate) fn validate_docker_source_application(
+    manifest: &ScenarioManifest,
+    application: &Application,
+) -> Result<(), String> {
+    let names = application
+        .services()
+        .iter()
+        .flat_map(|service| {
+            service.value().environment().iter().map(move |environment| {
+                let assignment = environment.value();
+                if !matches!(assignment.value(), EnvironmentValue::Required) {
+                    return Err("Docker source must retain only required environment names".into());
+                }
+                Ok(format!(
+                    "{}:{}",
+                    service.value().name().as_str(),
+                    assignment.name().as_str()
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let expected = manifest
+        .semantics
+        .required_environment
+        .iter()
+        .map(|assignment| {
+            assignment
+                .split_once('=')
+                .map(|(name, _)| name.to_owned())
+                .ok_or("invalid environment assertion")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_diagnostics(&expected, &names)?;
+    let gaps = validate_neutral_application_collecting_gaps(manifest, application, &[], EnvExpectation::Required)?;
+    validate_diagnostics(&[], &gaps)
 }
 
 fn validate_neutral_application_collecting_gaps(
     manifest: &ScenarioManifest,
     application: &Application,
     environment_order: &[String],
-    withhold_environment: bool,
+    environment_expectation: EnvExpectation,
 ) -> Result<Vec<String>, String> {
     let mut gaps = validate_resources(manifest, application)?;
     validate_images(manifest, application)?;
@@ -1822,7 +1897,7 @@ fn validate_neutral_application_collecting_gaps(
         manifest,
         application,
         environment_order,
-        withhold_environment,
+        environment_expectation,
     )?);
     Ok(gaps)
 }
@@ -2068,7 +2143,7 @@ fn validate_service_settings(
     manifest: &ScenarioManifest,
     application: &Application,
     environment_order: &[String],
-    withhold_environment: bool,
+    environment_expectation: EnvExpectation,
 ) -> Result<Vec<String>, String> {
     let mut semantic_gaps = Vec::new();
     for requirement in &manifest.semantics.required_mounts {
@@ -2112,7 +2187,11 @@ fn validate_service_settings(
         let (service_name, assignment) = requirement.split_once(':').ok_or("invalid environment assertion")?;
         let (name, expected) = assignment.split_once('=').ok_or("invalid environment assignment")?;
         let service = service(application, service_name)?;
-        if withhold_environment {
+        if environment_expectation == EnvExpectation::Required {
+            // The source-only validator already compared the complete set of required names.
+            continue;
+        }
+        if environment_expectation == EnvExpectation::Absent {
             if service
                 .environment()
                 .iter()
@@ -2453,6 +2532,12 @@ pub(crate) fn validate_prerequisites(manifest: &ScenarioManifest, observed: &[St
 }
 
 fn validate_native_input(input: &NativeInput, application: &str) -> Result<(), String> {
+    match (input.importer.as_str(), &input.docker) {
+        ("docker", Some(_)) if input.files.len() == 1 => pinned_version(&input.format_version)?,
+        ("docker", _) => return Err("Docker input needs one cassette and selection metadata".into()),
+        (_, Some(_)) => return Err("Docker metadata belongs only to Docker inputs".into()),
+        _ => {}
+    }
     match (input.importer.as_str(), input.podman.as_ref()) {
         ("podman", Some(podman)) => {
             if input.files.len() != 1 {
@@ -2483,6 +2568,58 @@ fn validate_native_input(input: &NativeInput, application: &str) -> Result<(), S
         ("podman", None) => return Err("Podman scenario input lacks acquisition metadata".into()),
         (_, Some(_)) => return Err("Podman metadata belongs only to Podman inputs".into()),
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_docker_input(docker: &DockerInput, manifest: &ScenarioManifest, directory: &Path) -> Result<(), String> {
+    let semantics = docker.load_semantics(directory)?;
+    unique("Docker container IDs", docker.container_ids.iter().map(String::as_str))?;
+    if docker.container_ids.is_empty()
+        || docker.container_ids.iter().any(|id| {
+            id.len() != 64
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+    {
+        return Err("Docker source requires exact lowercase full container IDs".into());
+    }
+    unique(
+        "Docker resource decisions",
+        docker.resource_decisions.iter().map(String::as_str),
+    )?;
+    #[cfg(feature = "docker")]
+    {
+        let mut decisions = boxferry::DockerResourceDecisions::new();
+        for decision in &docker.resource_decisions {
+            let entry = decision
+                .parse::<boxferry::DockerResourceDecision>()
+                .map_err(|error| error.to_string())?;
+            decisions.add(entry).map_err(|error| error.to_string())?;
+        }
+    }
+    let components = manifest
+        .components
+        .iter()
+        .map(|component| &component.name)
+        .collect::<BTreeSet<_>>();
+    let actual_services = semantics
+        .selected_resources
+        .iter()
+        .filter_map(|resource| resource.strip_prefix("service:"))
+        .collect::<BTreeSet<_>>();
+    let expected_services = docker
+        .component_services
+        .values()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if components != docker.component_services.keys().collect()
+        || expected_services.len() != components.len()
+        || actual_services != expected_services
+        || docker.container_ids.len() != actual_services.len()
+    {
+        return Err("Docker source must bind each component to one expected selected service".into());
     }
     Ok(())
 }
