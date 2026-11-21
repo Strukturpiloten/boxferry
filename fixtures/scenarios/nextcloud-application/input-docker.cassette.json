@@ -1,0 +1,578 @@
+{
+  "scenario_id": "nextcloud-application-docker-28.2.0-synthetic",
+  "engine_version": "28.2.0",
+  "execution_context": "synthetic-docker-engine",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Version": "28.2.0",
+          "ApiVersion": "1.50",
+          "MinAPIVersion": "1.24"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/info"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "ServerVersion": "28.2.0",
+          "Rootless": false,
+          "SecurityOptions": ["name=seccomp,profile=builtin"]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1111111111111111111111111111111111111111111111111111111111111111/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "Name": "/app",
+          "Config": {
+            "Image": "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
+            "Env": [
+              "POSTGRES_HOST=db",
+              "POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+              "REDIS_HOST=cache",
+              "REDIS_PASSWORD=boxferry-test-cache-password-not-secret"
+            ],
+            "Healthcheck": {
+              "Test": ["CMD", "/usr/local/bin/nextcloud-health"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.10"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "nextcloud-data",
+              "Destination": "/var/www/html",
+              "Mode": "rw",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1212121212121212121212121212121212121212121212121212121212121212/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1212121212121212121212121212121212121212121212121212121212121212",
+          "Name": "/cache",
+          "Config": {
+            "Image": "docker.io/library/redis@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
+            "Env": ["BOXFERRY_REDIS_TEST_PASSWORD=boxferry-test-cache-password-not-secret"],
+            "Healthcheck": {
+              "Test": ["CMD", "redis-cli", "ping"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.11"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "redis-data",
+              "Destination": "/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1313131313131313131313131313131313131313131313131313131313131313/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1313131313131313131313131313131313131313131313131313131313131313",
+          "Name": "/cron",
+          "Config": {
+            "Image": "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
+            "Cmd": ["/cron.sh"],
+            "Env": [
+              "POSTGRES_HOST=db",
+              "POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+              "REDIS_HOST=cache",
+              "REDIS_PASSWORD=boxferry-test-cache-password-not-secret"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.12"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "nextcloud-data",
+              "Destination": "/var/www/html",
+              "Mode": "rw",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1414141414141414141414141414141414141414141414141414141414141414/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1414141414141414141414141414141414141414141414141414141414141414",
+          "Name": "/db",
+          "Config": {
+            "Image": "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
+            "Env": [
+              "POSTGRES_DB=nextcloud_test",
+              "POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+              "POSTGRES_USER=nextcloud_test"
+            ],
+            "Healthcheck": {
+              "Test": ["CMD", "pg_isready", "-U", "nextcloud_test"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.13"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "db-data",
+              "Destination": "/var/lib/postgresql/data",
+              "Mode": "rw",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1515151515151515151515151515151515151515151515151515151515151515/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1515151515151515151515151515151515151515151515151515151515151515",
+          "Name": "/edge-proxy",
+          "Config": {
+            "Image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "Env": ["BOXFERRY_EDGE_TEST_TOKEN=boxferry-test-edge-token-not-secret"],
+            "Healthcheck": {
+              "Test": ["CMD", "nginx", "-t"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "edge",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            },
+            "Binds": [
+              "/srv/boxferry-fixture/nextcloud-application/edge-proxy.conf:/etc/nginx/conf.d/edge.conf:ro,Z"
+            ],
+            "PortBindings": {
+              "8443/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18443"
+                }
+              ]
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "edge": {
+                "NetworkID": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+                "IPAddress": "198.51.100.14"
+              }
+            },
+            "Ports": {
+              "8443/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18443"
+                }
+              ]
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "bind",
+              "Source": "/srv/boxferry-fixture/nextcloud-application/edge-proxy.conf",
+              "Destination": "/etc/nginx/conf.d/edge.conf",
+              "Mode": "ro,Z",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1616161616161616161616161616161616161616161616161616161616161616/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1616161616161616161616161616161616161616161616161616161616161616",
+          "Name": "/frontend",
+          "Config": {
+            "Image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "Healthcheck": {
+              "Test": ["CMD", "nginx", "-t"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            },
+            "Binds": [
+              "/srv/boxferry-fixture/nextcloud-application/frontend.conf:/etc/nginx/conf.d/nextcloud.conf:ro,Z"
+            ]
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.15"
+              },
+              "edge": {
+                "NetworkID": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+                "IPAddress": "198.51.100.15"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "nextcloud-data",
+              "Destination": "/var/www/html",
+              "Mode": "ro",
+              "RW": false
+            },
+            {
+              "Type": "bind",
+              "Source": "/srv/boxferry-fixture/nextcloud-application/frontend.conf",
+              "Destination": "/etc/nginx/conf.d/nextcloud.conf",
+              "Mode": "ro,Z",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1717171717171717171717171717171717171717171717171717171717171717/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1717171717171717171717171717171717171717171717171717171717171717",
+          "Name": "/init",
+          "Config": {
+            "Image": "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
+            "Cmd": ["/opt/boxferry/init-nextcloud", "--non-interactive"],
+            "Env": [
+              "NEXTCLOUD_ADMIN_PASSWORD=boxferry-test-admin-password-not-secret",
+              "NEXTCLOUD_ADMIN_USER=boxferry-test-admin",
+              "POSTGRES_HOST=db",
+              "POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+              "REDIS_HOST=cache",
+              "REDIS_PASSWORD=boxferry-test-cache-password-not-secret"
+            ]
+          },
+          "HostConfig": {
+            "NetworkMode": "backend",
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "Binds": [
+              "/srv/boxferry-fixture/nextcloud-application/nextcloud.config.php:/opt/boxferry/config.php:ro,Z"
+            ]
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+                "IPAddress": "192.0.2.16"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "nextcloud-data",
+              "Destination": "/var/www/html",
+              "Mode": "rw",
+              "RW": true
+            },
+            {
+              "Type": "bind",
+              "Source": "/srv/boxferry-fixture/nextcloud-application/nextcloud.config.php",
+              "Destination": "/opt/boxferry/config.php",
+              "Mode": "ro,Z",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/containers/1818181818181818181818181818181818181818181818181818181818181818/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Id": "1818181818181818181818181818181818181818181818181818181818181818",
+          "Name": "/second-app",
+          "Config": {
+            "Image": "docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce",
+            "Healthcheck": {
+              "Test": ["CMD", "/bin/true"],
+              "Interval": 10000000000,
+              "Timeout": 3000000000,
+              "Retries": 12
+            }
+          },
+          "HostConfig": {
+            "NetworkMode": "edge",
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "edge": {
+                "NetworkID": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+                "IPAddress": "198.51.100.17"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "backend",
+          "Id": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+          "Driver": "bridge",
+          "Internal": true,
+          "Containers": {
+            "1111111111111111111111111111111111111111111111111111111111111111": {
+              "Name": "app",
+              "IPv4Address": "192.0.2.10/24"
+            },
+            "1212121212121212121212121212121212121212121212121212121212121212": {
+              "Name": "cache",
+              "IPv4Address": "192.0.2.11/24"
+            },
+            "1313131313131313131313131313131313131313131313131313131313131313": {
+              "Name": "cron",
+              "IPv4Address": "192.0.2.12/24"
+            },
+            "1414141414141414141414141414141414141414141414141414141414141414": {
+              "Name": "db",
+              "IPv4Address": "192.0.2.13/24"
+            },
+            "1616161616161616161616161616161616161616161616161616161616161616": {
+              "Name": "frontend",
+              "IPv4Address": "192.0.2.15/24"
+            },
+            "1717171717171717171717171717171717171717171717171717171717171717": {
+              "Name": "init",
+              "IPv4Address": "192.0.2.16/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/networks/c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "edge",
+          "Id": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+          "Driver": "bridge",
+          "Internal": false,
+          "Containers": {
+            "1515151515151515151515151515151515151515151515151515151515151515": {
+              "Name": "edge-proxy",
+              "IPv4Address": "198.51.100.14/24"
+            },
+            "1616161616161616161616161616161616161616161616161616161616161616": {
+              "Name": "frontend",
+              "IPv4Address": "198.51.100.15/24"
+            },
+            "1818181818181818181818181818181818181818181818181818181818181818": {
+              "Name": "second-app",
+              "IPv4Address": "198.51.100.17/24"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/db-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "db-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/nextcloud-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "nextcloud-data",
+          "Driver": "local"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1.49/volumes/redis-data"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "Name": "redis-data",
+          "Driver": "local"
+        }
+      }
+    }
+  ]
+}

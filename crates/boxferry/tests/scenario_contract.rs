@@ -5072,6 +5072,7 @@ fn validate_docker_derived_podman_settings(
         let expected_restart = match source_setting(&manifest.semantics.required_restart, &component.name) {
             Some("absent") => None,
             Some("always") => Some("always"),
+            Some("never") => Some("no"),
             _ => return Err("unreviewed Docker-derived Podman restart expectation".into()),
         };
         for (option, field, expected) in [
@@ -6979,6 +6980,9 @@ fn load_docker_cassette(input: &NativeInput, path: &Path) -> Result<HttpCassette
     Ok(cassette)
 }
 
+const DOCKER_SCENARIO_MAX_REQUESTS: usize = 16;
+const DOCKER_SCENARIO_CONTEXT_REQUESTS: usize = 2;
+
 fn acquire_docker_cassette(
     application: &str,
     input: &NativeInput,
@@ -6994,15 +6998,23 @@ fn acquire_docker_cassette(
     for decision in &docker.resource_decisions {
         decisions.add(decision.parse::<DockerResourceDecision>()?)?;
     }
+    let max_inspects = DOCKER_SCENARIO_MAX_REQUESTS - DOCKER_SCENARIO_CONTEXT_REQUESTS;
+    let max_selected_resources = ids.len().min(max_inspects);
+    // DockerLens counts container as well as related-resource inspections.
+    // Retain the original budget for Forgejo, including its truncated refusal cases.
+    let max_expansions = cassette
+        .interaction_count()
+        .saturating_sub(DOCKER_SCENARIO_CONTEXT_REQUESTS)
+        .clamp(8, max_inspects);
     let server = HttpCassetteServer::start(cassette)?;
     let source = acquire_docker_source(
         Identifier::new(application)?,
         &Endpoint::unix_socket(server.socket().to_path_buf()),
         Selector::ContainerIds(ids),
         Limits {
-            max_requests: 16,
-            max_selected_resources: 2,
-            max_expansions: 8,
+            max_requests: DOCKER_SCENARIO_MAX_REQUESTS,
+            max_selected_resources,
+            max_expansions,
             max_response_bytes: 16 * 1024,
             max_total_bytes: 64 * 1024,
             max_elapsed: Duration::from_secs(5),
@@ -7022,7 +7034,9 @@ fn acquire_docker_cassette(
         return Err("Docker Engine response disagrees with the declared version".into());
     }
     Ok(source
-        .with_promotion_policy(DockerPromotionPolicy::portable_application())
+        .with_promotion_policy(
+            DockerPromotionPolicy::portable_application().with_same_host_bind_mounts(docker.same_host_bind_mounts),
+        )
         .with_resource_decisions(decisions))
 }
 
@@ -7131,6 +7145,114 @@ fn forgejo_docker_source_rejects_invalid_observations_and_api_versions() -> Resu
             "{error:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn nextcloud_docker_replay_negotiates_with_engine_28_2() -> Result<(), Box<dyn Error>> {
+    use boxferry::docker::docker_lens::version::ApiVersion;
+    use std::num::NonZeroU16;
+
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let manifest = read_manifest_file(&fixture.join("scenario.toml"))?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Nextcloud Docker input")?;
+    assert_eq!(input.format_version, "28.2.0");
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    assert_eq!(cassette.scenario_id(), "nextcloud-application-docker-28.2.0-synthetic");
+
+    let source = acquire_docker_cassette(&manifest.application.name, input, cassette)?;
+    let version = &source.inventory().version;
+    let api = |minor| ApiVersion::new(NonZeroU16::MIN, minor);
+    // Docker's matrix fixes the advertised range for Engine 28.2. DockerLens
+    // caps negotiation at 1.49, which the ordered replay checks on the wire.
+    let release = version
+        .daemon
+        .release
+        .as_ref()
+        .ok_or("missing replayed Engine release")?;
+    assert_eq!(release.as_str(), "28.2.0");
+    assert_eq!(version.daemon.minimum_api_version, Some(api(24)));
+    assert_eq!(version.daemon.api_version, Some(api(50)));
+    assert_eq!(version.requested_api_versions, [api(49)]);
+    Ok(())
+}
+
+#[test]
+fn nextcloud_docker_replay_keeps_edge_roles_distinct_and_values_withheld() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let path = fixture.join("scenario.toml");
+    let manifest = read_manifest_file(&path)?;
+    validate_manifest(&manifest, &fixture)?;
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == "docker")
+        .ok_or("missing Nextcloud Docker input")?;
+    let view = docker_scenario_view(&path, input, &fixture)?.ok_or("missing Docker semantics")?;
+    let cassette = load_docker_cassette(input, &fixture.join(&input.files[0]))?;
+    // Two context reads, eight container inspections, two networks and three volumes.
+    assert_eq!(cassette.interaction_count(), 15);
+    let docker = input.docker.as_ref().ok_or("missing Docker input metadata")?;
+    let [_, _, _, _, proxy, _, _, peer] = docker.container_ids.as_slice() else {
+        return Err("Nextcloud replay must select eight distinct container IDs".into());
+    };
+    let proxy_path = format!("/v1.49/containers/{proxy}/json");
+
+    let mut wrong_identity = cassette.clone();
+    wrong_identity.insert_body_field(&proxy_path, "Id", serde_json::json!(peer))?;
+    wrong_identity.truncate_after(&proxy_path)?;
+    let error = acquire_docker_cassette(&view.application.name, input, wrong_identity)
+        .err()
+        .ok_or("Nextcloud edge-proxy accepted the second-app identity")?;
+    let diagnostic = format!("{error} {error:?}");
+    assert_no_protected_environment_values(&view, &diagnostic, "Nextcloud identity refusal")?;
+    assert!(!diagnostic.contains(proxy) && !diagnostic.contains(peer));
+    assert!(matches!(
+        error.downcast_ref::<DockerSourceError>(),
+        Some(DockerSourceError::Acquisition(AcquisitionError::Shape))
+    ));
+
+    let mut conflated = cassette.clone();
+    conflated.insert_body_field(&proxy_path, "Name", serde_json::json!("/second-app"))?;
+    let importer = DockerImporter::new()?;
+    let conflated = importer.import(&acquire_docker_cassette(&view.application.name, input, conflated)?);
+    let conflated = conflated
+        .application()
+        .ok_or("conflated names are reported as a source gap")?;
+    let error = validate_docker_source_application(&view, conflated)
+        .err()
+        .ok_or("Nextcloud role projections accepted two second-app runtime names")?;
+    assert!(error.contains("runtime name changed"));
+
+    let source = acquire_docker_cassette(&view.application.name, input, cassette)?;
+    let observation = importer.import(&source);
+    let application = observation
+        .application()
+        .ok_or("Nextcloud Docker neutral application")?;
+    validate_docker_source_application(&view, application)?;
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().dependencies().is_empty()),
+        "Engine observations must not invent the authored Compose dependencies"
+    );
+
+    // Only this in-memory counterexample promotes the disposable fixture values.
+    let policy = DockerPromotionPolicy::portable_application()
+        .with_same_host_bind_mounts(true)
+        .with_protected_environment_values(true);
+    let promoted = importer.import(&source.with_promotion_policy(policy));
+    let promoted = promoted.application().ok_or("missing promoted test model")?;
+    let error = validate_docker_source_application(&view, promoted)
+        .err()
+        .ok_or("default privacy assertions accepted promoted Nextcloud values")?;
+    assert!(error.contains("only required environment names"));
+    assert_no_protected_environment_values(&view, &error, "Nextcloud privacy assertion")?;
     Ok(())
 }
 
@@ -7488,6 +7610,9 @@ fn convert_cli(
                 .args(["--application-name", &manifest.application.name]);
             for id in &docker.container_ids {
                 command.args(["--docker-container-id", id]);
+            }
+            if docker.same_host_bind_mounts {
+                command.arg("--promote-docker-same-host-bind-mounts");
             }
             for decision in &docker.resource_decisions {
                 command.args(["--docker-resource-decision", decision]);
