@@ -171,15 +171,17 @@ Before the hold, select and review the durability of an existing empty, operator
 review. The command binds the closed `boxferry.provider632.storage-attestation.v5` schema
 to the same series, source, observer, controller and cut. The claim remains
 `fsync-and-readback-only; no WORM or power-loss guarantee`. Use the canonical command
-with a fresh directory for each authorized series. It writes exclusively, fsyncs each
-file and the destination directory, then reopens the intended directory to verify its
-identity, exact file set, lengths and hashes. A reused directory handle can return a stale
-listing on Btrfs after files are added. No experiment HTTP is used for the copy. A failed
+with a fresh directory for each authorized series. It writes and flushes batches of at most
+eight files, including the state and attestation. It fsyncs the original open writers before
+closing them so a writeback error on those descriptions aborts the copy. After all batches
+succeed, it fsyncs the destination directory and reopens it to verify identity, the exact file
+set, lengths and hashes. A reused directory handle can return a stale listing on Btrfs after
+files are added. No experiment HTTP is used for the copy. A failed
 copy or readback aborts the series. Preserve the partial or complete copy and its diagnostics.
 
 Invoke the single `control --custody CUSTODY cancel --case E --run E_RUN --durable-custody DURABLE`.
 The controller requires the successful copy receipt and reopens the same durable directory
-for its independent file/directory fsync and exact readback. It rechecks source, the full copied
+for its independent serial file/directory fsync and exact readback. It rechecks source, the full copied
 proof, active owned run and the original <=5-second hold freshness. Run the hold, final
 preparation observation, guard, copy and cancellation commands in order, stopping after any
 nonzero exit. Rehearse the local steps on the intended filesystem before authorization. Include
