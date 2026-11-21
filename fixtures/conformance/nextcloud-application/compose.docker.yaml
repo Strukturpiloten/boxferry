@@ -1,0 +1,11 @@
+---
+# Docker-only authored variant; load after compose.yaml. Credentials stay protected.
+services:
+  cache:
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    environment:
+      REDISCLI_AUTH: ${BF_REDIS_PASSWORD:?}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-e", "ping"]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?}/redis.docker.conf:/usr/local/etc/redis/redis.conf:ro

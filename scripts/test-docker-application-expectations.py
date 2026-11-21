@@ -11,6 +11,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -22,6 +23,10 @@ contract = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(contract)
 RAW = (ROOT / contract.CATALOGUE_PATH).read_bytes()
 EXPECTED = json.loads(RAW)
+SCHEDULE_SPEC = importlib.util.spec_from_file_location("docker_application_schedule", ROOT / "scripts/lib/docker-application-schedule.py")
+assert SCHEDULE_SPEC is not None and SCHEDULE_SPEC.loader is not None
+schedule = importlib.util.module_from_spec(SCHEDULE_SPEC)
+SCHEDULE_SPEC.loader.exec_module(schedule)
 
 
 def encode(value):
@@ -202,6 +207,155 @@ class ApplicationExpectations(unittest.TestCase):
                     next(mount for mount in body["HostConfig"]["Mounts"] if mount["Target"] == target)["ReadOnly"] = False
                 with self.assertRaises(contract.ExpectationError):
                     self.validate(plan)
+
+    def test_supabase_offline_schedule(self):
+        self.supabase()
+        # Authored from the Compose long-form conditions and the independent graph.tsv.
+        edges = [
+            ("kong", "studio", "healthy"), ("kong", "storage", "healthy"),
+            ("kong", "rest", "healthy"), ("kong", "realtime", "healthy"),
+            ("kong", "functions", "healthy"), ("kong", "auth", "healthy"),
+            ("studio", "meta", "started"), ("storage", "rest", "healthy"),
+            ("storage", "imgproxy", "healthy"), ("storage", "db", "healthy"),
+            ("supavisor", "db", "healthy"), ("rest", "db", "healthy"),
+            ("realtime", "db", "healthy"), ("meta", "db", "healthy"),
+            ("functions", "db", "healthy"), ("auth", "db", "healthy"),
+        ]
+        layers = [["db", "imgproxy"], ["auth", "functions", "meta", "realtime", "rest", "supavisor"],
+                  ["storage", "studio"], ["kong"]]
+        self.assert_offline_schedule(edges, True, layers, [0, 1, 2, 3, 4, 8, 5, 12, 10, 7, 6, 11, 9, 13, 14, 15])
+
+    def assert_observability_schedule(self):
+        # Authored from the Compose short-form lists.
+        edges = [
+            ("grafana", "alloy", "started"), ("grafana", "loki", "started"),
+            ("grafana", "prometheus", "started"), ("alloy", "log-producer", "started"),
+            ("alloy", "loki", "started"), ("alloy", "prometheus", "started"),
+            ("prometheus", "metrics-producer", "started"),
+        ]
+        layers = [["log-producer", "loki", "metrics-producer"], ["prometheus"], ["alloy"], ["grafana"]]
+        self.assert_offline_schedule(edges, False, layers, [0, 1, 2, 3, 4, 5, 7, 9, 6, 8, 10, 11, 12])
+
+    def assert_offline_schedule(self, edges, condition_explicit, layers, review_indices):
+        app = self.application
+        decisions = [
+            {"service": service, "service_runtime_name": f"unit-{app}-{service}",
+             "dependency": dependency, "dependency_runtime_name": f"unit-{app}-{dependency}",
+             "condition": condition, "condition_explicit": condition_explicit,
+             "required": True, "required_explicit": False, "restart": False, "restart_explicit": False,
+             "fidelity": "approximate", "native_engine_field": False,
+             "provenance": {"reference": ["source_document"],
+                            "condition": ["source_document" if condition_explicit else "implementation_default"],
+                            "required": ["implementation_default"], "restart": ["implementation_default"]}}
+            for service, dependency, condition in edges
+        ]
+
+        def sidecar(raw, rows):
+            return {"schema_version": 1, "kind": "boxferry-docker-dependency-decisions",
+                    "docker_plan_sha256": hashlib.sha256(raw).hexdigest(), "native_execution": False, "decisions": rows}
+
+        def validate(raw, admission, dependencies, **overrides):
+            options = {"application": app, "lane": self.lane, "profile": self.profile, "image_aliases": self.images,
+                       "prefix": "unit", "run_id": "offline-run", "fixture_root": "/tmp/offline-fixture",
+                       "catalogue_bytes": RAW}
+            return schedule.validate_schedule(raw, encode(admission), encode(dependencies), **(options | overrides))
+
+        raw = encode(self.plan)
+        admission, dependencies = self.admission(raw), sidecar(raw, decisions)
+        result = validate(raw, admission, dependencies)
+        self.assertEqual(result["kind"], f"boxferry-docker-{app}-offline-schedule")
+        self.assertEqual(result["evidence_kind"], "offline-contract-prerequisite")
+        self.assertEqual(result["runtime_evidence"], "unmeasured")
+        self.assertIsNone(result["budget_measurements"])
+        for field in ("native_execution", "native_admission", "replay_authority"):
+            self.assertIs(result[field], False)
+        for field, data in (("docker_plan_sha256", raw), ("admission_sha256", encode(admission)),
+                            ("dependency_sidecar_sha256", encode(dependencies)), ("expectations_sha256", RAW)):
+            self.assertEqual(result[field], hashlib.sha256(data).hexdigest())
+        self.assert_schedule_cli(admission, dependencies, result)
+
+        self.assertEqual(result["dependency_decisions"], decisions)
+        self.assertEqual(result["service_review_layers"], layers)
+        self.assertEqual(result["external_prerequisites"], sorted(self.plan["prerequisites"], key=lambda row: row["identity"]))
+        self.assertEqual(result["native_request_order"], list(range(len(review_indices))))
+        operations = result["review_operations"]
+        self.assertEqual([row["request_index"] for row in operations], review_indices)
+        self.assertEqual([row["service"] for row in operations if row["kind"] == "container"], sum(layers, []))
+        self.assertEqual(operations[-1]["service"], layers[-1][0])
+        self.assertEqual(operations[-1]["kind"], "attachment")
+        original_requests = self.plan["requests"]
+        container_indices = [index for index, row in enumerate(original_requests) if "/containers/create?" in row["path"]]
+        permutation = dict(zip(container_indices, reversed(container_indices), strict=True))
+        reordered_plan = encode(dict(self.plan, requests=[
+            original_requests[permutation.get(index, index)] for index in range(len(original_requests))
+        ]))
+        reordered = validate(reordered_plan, self.admission(reordered_plan), sidecar(reordered_plan, decisions[::-1]))
+        remapped = [dict(row, request_index=permutation.get(row["request_index"], row["request_index"])) for row in operations]
+        self.assertEqual(reordered["review_operations"], remapped)
+        self.assertEqual(reordered["service_review_layers"], layers)
+        self.assertEqual(reordered["dependency_decisions"], decisions[::-1])
+
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "exact native plan bytes"):
+            validate(reordered_plan, self.admission(reordered_plan), dependencies)
+        reversed_plan = encode(dict(self.plan, requests=original_requests[::-1]))
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "secondary network inventory or order differs"):
+            validate(reversed_plan, self.admission(reversed_plan), sidecar(reversed_plan, decisions))
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "finite approved scope"):
+            validate(raw, admission, dependencies, lane="upstream-rootful")
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "sidecar schema differs"):
+            validate(raw, admission, dict(dependencies, native_execution=True))
+        first = decisions[0]
+        reversed_edge = dict(first, service=first["dependency"], service_runtime_name=first["dependency_runtime_name"],
+                             dependency=first["service"], dependency_runtime_name=first["service_runtime_name"])
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "dependency decisions contain a cycle"):
+            validate(raw, admission, sidecar(raw, [*decisions, reversed_edge]))
+        # A changed condition and an explicit flag can still be syntactically valid.
+        edited = [dict(first, condition="completed_successfully", condition_explicit=True), *decisions[1:]]
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "dependency edges differ|authored dependency explicitness"):
+            validate(raw, admission, sidecar(raw, edited))
+        for index, decision in enumerate(decisions):
+            for replacement, message in (
+                ([], "dependency edges differ"),
+                ([dict(decision, condition_explicit=not condition_explicit)],
+                 "authored dependency explicitness|implicit flag differs"),
+                ([dict(decision, dependency_runtime_name="private-identity-canary")], "dependency runtime identity differs"),
+                ([dict(decision, native_engine_field=True)], "cannot claim native Engine semantics"),
+            ):
+                changed = decisions[:index] + replacement + decisions[index + 1:]
+                with self.subTest(application=app, dependency=index, refusal=message):
+                    with self.assertRaisesRegex(schedule.topology.ExpectationError, message) as caught:
+                        validate(raw, admission, sidecar(raw, changed))
+                    self.assertNotIn("canary", str(caught.exception))
+
+        # Even a syntactically valid admission rebound to an edited graph cannot replace the authored graph.
+        edited_catalogue = copy.deepcopy(EXPECTED)
+        edited_edges = edited_catalogue["applications"][app]["dependencies"]
+        edited_edges.pop()
+        edited_raw = encode(edited_catalogue)
+        edited_admission = dict(admission, dependencies=edited_edges, expectations_sha256=hashlib.sha256(edited_raw).hexdigest())
+        with self.assertRaisesRegex(schedule.topology.ExpectationError, "authored service or dependency contract differs"):
+            validate(raw, edited_admission, dependencies, catalogue_bytes=edited_raw)
+
+    def assert_schedule_cli(self, admission, sidecar, expected):
+        with tempfile.TemporaryDirectory() as directory:
+            command = [sys.executable, "-B", str(ROOT / "scripts/lib/docker-application-schedule.py"),
+                       "--application", self.application, "--prefix", "unit", "--run-id", "offline-run",
+                       "--fixture-root", "/tmp/offline-fixture", "--lane"]
+            documents = {"plan": self.plan, "admission": admission, "sidecar": sidecar,
+                         "profile": self.profile, "image-aliases": self.images}
+            arguments = []
+            for name, value in documents.items():
+                path = pathlib.Path(directory) / f"{name}.json"
+                path.write_bytes(encode(value))
+                arguments.extend([f"--{name}", str(path)])
+            accepted = subprocess.run([*command, "upstream-rootless", *arguments], capture_output=True, text=True)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(json.loads(accepted.stdout), expected)
+            refused = subprocess.run([*command, "upstream-rootful", *arguments], capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 1)
+            self.assertEqual(refused.stdout, "")
+            self.assertEqual(refused.stderr, f"offline {self.application.capitalize()} schedule rejected: "
+                                             "application lane is outside finite approved scope\n")
 
     def test_supabase_four_authored_shared_binds_are_independently_expected(self):
         # Literal source evidence, not inspect RW facts or a native-mode parser.
@@ -419,6 +573,23 @@ class ApplicationExpectations(unittest.TestCase):
             else:
                 self.validate(plan, admission, catalogue_bytes=encode(catalogue))
 
+    def test_nextcloud_redis_variant_assets_have_independent_auth_and_integrity(self):
+        source = ROOT / "fixtures/conformance/nextcloud-application"
+        self.assertEqual((source / "redis.docker.conf").read_bytes(),
+                         b"dir /data\nappendonly yes\nrequirepass boxferry-public-cache-canary\n")
+        paths = {row["path"]: row["sha256"] for row in EXPECTED["applications"]["nextcloud"]["sources"]}
+        for name in ("compose.yaml", "compose.docker.yaml", "redis.docker.conf"):
+            path = "fixtures/conformance/nextcloud-application/" + name
+            self.assertEqual(paths[path], hashlib.sha256((ROOT / path).read_bytes()).hexdigest())
+        config = source / "redis.docker.conf"
+        original = config.read_bytes()
+        reader = pathlib.Path.read_bytes
+        with mock.patch.object(pathlib.Path, "read_bytes", autospec=True,
+                               side_effect=lambda path: b"requirepass wrong-private-canary\n" if path == config else reader(path)):
+            with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
+                contract.check_sources(ROOT, RAW)
+        self.assertEqual(config.read_bytes(), original)
+
     def test_four_other_independently_authored_application_artifacts(self):
         # A separate, literal source of native test topology. These rows do not
         # consume the expectation catalogue's service/mount/attachment fields.
@@ -427,7 +598,8 @@ class ApplicationExpectations(unittest.TestCase):
         topologies = {
             "nextcloud": ("cloud", "cloud", "shared-edge", True, ["database", "redis", "nextcloud"], [
                 ("cloud-db", "postgres", ["db"], None, [("volume", "database", "/var/lib/postgresql/data", False)], None),
-                ("cloud-cache", "redis", ["cache"], None, [("volume", "redis", "/data", False)], None),
+                ("cloud-cache", "redis", ["cache"], None, [("volume", "redis", "/data", False),
+                     ("bind", "redis.docker.conf", "/usr/local/etc/redis/redis.conf", True)], None),
                 ("cloud-app", "nextcloud", ["app"], None, [("volume", "nextcloud", "/var/www/html", False)], None),
                 ("cloud-init", "nextcloud", [], None, [("volume", "nextcloud", "/var/www/html", False)], None),
                 ("cloud-cron", "nextcloud", [], None, [("volume", "nextcloud", "/var/www/html", False)], None),
@@ -497,6 +669,7 @@ class ApplicationExpectations(unittest.TestCase):
                 self.assertEqual(len(self.validate()["services"]), len(services))
                 if app == "observability":
                     self.assert_superseded_admission_bindings_reject()
+                    self.assert_observability_schedule()
                 alias_free = {"immich": ["immich-server"], "observability": [
                     "observability-log-producer", "observability-alloy", "observability-grafana"]}.get(app, [])
                 for suffix in alias_free:
