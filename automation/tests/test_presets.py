@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from native_preset_source import pinned_preset_input
+
 from boxferry_ci.devcontainer_updates import limited_config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -888,6 +890,7 @@ class NativePresetTests(unittest.TestCase):
   const { applyPackageRules } = require(base + "util/package-rules/index.js");
   const common = JSON.parse(fs.readFileSync(root + "/renovate-presets/common.json"));
   const rust = JSON.parse(fs.readFileSync(root + "/renovate-presets/rust.json"));
+  require(root + "/automation/tests/native_preset_source.cjs")(base);
   const { resolveConfigPresets } = require(base + "config/presets/index.js");
   const { config: resolvedCommon } = await resolveConfigPresets(common);
   assert.equal(resolvedCommon.rebaseWhen, "auto");
@@ -2379,6 +2382,7 @@ validationWiring: (() => {
                 json.dumps(limited),
             ],
             cwd=ROOT,
+            input=pinned_preset_input(ROOT),
             capture_output=True,
             text=True,
             check=False,

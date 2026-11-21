@@ -187,6 +187,7 @@ systemd or runtime behavior. Hosted success establishes candidate evidence; see 
 
 `scripts/test-shared-automation.py --structural` checks selection, trusted-policy failures,
 all fifteen prior jobs, image receipts, API separation and release consumers.
-`NativeRenovateContracts` tests the pinned native parser; `scripts/test-check-all.sh` tests dispatch
+Native Renovate tests read inherited presets from immutable Git blobs, including shallow checkouts.
+`NativeRenovateContracts` tests the pinned parser. `scripts/test-check-all.sh` tests dispatch
 and failures with inert stubs. Local checks build no image. Hosted image and App/updater acceptance
 require observed evidence under #563.

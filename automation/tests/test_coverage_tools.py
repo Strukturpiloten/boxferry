@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import test_presets as presets
+from native_preset_source import pinned_preset_input
 
 from boxferry_ci import cargo_tools
 from boxferry_ci.contracts import ContractError
@@ -306,6 +307,7 @@ class NativeCoverageOwnership(unittest.TestCase):
   const {extractPackageFile:extract}=require(base+"modules/manager/custom/regex/index.js");
   const {doAutoReplace}=require(base+"workers/repository/update/branch/auto-replace.js");
   const {applyPackageRules}=require(base+"util/package-rules/index.js");
+  require(root+"/automation/tests/native_preset_source.cjs")(base);
   const {resolveConfigPresets}=require(base+"config/presets/index.js");
   const {GlobalConfig}=require(base+"config/global.js");
   const {matchRegexOrGlobList}=require(base+"util/string-match.js");
@@ -362,6 +364,7 @@ class NativeCoverageOwnership(unittest.TestCase):
                 str(runtime),
                 str(ROOT),
             ],
+            input=pinned_preset_input(ROOT),
             capture_output=True,
             text=True,
             timeout=180,

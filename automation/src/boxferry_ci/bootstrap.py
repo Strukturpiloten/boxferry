@@ -388,8 +388,10 @@ def automation_identity(
     return {"revision": actual, "kind": "producer-working-tree" if dirty else "git-checkout"}
 
 
-def prepare_implementation(repository_root: Path, revision: str) -> Path:
-    """Verify cached commit objects and reconstruct the exact pinned project."""
+def prepare_object_cache(repository_root: Path, revision: str) -> Path:
+    """Acquire and verify the exact pinned commit in an isolated Git object store."""
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise BootstrapError("shared automation cache requires an exact lowercase commit SHA")
     root = repository_root / "target/boxferry-automation"
     for entry in (repository_root / "target", root):
         if entry.is_symlink():
@@ -409,6 +411,13 @@ def prepare_implementation(repository_root: Path, revision: str) -> Path:
     run_git(objects, "fsck", "--full", "--strict", "--no-reflogs", "--no-dangling")
     if run_git(objects, "rev-parse", f"{revision}^{{commit}}") != revision:
         raise BootstrapError("shared automation cache does not contain the pinned commit")
+    return objects
+
+
+def prepare_implementation(repository_root: Path, revision: str) -> Path:
+    """Verify cached commit objects and reconstruct the exact pinned project."""
+    objects = prepare_object_cache(repository_root, revision)
+    root = objects.parent
     data = run_git(
         objects,
         "archive",
