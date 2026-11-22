@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "repository": "Strukturpiloten/kubernetes-lens",
+  "observedCommit": "c2954c5aefb0518aa41c95b2b4b25d84897dfdc2",
+  "license": "MPL-2.0",
+  "redistribution": "Maintainer-authorized first-party regression snapshot; no additional license grant inferred.",
+  "files": [
+    {
+      "source": ".github/renovate.json",
+      "fixture": "kubernetes-lens-renovate.json.txt",
+      "sha256": "b8eb32d6f787b0fcb8d0d624daf7bbf1614cd349c029120e676be28ff908ac8d",
+      "matchesRecordedCommit": true
+    },
+    {
+      "source": "scripts/cargo-llvm-cov.version",
+      "fixture": "cargo-llvm-cov.version.txt",
+      "sha256": "9d8c94f1ad3ea96b1e2ac4914fda4cb93c76b4a3e0d8cc6dd8976d6c0b227d15",
+      "matchesRecordedCommit": false
+    }
+  ],
+  "registryRows": "Authored synthetic crates.io index records; not actual releases. Reuses the review counterexample and normalized prerelease/build controls.",
+  "oracle": {
+    "name": "Renovate",
+    "version": "44.139.0",
+    "image": "ghcr.io/renovatebot/renovate:44.139.0@sha256:67e76082eded90c6fa1d1552cc9d8d93d1eb06e13e81591aab57b6f4994217be",
+    "source": "Existing integrity-pinned cached native SDK; public lookup/datasource APIs with acquisition mocked.",
+    "license": "AGPL-3.0-only",
+    "command": "node --experimental-vm-modules automation/tests/imageless_coverage_lookup.cjs <pinned-runtime> <repository>",
+    "redistribution": "No oracle source copied or redistributed."
+  }
+}

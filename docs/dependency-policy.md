@@ -50,12 +50,12 @@ dynamic matrices/self-hosted runners remain distinct. Workflows use `scripts/lib
 Fixtures, historical evidence, compatibility targets and invalid fixture registries stay outside
 updates; curated `images.tsv` catalogues retain ownership.
 
-Coverage uses one local/CI/image version authority: the annotated
-[candidate Dockerfile ARG](../.devcontainer/Dockerfile). Shared coverage requires it without fallback
-and installs/verifies the exact CLI/compiler; local validation verifies actual Cargo dispatch. Only
-this ARG leaves the direct-image/tool hold; its extractor retains automatic updates,
-third-party age and native qualification. Other holds remain.
-See [ADR 0099](decisions/0099-candidate-coverage-tool-authority.md).
+Coverage uses one candidate-owned CLI/compiler authority: the
+[Dockerfile ARG](../.devcontainer/Dockerfile) ([ADR 0099](decisions/0099-candidate-coverage-tool-authority.md))
+or the [image-less source and rollout contract](decisions/0102-imageless-candidate-coverage-source.md).
+Shared coverage installs/verifies the exact pair without fallback; local validation verifies Cargo dispatch.
+Only the coverage ARG leaves the direct-image/tool hold; automatic updates retain
+third-party age, integrity and native qualification. Other holds remain.
 
 ### Rollout of shared dependency automation
 

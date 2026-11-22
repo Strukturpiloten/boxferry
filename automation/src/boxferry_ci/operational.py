@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from .cargo_tools import COVERAGE_FILE
+
 if TYPE_CHECKING:
     from .dependencies import DependencyContext
 
@@ -53,7 +55,7 @@ CATALOGUES = frozenset(
     | {"fixtures/conformance/podman-live/matrix.tsv"}
 )
 EXCLUDED_PATHS = frozenset({"scripts/kind-vm-image.json"})
-FIXED_PATHS = IMAGE_JSON | CATALOGUES | {FEATURE, FEATURE_LOCK, DOCKERFILE, PROBE}
+FIXED_PATHS = IMAGE_JSON | CATALOGUES | {FEATURE, FEATURE_LOCK, DOCKERFILE, PROBE, COVERAGE_FILE}
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 SELECTOR = re.compile(r"(?:ubuntu|macos|windows)-[0-9]+(?:\.[0-9]+)?(?:-[a-z0-9]+)*\Z")
 REF = re.compile(
@@ -758,7 +760,7 @@ def _inventory(root: Path) -> dict[str, Pin]:
         total += len(text.encode())
         if total > MAX_SNAPSHOT_BYTES:
             raise OperationalError("operational snapshot exceeds its byte bound")
-        if path in {FEATURE, FEATURE_LOCK}:
+        if path in {FEATURE, FEATURE_LOCK, COVERAGE_FILE}:
             continue
         if path == DOCKERFILE:
             pins = _dockerfile(text, path)

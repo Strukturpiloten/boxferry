@@ -19,6 +19,7 @@ from boxferry_ci.contracts import ContractError
 from boxferry_ci.runner import run
 
 DOCKERFILE = ".devcontainer/Dockerfile"
+COVERAGE_FILE = "scripts/cargo-llvm-cov.version"
 # Existing crate-backed Renovate declarations retain their sole version ownership.
 DECLARATIONS = {
     "cargo-deny": "CARGO_DENY_VERSION",
@@ -28,12 +29,16 @@ DECLARATIONS = {
 }
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 MAX_DECLARATION_BYTES = 64 * 1024
+# New one-value files use small decimal components within native SemVer's numeric limits.
+COVERAGE_COMPONENT = r"(?:0|[1-9][0-9]{0,5})"
+COVERAGE_VERSION = rf"{COVERAGE_COMPONENT}\.{COVERAGE_COMPONENT}\.{COVERAGE_COMPONENT}"
+MAX_COVERAGE_FILE_BYTES = 22  # Three six-digit components, two dots, optional CRLF.
 COMPILER_KEYS = ("rustc", "rustc-wrapper", "rustc-workspace-wrapper", "rustdoc")
 COMPILER_ENV = {key.upper().replace("-", "_") for key in COMPILER_KEYS}
 COMPILER_ENV.update(f"CARGO_BUILD_{key}" for key in tuple(COMPILER_ENV))
 
 
-def read_data(root: Path, relative: str) -> str:
+def read_data(root: Path, relative: str, *, max_bytes: int = MAX_DECLARATION_BYTES) -> str:
     """Read one bounded regular data file without following directory/file links."""
     path = root / relative
     for component in (path, *path.parents):
@@ -41,16 +46,16 @@ def read_data(root: Path, relative: str) -> str:
             raise ContractError(f"Cargo tool metadata must not follow symlinks: {relative}")
         if component == root:
             break
-    if not path.is_file() or path.stat().st_size > MAX_DECLARATION_BYTES:
+    if not path.is_file() or path.stat().st_size > max_bytes:
         raise ContractError(f"Cargo tool metadata is missing, nonregular or oversized: {relative}")
     with path.open("rb") as stream:
-        data = stream.read(MAX_DECLARATION_BYTES + 1)
-    if len(data) > MAX_DECLARATION_BYTES:
+        data = stream.read(max_bytes + 1)
+    if len(data) > max_bytes:
         raise ContractError(f"Cargo tool metadata exceeded its read bound: {relative}")
     return data.decode("utf-8")
 
 
-def declarations(root: Path) -> dict[str, str]:
+def _docker_declarations(root: Path) -> dict[str, str]:
     """Parse only the four existing, uniquely annotated exact Cargo crate ARGs."""
     text = read_data(root, DOCKERFILE)
     selected: dict[str, str] = {}
@@ -64,6 +69,37 @@ def declarations(root: Path) -> dict[str, str]:
             raise ContractError(f"{argument} needs one adjacent crate marker and exact X.Y.Z value")
         selected[package] = matches[0]
     return selected
+
+
+def coverage_version(text: str) -> str:
+    """Accept exactly one ASCII release, optionally terminated by one LF or CRLF."""
+    if len(text) > MAX_COVERAGE_FILE_BYTES:
+        raise ContractError("coverage version file exceeded its read bound")
+    match = re.fullmatch(rf"({COVERAGE_VERSION})(?:\r?\n)?", text)
+    if match is None:
+        raise ContractError(
+            "coverage version file needs ASCII X.Y.Z with each component in 0..999999"
+        )
+    return match[1]
+
+
+def declarations(root: Path) -> dict[str, str]:
+    """Read existing image ARGs or the image-less candidate coverage version file."""
+    coverage = root / COVERAGE_FILE
+    present = coverage.exists() or coverage.is_symlink() or coverage.parent.is_symlink()
+    path = root / DOCKERFILE
+    if path.exists() or path.is_symlink() or path.parent.is_symlink():
+        versions = _docker_declarations(root)
+        if present:
+            raise ContractError("coverage version file requires an image-less repository")
+        return versions
+    if present:
+        return {
+            "cargo-llvm-cov": coverage_version(
+                read_data(root, COVERAGE_FILE, max_bytes=MAX_COVERAGE_FILE_BYTES)
+            )
+        }
+    return {}
 
 
 @dataclass(frozen=True)
@@ -84,18 +120,18 @@ def select(
 ) -> Selection:
     if package not in DECLARATIONS or not package.startswith("cargo-"):
         raise ContractError("unsupported Cargo subcommand selection")
-    metadata = root
+    versions = declarations(root)
     path = root / DOCKERFILE
-    if path.parent.is_symlink():
-        raise ContractError("Cargo tool Dockerfile directory must not be a symlink")
-    if not path.exists() and not path.is_symlink():
+    if package not in versions and not path.exists() and not path.is_symlink():
         if require_candidate:
-            raise ContractError("candidate Dockerfile must declare the selected Cargo tool")
-        # Consumers without a Dockerfile already use this immutable archive's data.
+            raise ContractError(
+                "candidate Dockerfile or coverage version file must declare the selected Cargo tool"
+            )
+        # The default no-image SemVer route retains the immutable archive's data.
         metadata = fallback if fallback is not None else Path(__file__).resolve().parents[3]
-    versions = declarations(metadata)
+        versions = declarations(metadata)
     if package not in versions:
-        raise ContractError(f"present Dockerfile does not declare {package}; no fallback permitted")
+        raise ContractError(f"candidate does not declare {package}; no fallback permitted")
     toolchain = tomllib.loads(read_data(root, "rust-toolchain.toml")).get("toolchain", {})
     if not isinstance(toolchain, dict):
         raise ContractError("candidate Rust toolchain must be a TOML table")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import json
 import tempfile
@@ -3090,6 +3091,136 @@ jobs_extra:
         self.assertEqual(payload["reports"][HEAD]["status"], "waiting")
         self.assertEqual(payload["dependency_state"]["first_seen"]["d" * 64], NOW.isoformat())
         self.assertEqual(self.api.posted[-1][1]["state"], "pending")
+
+    def test_scheduled_acquisition_refusal_preserves_next_candidate_receipt_and_state(self) -> None:
+        import hashlib
+
+        from test_dependencies import cargo_metadata
+
+        from boxferry_ci.cargo_tools import COVERAGE_FILE
+        from boxferry_ci.operational import OperationalError, SnapshotCache
+
+        next_head = "d" * 40
+        self.api.responses["actions/runs/11"] = run_metadata(11)
+        self.api.responses["pulls/18"] = pr_metadata(18, merge=next_head)
+        self.bind_merge(next_head)
+        self.api.responses["pulls?state=open&per_page=100&sort=updated&direction=desc"] = [
+            {"number": 17},
+            {"number": 18},
+        ]
+        self.api.responses["actions/workflows/ci.yml/runs?event=merge_group&per_page=20"] = {
+            "workflow_runs": []
+        }
+        self.api.responses[f"actions/workflows/ci.yml/runs?head_sha={SOURCE}&per_page=20"] = {
+            "workflow_runs": []
+        }
+        data = b"0.9.0\n"
+        digest = hashlib.sha1(
+            b"blob " + str(len(data)).encode() + b"\0" + data, usedforsecurity=False
+        ).hexdigest()
+        self.api.responses[f"git/trees/{BASE}?recursive=1"] = {"truncated": False, "tree": []}
+        for head in (HEAD, next_head):
+            self.api.responses[f"compare/{BASE}...{head}?per_page=100"] = {
+                "merge_base_commit": {"sha": BASE},
+                "files": [{"filename": COVERAGE_FILE}],
+            }
+            self.api.responses[f"git/trees/{head}?recursive=1"] = {
+                "truncated": False,
+                "tree": [{"path": COVERAGE_FILE, "type": "blob", "mode": "100644", "sha": digest}],
+            }
+            self.contents(COVERAGE_FILE, head, data)
+        original_file, original_snapshot = subject.file_bytes, subject.snapshot
+        previous = state_payload()
+        for fault in ("regular-file", "snapshot"):
+            visited: list[str] = []
+            self.api.posted.clear()
+
+            def read(
+                api: subject.GitHub, path: str, head: str, *, visited: list[str] = visited
+            ) -> bytes | None:
+                if path == COVERAGE_FILE:
+                    visited.append(head)
+                    if head == HEAD:
+                        raise OperationalError("simulated regular-file refusal")
+                return original_file(api, path, head)
+
+            def snapshot(
+                api: subject.GitHub,
+                head: str,
+                destination: Path,
+                paths: list[str],
+                cache: SnapshotCache | None = None,
+                *,
+                visited: list[str] = visited,
+            ) -> None:
+                visited.append(head)
+                if head == HEAD:
+                    raise OperationalError("simulated snapshot refusal")
+                original_snapshot(api, head, destination, paths, cache)
+
+            with (
+                self.subTest(fault=fault),
+                tempfile.TemporaryDirectory() as temporary,
+                patch.object(subject, "previous_state", return_value=deepcopy(previous)),
+                patch.object(recovery, "probe_retained", return_value=None),
+                patch.object(
+                    subject,
+                    "registry_fetch",
+                    return_value=cargo_metadata("cargo-llvm-cov", "0.9.0"),
+                ),
+                contextlib.ExitStack() as stack,
+            ):
+                if fault == "regular-file":
+                    stack.enter_context(patch.object(subject, "file_bytes", side_effect=read))
+                else:
+                    stack.enter_context(patch.object(subject, "snapshot", side_effect=snapshot))
+                output = Path(temporary) / subject.STATE_FILE
+                payload = subject.service(
+                    self.api,
+                    event_name="schedule",
+                    event={},
+                    implementation=IMPLEMENTATION,
+                    run_id=11,
+                    output=output,
+                    now=NOW,
+                )
+                saved = json.loads(output.read_text())
+                self.assertEqual(saved, payload)
+                self.assertIn(HEAD, visited)
+                self.assertIn(next_head, visited)
+                self.assertEqual(len(payload["infrastructure_errors"]), 1)
+                self.assertIn("PR 17: simulated", payload["infrastructure_errors"][0])
+                self.assertNotIn(HEAD, payload["reports"])
+                self.assertEqual(payload["reports"][next_head]["status"], "pass")
+                self.assertEqual(payload["reports"][next_head]["base_sha"], BASE)
+                self.assertEqual(payload["reports"][next_head]["pull_request"], 18)
+                self.assertEqual(payload["dependency_state"], previous["dependency_state"])
+                self.assertEqual(payload["scan_cursor"], 18)
+                self.assertEqual(len(self.api.posted), 1)
+                self.assertEqual(self.api.posted[-1][0], f"statuses/{next_head}")
+                self.assertEqual(self.api.posted[-1][1]["state"], "success")
+
+    def test_operational_error_outside_candidate_acquisition_remains_batch_wide(self) -> None:
+        from boxferry_ci.operational import OperationalError
+
+        self.api.responses["actions/runs/11"] = run_metadata(11)
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(subject, "previous_state", side_effect=OperationalError("batch refusal")),
+        ):
+            output = Path(temporary) / subject.STATE_FILE
+            with self.assertRaisesRegex(OperationalError, "batch refusal"):
+                subject.service(
+                    self.api,
+                    event_name="schedule",
+                    event={},
+                    implementation=IMPLEMENTATION,
+                    run_id=11,
+                    output=output,
+                    now=NOW,
+                )
+            self.assertFalse(output.exists())
+            self.assertEqual(self.api.posted, [])
 
     def test_repository_metadata_uses_github_canonical_endpoint_without_trailing_slash(
         self,

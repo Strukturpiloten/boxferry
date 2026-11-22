@@ -265,14 +265,12 @@ def _packages(root: Path) -> set[Package]:
         path = root / name
         if path.exists():
             result.update(parser(path))
-    from .cargo_tools import DOCKERFILE, declarations
+    from .cargo_tools import declarations
 
-    declared = root / DOCKERFILE
-    if declared.exists() or declared.is_symlink() or declared.parent.is_symlink():
-        result.update(
-            Package("cargo-tool", name, version, CRATES_SOURCE, ())
-            for name, version in declarations(root).items()
-        )
+    result.update(
+        Package("cargo-tool", name, version, CRATES_SOURCE, ())
+        for name, version in declarations(root).items()
+    )
     source_path = root / INVENTORY
     if source_path.exists() or source_path.is_symlink():
         _document, sources = inventory(_read(source_path))

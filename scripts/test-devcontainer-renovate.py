@@ -105,6 +105,7 @@ def pin_policy(configuration: dict, match: re.Match, update_type: str) -> dict:
             "matchManagers": "custom.regex",
             "matchDatasources": match["datasource"],
             "matchPackageNames": match["depName"],
+            "matchDepNames": match["depName"],
             "matchFileNames": DOCKERFILE_PATH,
             "matchDepTypes": None,
             "matchUpdateTypes": update_type,
@@ -282,6 +283,7 @@ class DevContainerRenovateTests(unittest.TestCase):
                 "matchManagers": "cargo",
                 "matchDatasources": "crate",
                 "matchPackageNames": "serde",
+                "matchDepNames": "serde",
                 "matchFileNames": "Cargo.toml",
                 "matchDepTypes": "dependencies",
                 "matchUpdateTypes": "patch",
@@ -290,6 +292,41 @@ class DevContainerRenovateTests(unittest.TestCase):
         self.assertIs(policy["automerge"], True)
         self.assertIs(policy["dependencyDashboardApproval"], False)
         self.assertEqual(policy["minimumReleaseAge"], "3 days")
+
+    def test_dependency_names_match_independently_and_unknown_selectors_fail(self) -> None:
+        configuration = copy.deepcopy(self.configuration)
+        sentinel = "dependency-name fixture"
+        configuration["packageRules"].append(
+            {
+                "matchPackageNames": ["cargo-llvm-cov"],
+                "matchDepNames": ["coverage-alias"],
+                "matchFileNames": [DOCKERFILE_PATH],
+                "groupName": sentinel,
+            }
+        )
+        dependency = {
+            "matchManagers": "custom.regex",
+            "matchDatasources": "crate",
+            "matchPackageNames": "cargo-llvm-cov",
+            "matchDepNames": "coverage-alias",
+            "matchFileNames": DOCKERFILE_PATH,
+            "matchDepTypes": None,
+            "matchUpdateTypes": "patch",
+        }
+        self.assertEqual(effective_policy(configuration, dependency)["groupName"], sentinel)
+        for changed in (
+            {"matchDepNames": "cargo-llvm-cov"},
+            {"matchPackageNames": "serde"},
+            {"matchFileNames": "Cargo.toml"},
+        ):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(
+                    effective_policy(configuration, {**dependency, **changed}).get("groupName"),
+                    sentinel,
+                )
+        configuration["packageRules"].append({"matchUnknownSelector": ["unmodelled"]})
+        with self.assertRaisesRegex(ValueError, "cover every production selector"):
+            effective_policy(configuration, dependency)
 
     def test_digest_only_update_keeps_the_exact_release_and_stage_aliases(self) -> None:
         for manager, match in validate_ownership(self.configuration, self.dockerfile):
@@ -642,6 +679,7 @@ class KubernetesToolRenovateTests(unittest.TestCase):
                             "matchManagers": "custom.regex",
                             "matchDatasources": datasource,
                             "matchPackageNames": match["depName"],
+                            "matchDepNames": match["depName"],
                             "matchFileNames": self.path,
                             "matchDepTypes": match.groupdict().get("depType"),
                             "matchUpdateTypes": update_type,

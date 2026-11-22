@@ -1,0 +1,47 @@
+[
+  {
+    "name": "cargo-llvm-cov",
+    "vers": "0.9.0",
+    "deps": [],
+    "cksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "features": {},
+    "yanked": false,
+    "pubtime": "2026-10-01T00:00:00Z"
+  },
+  {
+    "name": "cargo-llvm-cov",
+    "vers": "0.9.1",
+    "deps": [],
+    "cksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "features": {},
+    "yanked": false,
+    "pubtime": "2026-10-01T00:00:00Z"
+  },
+  {
+    "name": "cargo-llvm-cov",
+    "vers": "0.9.1000000",
+    "deps": [],
+    "cksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "features": {},
+    "yanked": false,
+    "pubtime": "2026-10-01T00:00:00Z"
+  },
+  {
+    "name": "cargo-llvm-cov",
+    "vers": "0.9.1-rc.1",
+    "deps": [],
+    "cksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "features": {},
+    "yanked": false,
+    "pubtime": "2026-10-01T00:00:00Z"
+  },
+  {
+    "name": "cargo-llvm-cov",
+    "vers": "0.9.1+rebuilt.1",
+    "deps": [],
+    "cksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "features": {},
+    "yanked": false,
+    "pubtime": "2026-10-01T00:00:00Z"
+  }
+]

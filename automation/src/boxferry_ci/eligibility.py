@@ -1261,16 +1261,15 @@ def evaluate(
         base, head = root / "base", root / "head"
         base.mkdir()
         head.mkdir()
-        from .operational import SnapshotCache
+        from .dependency_snapshots import AcquisitionError, validate_pair
+        from .operational import OperationalError, SnapshotCache
 
         cache = SnapshotCache()
-        snapshot(api, candidate.base, base, paths, cache)
-        snapshot(api, candidate.head, head, paths, cache)
-        from .dependency_snapshots import AcquisitionError, validate_pair
-
         try:
+            snapshot(api, candidate.base, base, paths, cache)
+            snapshot(api, candidate.head, head, paths, cache)
             validate_pair(base, head, paths)
-        except AcquisitionError as error:
+        except (AcquisitionError, OperationalError) as error:
             raise EligibilityError(str(error)) from error
         result = check_dependencies(
             base,

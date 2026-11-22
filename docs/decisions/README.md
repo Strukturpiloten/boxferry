@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Proposed decisions
 
+[ADR 0102](0102-imageless-candidate-coverage-source.md) proposes the exact one-line
+coverage version file for image-less callers, preserving existing image and SemVer selection.
+
 [ADR 0098](0098-preserved-original-dependency-recheck.md) proposes original-graph dependency
 rechecks followed by fresh protected queue validation, with exact static event exclusions.
 
