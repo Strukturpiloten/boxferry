@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from boxferry_ci.contracts import ContractError, object_value, relative_path, strings
+from boxferry_ci.operational import PODMAN_LENS_REPOSITORY
 
 DEFAULT_TASKS: dict[str, tuple[tuple[str, ...], ...]] = {
     "rust-quality": (
@@ -64,6 +65,7 @@ class Policy:
     path_profiles: dict[str, tuple[str, ...]]
     tasks: dict[str, Task]
     path: Path
+    podman_native_conformance: bool = False
 
     def selected_jobs(self, profiles: tuple[str, ...]) -> set[str]:
         if profiles == ("full",):
@@ -101,13 +103,19 @@ def load_policy(path: Path) -> Policy:
         "documentation_examples_manifest",
         "local_commands",
     }
-    if not required <= data.keys() or data.keys() - required - {"tasks", "path_profiles"}:
+    optional = {"tasks", "path_profiles", "podman_native_conformance"}
+    if not required <= data.keys() or data.keys() - required - optional:
         raise ContractError("validation policy has an unsupported key set")
     if type(data["schema"]) is not int or data["schema"] not in {2, 3}:
         raise ContractError("validation policy has an unsupported schema")
     repository = data["repository"]
     if not isinstance(repository, str) or re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is None:
         raise ContractError("validation policy repository must be owner/name")
+    podman_native = data.get("podman_native_conformance", False)
+    if type(podman_native) is not bool:
+        raise ContractError("podman_native_conformance must be boolean")
+    if "podman_native_conformance" in data and repository != PODMAN_LENS_REPOSITORY:
+        raise ContractError("podman_native_conformance is owned by PodmanLens")
     jobs = strings(data["jobs"], "policy jobs")
     if any(re.fullmatch(r"[a-zA-Z0-9_-]+", job) is None for job in jobs):
         raise ContractError("policy job names must be safe workflow identifiers")
@@ -177,4 +185,5 @@ def load_policy(path: Path) -> Policy:
         path_profiles,
         tasks,
         path.resolve(),
+        podman_native,
     )

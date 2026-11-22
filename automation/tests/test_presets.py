@@ -2829,7 +2829,8 @@ validationWiring: (() => {
         self.assertEqual(bound_automation[0], bound_automation[1])
         # CLI recomputes from independently bound source/policy rather than supplied selections.
         cli = (ROOT / "automation/src/boxferry_ci/__main__.py").read_text()
-        self.assertIn("expected_plan=_plan(args, policy)", cli)
+        self.assertIn("expected_plan = _plan(args, policy)", cli)
+        self.assertIn("expected_plan=expected_plan", cli)
 
     def _controlled_conditional_wiring(self, original: dict[str, Any]) -> dict[str, Any]:
         """Authored contract fixture: candidate T differs from immutable planner/gate A."""
