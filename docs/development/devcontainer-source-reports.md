@@ -11,8 +11,14 @@ cause and validated bindings, so a later artifact-service failure cannot erase d
 This log channel neutralizes modern and legacy workflow commands. Atomic report and command-file
 writes remove only their own temporary files and preserve prior command-file bytes.
 
-The authored HTTP-boundary fixture in `automation/tests/source_report_fixture.py` exercises
-the actual CLI and metadata reader. Its controlled reports are diagnostic fixtures, never
+BoxFerry resolves each of its six public siblings with one bounded, credential-free
+Git protocol v2 `ls-refs` request to the canonical HTTPS remote. The symbolic HEAD must name
+an advertised branch at the same full commit in that response. An HTTP error or an incomplete
+smart response blocks resolution. Both native lanes consume the single resolved manifest,
+which retains the tested BoxFerry revision.
+
+The authored fixture in `automation/tests/source_report_fixture.py` exercises the actual
+CLI and Git advertisement parser. Its controlled reports are diagnostic fixtures, never
 real sibling revisions or native acceptance. Producer tests precede admission/distribution;
 operational adoption and hosted diagnostics must then select that immutable admitted source.
 
@@ -21,7 +27,8 @@ operational adoption and hosted diagnostics must then select that immutable admi
 `Dev Container source report diagnostics` is a separate manual, main-only workflow for
 BoxFerry. It selects immutable automation solely from the exact candidate's existing
 `.github/automation.json`, then uses that source's binding action, locked Python, actual
-HTTP-boundary fixture and canonical source-job final Bash. Producer admission/distribution
+fixture and canonical source-job final Bash. The observer validates both legacy HTTP fixtures
+and the Git fixture selected after adoption. Producer admission/distribution
 and coherent operational adoption must precede dispatch. It does not resolve live sibling
 revisions or build native images.
 

@@ -23,14 +23,13 @@ import tempfile
 import time
 import tomllib
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import git_worktree_validation
 from .contracts import ContractError, exact_sha
-from .dependencies import fetch_metadata
 from .operational import _json
 from .runner import (
     RunCancelled,
@@ -60,6 +59,19 @@ BUILD_SECONDS, PROBE_SECONDS, CLEANUP_SECONDS = 3600, 300, 300
 MAX_TREE_FILES, MAX_TREE_BYTES = 25000, 256 * 1024**2
 MAX_REPORT = 64 * 1024
 MAX_FAILURE_STREAM = 2048
+REMOTE_HEAD_BYTES = 64 * 1024
+REMOTE_HEAD_SECONDS = 20
+_LS_REFS_REQUEST = (
+    "0014command=ls-refs\n0001000csymrefs\n0014ref-prefix HEAD\n001bref-prefix refs/heads/\n0000"
+)
+_CURL_REFUSALS = {
+    6: "DNS resolution failed",
+    7: "connection failed",
+    18: "response was truncated",
+    28: "transfer timed out",
+    35: "TLS handshake failed",
+    60: "TLS certificate verification failed",
+}
 _CAUSAL_LINE = re.compile(r"\b(error|failed|failure|fatal|denied|cannot|unable|not found)\b", re.I)
 
 
@@ -165,23 +177,115 @@ def parse_sources(document: object, repository: str, candidate: str) -> dict[str
     return result
 
 
-def resolve_sources(
-    repository: str, candidate: str, request: Callable[[str], bytes] = fetch_metadata
-) -> dict[str, object]:
+def _branch_ref(ref: bytes) -> bool:
+    branch = ref.removeprefix(b"refs/heads/")
+    return (
+        ref.startswith(b"refs/heads/")
+        and all(
+            part and not part.startswith(b".") and not part.endswith(b".lock")
+            for part in branch.split(b"/")
+        )
+        and not branch.endswith(b".")
+        and re.search(rb"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{", branch) is None
+    )
+
+
+def canonical_sibling_head(private: Path, name: str) -> tuple[str, str]:
+    """Request one Git v2 ls-refs advertisement, with no dumb HTTP fallback."""
+    if name not in SIBLINGS:
+        raise ValidationError("Git HEAD requires an allowlisted public sibling")
+    # Send only the read-only v2 command to Git's canonical upload-pack service.
+    # A generic ls-remote could fall back to separate dumb HEAD and ref reads.
+    result = run(
+        (
+            "/usr/bin/curl",
+            "--disable",
+            "--silent",
+            "--proto",
+            "=https",
+            "--header",
+            "Git-Protocol: version=2",
+            "--header",
+            "Content-Type: application/x-git-upload-pack-request",
+            "--header",
+            "Accept: application/x-git-upload-pack-result",
+            "--data-binary",
+            _LS_REFS_REQUEST,
+            "--write-out",
+            "\n%{http_code}\t%{content_type}\n",
+            f"https://github.com/Strukturpiloten/{name}.git/git-upload-pack",
+        ),
+        cwd=private,
+        environment=environment(private),
+        stage="read canonical sibling HEAD",
+        timeout_seconds=REMOTE_HEAD_SECONDS,
+        max_output_bytes=REMOTE_HEAD_BYTES,
+    )
+    if result.status != "success":
+        cause = _CURL_REFUSALS.get(result.returncode or 0, result.diagnostic.cause)
+        raise ValidationError(f"{name} canonical Git HEAD read failed ({cause})")
+    body, separator, metadata = result.stdout_bytes.removesuffix(b"\n").rpartition(b"\n")
+    status, _, content_type = metadata.partition(b"\t")
+    if not separator or re.fullmatch(rb"[1-5][0-9]{2}", status) is None:
+        raise ValidationError(f"{name} canonical Git HEAD lacks a valid HTTP response")
+    if status != b"200":
+        raise ValidationError(f"{name} canonical Git HEAD HTTP {status.decode('ascii')}")
+    if content_type.lower() != b"application/x-git-upload-pack-result":
+        raise ValidationError(f"{name} canonical Git HEAD requires a smart ls-refs response")
+    return _sibling_advertisement(name, body)
+
+
+def _sibling_advertisement(name: str, body: bytes) -> tuple[str, str]:
+    refs: dict[bytes, bytes] = {}
+    symbolic: bytes | None = None
+    malformed = f"{name} canonical Git HEAD advertisement is malformed"
+    while body != b"0000":
+        header = body[:4]
+        if re.fullmatch(rb"[0-9a-f]{4}", header) is None:
+            raise ValidationError(malformed)
+        size = int(header, 16)
+        if not 5 <= size <= min(len(body), 65520) or body[size - 1 : size] != b"\n":
+            raise ValidationError(malformed)
+        fields = body[4 : size - 1].split(b" ")
+        body = body[size:]
+        if len(fields) < 2:
+            raise ValidationError(malformed)
+        oid, ref, *attributes = fields
+        if re.fullmatch(rb"[0-9a-f]{40}", oid) is None or oid == b"0" * 40:
+            raise ValidationError(f"{name} canonical Git advertisement has an invalid commit SHA")
+        if ref in refs:
+            raise ValidationError(f"{name} canonical Git HEAD advertisement is ambiguous")
+        if ref == b"HEAD":
+            if len(attributes) != 1 or not attributes[0].startswith(b"symref-target:"):
+                raise ValidationError(malformed)
+            symbolic = attributes[0].removeprefix(b"symref-target:")
+        elif attributes or not _branch_ref(ref):
+            raise ValidationError(malformed)
+        refs[ref] = oid
+    if (
+        symbolic is None
+        or symbolic not in refs
+        or symbolic == b"HEAD"
+        or refs.get(b"HEAD") != refs[symbolic]
+    ):
+        raise ValidationError(f"{name} canonical Git HEAD lacks a matching default branch and tip")
+    try:
+        return symbolic.removeprefix(b"refs/heads/").decode("utf-8"), refs[symbolic].decode("ascii")
+    except UnicodeDecodeError:
+        raise ValidationError(f"{name} canonical Git HEAD branch is not UTF-8") from None
+
+
+def resolve_sources(repository: str, candidate: str) -> dict[str, object]:
     """Read each permitted public default branch once; never resolve inside a worker."""
     if repository not in OWNERS:
         raise ValidationError("repository does not own a Dev Container")
     revisions = {repository: exact_sha(candidate, "candidate SHA")}
     if repository == "boxferry":
-        for name in SIBLINGS:
-            metadata = _json(request(f"https://api.github.com/repos/Strukturpiloten/{name}"))
-            branch = metadata.get("default_branch")
-            if not isinstance(branch, str) or re.fullmatch(r"[A-Za-z0-9_.-]+", branch) is None:
-                raise ValidationError("public repository has an unsupported default branch")
-            commit = _json(
-                request(f"https://api.github.com/repos/Strukturpiloten/{name}/commits/{branch}")
-            )
-            revisions[name] = exact_sha(commit.get("sha"), "resolved sibling SHA")
+        # Keep command setup outside candidate-controlled paths and an ambient TMPDIR.
+        with tempfile.TemporaryDirectory(prefix="boxferry-sibling-head-", dir="/tmp") as directory:
+            private = Path(directory).resolve()
+            for name in SIBLINGS:
+                _, revisions[name] = canonical_sibling_head(private, name)
     return {"schema": 1, "repositories": revisions}
 
 

@@ -22,7 +22,7 @@ CASES = {
     "missing-report": ("missing-report", 0, 12),
     "unavailable-report-loss": ("unavailable", 1, 1),
 }
-# Independent expected causes for these finite authored HTTP controls, not resolver policy.
+# Independent expectations for the legacy HTTP and current Git fixtures.
 # They fit the log bound and contain no command punctuation, so no truncation/neutralization
 # may silently substitute another cause in either retained channel.
 EXPECTED_CAUSES = {
@@ -31,6 +31,15 @@ EXPECTED_CAUSES = {
     "invalid-revision": "resolved sibling SHA must be an exact lowercase 40-character Git SHA",
     "unavailable-report-loss": "controlled metadata unavailable [REDACTED]",
 }
+GIT_CAUSES = {
+    "unavailable": (
+        "compose-lens canonical Git HEAD read failed "
+        "(controlled Git transport unavailable [REDACTED])"
+    ),
+    "malformed": "compose-lens canonical Git HEAD advertisement is malformed",
+    "invalid-revision": "compose-lens canonical Git advertisement has an invalid commit SHA",
+}
+GIT_CAUSES["unavailable-report-loss"] = GIT_CAUSES["unavailable"]
 KIND = "diagnostic-fixture-not-native-acceptance"
 MODULE = "automation/src/boxferry_ci/devcontainer_validation.py"
 FIXTURE = "automation/tests/source_report_fixture.py"
@@ -199,7 +208,15 @@ def owner(
     return identity
 
 
-def safe_log(data: bytes, identity: dict[str, Any], failed: bool) -> str:
+def fixture_contract(schema: object, case: str) -> tuple[int, str | None]:
+    require(type(schema) is int and schema in {1, 2}, "unsupported fixture schema")
+    _fixture_case, code, legacy_requests = CASES[case]
+    if schema == 1:
+        return legacy_requests, EXPECTED_CAUSES.get(case)
+    return (1 if code else 6), GIT_CAUSES.get(case)
+
+
+def safe_log(data: bytes, identity: dict[str, Any], expected_cause: str | None) -> str:
     require(len(data) <= 4096, "resolver stderr exceeds log budget")
     text = data.decode("utf-8")
     require(
@@ -209,7 +226,7 @@ def safe_log(data: bytes, identity: dict[str, Any], failed: bool) -> str:
         and all(ord(char) >= 32 or char == "\n" for char in text),
         "unsafe resolver stderr",
     )
-    if failed:
+    if expected_cause is not None:
         lines = text.splitlines()
         require(
             len(lines) == 2
@@ -231,7 +248,7 @@ def safe_log(data: bytes, identity: dict[str, Any], failed: bool) -> str:
             and record.get("status") == "failure"
             and record.get("repository") == "boxferry"
             and record.get("stage") == "metadata"
-            and record.get("cause") == EXPECTED_CAUSES[identity["case"]]
+            and record.get("cause") == expected_cause
             and record.get("cause_truncated") is False
             and record.get("next_action"),
             "missing original cause or stage",
@@ -243,11 +260,11 @@ def safe_log(data: bytes, identity: dict[str, Any], failed: bool) -> str:
 
 def observe(root: Path, identity: dict[str, Any]) -> None:
     case = identity["case"]
-    fixture_case, code, requests = CASES[case]
+    fixture_case, code, _legacy_requests = CASES[case]
     directory = root / "fixture"
     summary = document(directory / "fixture.json", 8192)
+    requests, expected_cause = fixture_contract(summary.get("schema"), case)
     for key, value in {
-        "schema": 1,
         "kind": KIND,
         "case": fixture_case,
         "candidate_sha": identity["candidate_sha"],
@@ -261,7 +278,7 @@ def observe(root: Path, identity: dict[str, Any]) -> None:
         "module_sha256": identity["source_sha256"][MODULE],
     }.items():
         require(type(summary.get(key)) is type(value) and summary[key] == value, "fixture mismatch")
-    stderr = safe_log(regular(directory / "resolver.stderr", 4096), identity, bool(code))
+    stderr = safe_log(regular(directory / "resolver.stderr", 4096), identity, expected_cause)
     report = directory / "devcontainer-sources.json"
     if case == "missing-report":
         require(not report.exists() and not report.is_symlink(), "missing-report still exists")
@@ -282,7 +299,7 @@ def observe(root: Path, identity: dict[str, Any]) -> None:
                 and parsed.get("command") == "resolve"
                 and parsed.get("repository") == "boxferry"
                 and parsed.get("stage") == "metadata"
-                and parsed.get("cause") == EXPECTED_CAUSES[case]
+                and parsed.get("cause") == expected_cause
                 and parsed.get("next_action")
                 and "repositories" not in parsed,
                 "invalid failure report",
@@ -359,9 +376,9 @@ def sidecars(root: Path, identity: dict[str, Any]) -> None:
     for path in paths:
         data = regular(path, 8192)
         require(b"authored-source-report-canary" not in data, "unsafe diagnostic sidecar")
-    safe_log(
-        regular(root / "fixture/resolver.stderr", 4096), identity, bool(CASES[identity["case"]][1])
-    )
+    summary = document(root / "fixture/fixture.json", 8192)
+    _, expected_cause = fixture_contract(summary.get("schema"), identity["case"])
+    safe_log(regular(root / "fixture/resolver.stderr", 4096), identity, expected_cause)
 
 
 def canonical(automation: Path) -> tuple[dict[str, Any], dict[str, Any]]:

@@ -1,7 +1,7 @@
-"""Authored finite HTTP-boundary controls; never operational source or native receipts.
+"""Authored finite Git-advertisement controls; never operational source or native receipts.
 
-The CLI and metadata reader are real selected producer code. Only the external
-HTTP response is controlled. Provenance: authored, MPL-2.0, redistributable;
+The CLI and advertisement parser are real selected producer code. Only the external
+command result is controlled. Provenance: authored, MPL-2.0, redistributable;
 no external implementation was copied and no operational version is invented.
 """
 
@@ -14,7 +14,6 @@ import io
 import json
 import os
 import sys
-import urllib.request
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -35,6 +34,7 @@ def exercise(
     sys.path.insert(0, str(automation / "automation/src"))
     from boxferry_ci import dependencies
     from boxferry_ci import devcontainer_validation as validation
+    from boxferry_ci.runner import Diagnostic, RunResult
 
     module = Path(validation.__file__).resolve()
     expected = (automation / "automation/src/boxferry_ci/devcontainer_validation.py").resolve()
@@ -45,25 +45,47 @@ def exercise(
     exports = directory / "github-output"
     calls: list[str] = []
 
-    class Opener:
-        def open(self, request: urllib.request.Request, *, timeout: int) -> io.BytesIO:
-            url = request.full_url
-            prefix = "https://api.github.com/repos/Strukturpiloten/"
-            if not url.startswith(prefix) or timeout != 20 or len(calls) >= 12:
-                raise AssertionError("fixture metadata boundary exceeded")
-            suffix = url.removeprefix(prefix).split("/")
-            if suffix[0] not in validation.SIBLINGS or suffix[1:] not in ([], ["commits", "main"]):
-                raise AssertionError("fixture received an unrelated metadata request")
-            calls.append(url)
-            if case == "unavailable":
-                raise OSError("controlled metadata unavailable " + SECRET)
-            if case == "malformed":
-                return io.BytesIO(b'{"default_branch":null}')
-            if len(suffix) == 1:
-                data = {"default_branch": "main"}
-            else:
-                data = {"sha": "not-a-revision" if case == "invalid-revision" else candidate}
-            return io.BytesIO(json.dumps(data).encode())
+    def git(argv: tuple[str, ...], **options: object) -> RunResult:
+        prefix = "https://github.com/Strukturpiloten/"
+        url = argv[-1]
+        if (
+            argv[:2] != ("/usr/bin/curl", "--disable")
+            or "Git-Protocol: version=2" not in argv
+            or options["timeout_seconds"] != 20
+            or options["max_output_bytes"] != 64 * 1024
+            or len(calls) >= 6
+            or not url.startswith(prefix)
+            or not url.endswith(".git/git-upload-pack")
+            or url.removeprefix(prefix).removesuffix(".git/git-upload-pack")
+            not in validation.SIBLINGS
+            or url in calls
+        ):
+            raise AssertionError("fixture Git HEAD boundary exceeded")
+        calls.append(url)
+        status, cause = "success", ""
+        if case == "unavailable":
+            status, cause, raw = "failure", "controlled Git transport unavailable " + SECRET, b""
+        elif case == "malformed":
+            raw = b"malformed"
+        else:
+            tip = "not-a-revision" if case == "invalid-revision" else candidate
+            lines = (
+                f"{tip} HEAD symref-target:refs/heads/release/current\n",
+                f"{tip} refs/heads/release/current\n",
+            )
+            raw = "".join(f"{len(line) + 4:04x}{line}" for line in lines).encode() + b"0000"
+        if status == "success":
+            raw += b"\n200\tapplication/x-git-upload-pack-result\n"
+        return RunResult(
+            status,
+            int(status != "success"),
+            "",
+            "",
+            0,
+            Diagnostic("read canonical sibling HEAD", cause, "", "", ""),
+            argv,
+            raw,
+        )
 
     stderr = io.StringIO()
     argv = [
@@ -84,7 +106,10 @@ def exercise(
         str(exports),
     ]
     with (
-        patch.object(dependencies.urllib.request, "build_opener", return_value=Opener()),
+        patch.object(
+            dependencies.urllib.request, "build_opener", side_effect=AssertionError("no REST calls")
+        ),
+        patch.object(validation, "run", side_effect=git),
         patch.dict(os.environ, {"SOURCE_REPORT_TEST_TOKEN": SECRET}),
         contextlib.redirect_stderr(stderr),
     ):
@@ -95,7 +120,7 @@ def exercise(
     report = json.loads(output.read_text())
     if good:
         validation.parse_sources(report, "boxferry", candidate)
-        if len(calls) != 12 or "sources=" not in exports.read_text():
+        if len(calls) != 6 or "sources=" not in exports.read_text():
             raise AssertionError("successful real CLI did not export the complete held closure")
     elif (
         report.get("status") != "failure"
@@ -112,7 +137,7 @@ def exercise(
     if case == "missing-report":
         output.unlink()  # Exact fixture-owned file: simulate loss before upload, never outside it.
     summary: dict[str, Any] = {
-        "schema": 1,
+        "schema": 2,
         "kind": "diagnostic-fixture-not-native-acceptance",
         "case": case,
         "candidate_sha": candidate,
@@ -124,7 +149,7 @@ def exercise(
         "exports_present": exports.exists(),
         "controlled_report_removal": case == "missing-report",
         "module_sha256": hashlib.sha256(module.read_bytes()).hexdigest(),
-        "fixture_provenance": "authored MPL-2.0; only public HTTP responses are controlled",
+        "fixture_provenance": "authored MPL-2.0; only public Git command results are controlled",
     }
     (directory / "fixture.json").write_text(json.dumps(summary, sort_keys=True) + "\n")
     (directory / "resolver.stderr").write_text(stderr.getvalue())

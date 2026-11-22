@@ -340,31 +340,116 @@ class ProducerTests(unittest.TestCase):
                         git.assert_called_once_with(self.root, "remote", "get-url", "origin")
 
     def test_source_resolution_reads_only_six_scoped_public_defaults_once(self) -> None:
-        calls: list[str] = []
+        siblings = (
+            "compose-lens",
+            "docker-lens",
+            "kubernetes-lens",
+            "podman-lens",
+            "quadlet-lens",
+            "boxferry-website",
+        )
+        expected = {name: str(index + 1) * 40 for index, name in enumerate(siblings)}
+        advertisements = [
+            self.head_advertisement("release/stable", sha) for sha in expected.values()
+        ]
+        untrusted = {
+            "HOME": "/untrusted",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "url.file:///untrusted.insteadOf",
+            "GIT_CONFIG_VALUE_0": "https://github.com/",
+            "GIT_DIR": "/untrusted/.git",
+            "TMPDIR": "/untrusted/scratch:ceiling",
+            "HTTPS_PROXY": "https://user:password@proxy.invalid/",
+            "GITHUB_TOKEN": "ambient-token",
+            "GIT_SSL_NO_VERIFY": "1",
+        }
+        with (
+            patch.dict(os.environ, untrusted),
+            patch.object(validation, "run", side_effect=advertisements) as git,
+        ):
+            manifest = validation.resolve_sources("boxferry", SHA)
+            lens = validation.resolve_sources("compose-lens", SHA)
+        self.assertEqual(manifest, {"schema": 1, "repositories": {"boxferry": SHA, **expected}})
+        self.assertEqual(lens, {"schema": 1, "repositories": {"compose-lens": SHA}})
+        self.assertEqual(git.call_count, 6)
+        for name, call in zip(siblings, git.call_args_list, strict=True):
+            (argv,) = call.args
+            self.assertEqual(argv[:2], ("/usr/bin/curl", "--disable"))
+            self.assertEqual(
+                argv[-1], f"https://github.com/Strukturpiloten/{name}.git/git-upload-pack"
+            )
+            self.assertIn("=https", argv)
+            self.assertIn("Git-Protocol: version=2", argv)
+            self.assertNotIn("--location", argv)
+            self.assertEqual(
+                argv[argv.index("--data-binary") + 1],
+                "0014command=ls-refs\n0001000csymrefs\n"
+                "0014ref-prefix HEAD\n001bref-prefix refs/heads/\n0000",
+            )
+            env = call.kwargs["environment"]
+            private = call.kwargs["cwd"]
+            self.assertFalse(private.exists())
+            self.assertEqual(private.parent, Path("/tmp").resolve())
+            self.assertEqual(env["HOME"], str(private / "home"))
+            self.assertFalse(set(env).intersection(set(untrusted) - {"HOME"}))
+            self.assertEqual(call.kwargs["timeout_seconds"], 20)
+            self.assertEqual(call.kwargs["max_output_bytes"], 64 * 1024)
 
-        def request(url: str) -> bytes:
-            calls.append(url)
-            return json.dumps(
-                {"sha": SHA} if "/commits/" in url else {"default_branch": "main"}
-            ).encode()
+    @staticmethod
+    def head_advertisement(branch: str, tip: str, branch_tip: str | None = None) -> RunResult:
+        lines = (
+            f"{tip} HEAD symref-target:refs/heads/{branch}\n",
+            f"{branch_tip or tip} refs/heads/{branch}\n",
+        )
+        raw = "".join(f"{len(line) + 4:04x}{line}" for line in lines).encode()
+        raw += b"0000\n200\tapplication/x-git-upload-pack-result\n"
+        return RunResult("success", 0, "", "", 0, Diagnostic("", "", "", "", ""), (), raw)
 
-        manifest = validation.resolve_sources("boxferry", SHA, request)
-        self.assertEqual(len(calls), 12)
-        self.assertIsInstance(manifest["repositories"], dict)
-        self.assertEqual(
-            set(validation.parse_sources(manifest, "boxferry", SHA)),
-            set(validation.ALL_REPOSITORIES),
-        )
-        self.assertEqual(validation.parse_sources(manifest, "boxferry", SHA)["boxferry"], SHA)
-        self.assertEqual(len(set(calls)), len(calls))
-        self.assertTrue(
-            all(url.startswith("https://api.github.com/repos/Strukturpiloten/") for url in calls)
-        )
-        self.assertEqual(
-            validation.resolve_sources("compose-lens", SHA, request)["repositories"],
-            {"compose-lens": SHA},
-        )
-        self.assertEqual(len(calls), 12)
+    def test_source_resolution_refuses_incomplete_or_conflicting_git_authority(self) -> None:
+        good = self.head_advertisement("release/stable", SHA)
+        body, metadata = good.stdout_bytes.split(b"\n200", 1)
+        trailer = b"\n200" + metadata
+        head, branch, _end = body.splitlines(keepends=True)
+        for result in (
+            self.head_advertisement("release/stable", SHA, POLICY),
+            self.head_advertisement("release/../stable", SHA),
+            self.head_advertisement("release/stable.lock", SHA),
+            self.head_advertisement("release/stable", "0" * 40),
+            self.head_advertisement("release/stable", "main"),
+            *(
+                RunResult("success", 0, "", "", 0, good.diagnostic, (), raw)
+                for raw in (
+                    head + b"0000" + trailer,
+                    body[:-6] + trailer,
+                    head + head + branch + b"0000" + trailer,
+                    body.replace(b"symref-target:refs/heads/", b"symref-target:refs/tags/")
+                    + trailer,
+                    head + branch + branch + b"0000" + trailer,
+                    body + b"\n200\ttext/plain\n",
+                    body + b"\n302\tapplication/x-git-upload-pack-result\n",
+                )
+            ),
+            RunResult(
+                "failure",
+                None,
+                "",
+                "private stderr",
+                20,
+                Diagnostic("", "command exceeded its time budget", "", "", ""),
+                (),
+            ),
+        ):
+            with (
+                self.subTest(raw=result.stdout_bytes, status=result.status),
+                patch.object(validation, "run", side_effect=[good, result]) as git,
+            ):
+                with self.assertRaisesRegex(validation.ValidationError, "docker-lens canonical"):
+                    validation.resolve_sources("boxferry", SHA)
+                self.assertEqual(git.call_count, 2)
+        with patch.object(validation, "run") as git:
+            with self.assertRaisesRegex(validation.ValidationError, "allowlisted"):
+                validation.canonical_sibling_head(self.root, "../other")
+            git.assert_not_called()
 
     def test_source_manifest_rejects_missing_extra_floating_or_wrong_candidate(self) -> None:
         good = {name: SHA for name in validation.ALL_REPOSITORIES}
