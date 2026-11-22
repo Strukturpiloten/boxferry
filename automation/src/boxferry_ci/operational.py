@@ -36,6 +36,14 @@ FEATURE = ".devcontainer/devcontainer.json"
 FEATURE_LOCK = ".devcontainer/devcontainer-lock.json"
 DOCKERFILE = ".devcontainer/Dockerfile"
 PROBE = "scripts/podman-live-conformance.sh"
+PODMAN_LENS_REPOSITORY = "Strukturpiloten/podman-lens"
+PODMAN_NATIVE_PINS = "scripts/native-runtime-pins.sh"
+FEDORA_IMAGE = "registry.fedoraproject.org/fedora"
+FEDORA_BASE = FEDORA_IMAGE + ":45"
+NATIVE_PIN_ASSIGNMENT = re.compile(
+    r"readonly PODMAN_NATIVE_[A-Z0-9_]+=(?:[A-Za-z0-9_.:/@+-]+"
+    r'|"v?\$\{PODMAN_NATIVE_[A-Z0-9_]+(?:%%-\*|#\*-)?\}")'
+)
 IMAGE_JSON = frozenset({"automation/renovate-runtime.json", "scripts/renovate-tool.json"})
 CATALOGUES = frozenset(
     {
@@ -44,7 +52,7 @@ CATALOGUES = frozenset(
     }
     | {"fixtures/conformance/podman-live/matrix.tsv"}
 )
-EXCLUDED_PATHS = frozenset({"scripts/native-runtime-pins.sh", "scripts/kind-vm-image.json"})
+EXCLUDED_PATHS = frozenset({"scripts/kind-vm-image.json"})
 FIXED_PATHS = IMAGE_JSON | CATALOGUES | {FEATURE, FEATURE_LOCK, DOCKERFILE, PROBE}
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 SELECTOR = re.compile(r"(?:ubuntu|macos|windows)-[0-9]+(?:\.[0-9]+)?(?:-[a-z0-9]+)*\Z")
@@ -92,6 +100,10 @@ class Pin:
         return (
             self.kind == "runner"
             or self.source == "ghcr.io"
+            or (
+                self.path == PODMAN_NATIVE_PINS
+                and f"{self.source}/{self.name}:{self.version}" == FEDORA_BASE
+            )
             or (
                 (self.source, self.name)
                 in {
@@ -280,6 +292,32 @@ def _probe(text: str, path: str) -> list[Pin]:
     if len(found) != 1:
         raise OperationalError("owned workload probe must have exactly one image declaration")
     return found
+
+
+def _fedora_base(root: Path) -> Pin | None:
+    text = _read(root, PODMAN_NATIVE_PINS)
+    if text is None:
+        return None
+    lines = text.split("\n")
+    # Require inert assignments so a literal in a heredoc or an alternate
+    # shell assignment cannot hide the effective declaration.
+    if any(
+        line and not line.startswith("#") and not NATIVE_PIN_ASSIGNMENT.fullmatch(line)
+        for line in lines
+    ):
+        raise OperationalError("PodmanLens native pins must use inert readonly assignments")
+    marker = "# renovate: datasource=docker depName=" + FEDORA_IMAGE
+    declaration = "readonly PODMAN_NATIVE_BASE_IMAGE="
+    assignments = [index for index, line in enumerate(lines) if line.startswith(declaration)]
+    if len(assignments) != 1 or assignments[0] == 0 or lines[assignments[0] - 1] != marker:
+        raise OperationalError("PodmanLens native pins require one annotated Fedora base image")
+    index = assignments[0]
+    literal = lines[index].removeprefix(declaration)
+    if not literal.startswith(FEDORA_BASE + "@"):
+        raise OperationalError(
+            "PodmanLens native base image must retain the reviewed Fedora 45 source"
+        )
+    return _ref(literal, PODMAN_NATIVE_PINS, index + 1)
 
 
 def _image_json(text: str, path: str) -> list[Pin]:
@@ -862,6 +900,16 @@ def check_operational(
         for pin in new_valid.values():
             after[pin.key] = pin
         introduced = [after[key] for key in sorted(after.keys() - before.keys())]
+        if context is not None and context.repository == PODMAN_LENS_REPOSITORY:
+            old_fedora, new_fedora = _fedora_base(base), _fedora_base(head)
+            if new_fedora is None:
+                raise OperationalError(
+                    "owned PodmanLens Fedora image pin is missing from the candidate"
+                )
+            # Compare the owned slot directly so a duplicate elsewhere in the base
+            # cannot make a change to this pin disappear from the introduced set.
+            if old_fedora is None or old_fedora.key != new_fedora.key:
+                introduced.append(new_fedora)
         if sum(pin.covered or pin.kind == "unsupported-runner" for pin in introduced) > remaining:
             raise OperationalError("combined introduced identities exceed their request bound")
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ConnectionError) as error:
@@ -918,6 +966,8 @@ def check_operational(
             "retry_at": None,
             "retry_eligible": False,
         }
+        if pin.path == PODMAN_NATIVE_PINS:
+            result["integrity"] = [pin.digest]
         try:
             if not pin.covered:
                 report["coverage_gaps"].append({"source": pin.source, "path": pin.path})

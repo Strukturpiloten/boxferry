@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from .git_source import INVENTORY
-from .operational import MAX_FILE_BYTES, SnapshotCache, inventory_blobs, snapshot_paths
+from .operational import (
+    MAX_FILE_BYTES,
+    PODMAN_LENS_REPOSITORY,
+    PODMAN_NATIVE_PINS,
+    SnapshotCache,
+    inventory_blobs,
+    snapshot_paths,
+)
 
 ReadJSON = Callable[[str], dict[str, Any]]
 ReadRegularFile = Callable[[str, str], bytes | None]
@@ -81,6 +88,7 @@ def materialize(
     cache: SnapshotCache,
     lock_paths: Sequence[str],
     max_bytes: int,
+    repository: str | None = None,
 ) -> Materialization:
     """Read bounded regular metadata at one exact revision; never execute its bytes."""
     _revision(head)
@@ -93,10 +101,12 @@ def materialize(
     operational = snapshot_paths(validated)
     # Always acquire the canonical inventory, including unchanged rows. The full
     # tree shares the caller's existing run-wide request/deadline budget.
-    blobs = inventory_blobs(read_json(f"git/trees/{head}?recursive=1"), extra_paths=(INVENTORY,))
+    extra = (
+        (INVENTORY, PODMAN_NATIVE_PINS) if repository == PODMAN_LENS_REPOSITORY else (INVENTORY,)
+    )
+    blobs = inventory_blobs(read_json(f"git/trees/{head}?recursive=1"), extra_paths=extra)
     operational.update(snapshot_paths(list(blobs)))
-    if INVENTORY in blobs:
-        operational.add(INVENTORY)
+    operational.update(path for path in extra if path in blobs)
     pending: dict[str, bytes] = {}
     total = 0
     selected = {_path(path) for path in lock_paths} | manifests | {"Cargo.toml"} | operational

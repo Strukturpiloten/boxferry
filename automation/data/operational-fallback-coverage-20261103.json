@@ -7,7 +7,8 @@
     "quay.io/libpod/alpine canonical workload probe",
     "Literal GitHub-hosted runner selectors in covered workflow grammars",
     "Exact mcr.microsoft.com/devcontainers/rust annotated Dev Container source",
-    "Actual codeberg.org/forgejo/forgejo active catalogue source"
+    "Actual codeberg.org/forgejo/forgejo active catalogue source",
+    "Exact registry.fedoraproject.org/fedora:45 base image in PodmanLens scripts/native-runtime-pins.sh"
   ],
   "immutable_identity": "OCI registry/repository/manifest-SHA256; tags, paths and Git revisions are excluded",
   "runner_evidence": "Selector observation only; no immutable hosted runner image claim",
@@ -22,13 +23,14 @@
     }
   ],
   "fixed_exclusions": [
-    "scripts/native-runtime-pins.sh (qualified Podman/Fedora tuple)",
+    "PodmanLens scripts/native-runtime-pins.sh (qualified Podman/Fedora inputs other than the base image)",
     "scripts/kind-vm-image.json (FCOS VM target)"
   ],
   "snapshot_integration": "The trusted eligibility service selects inert owned files, feature counterparts and existing rename evidence, and shares its existing request/deadline accounting.",
   "limits": "The current trusted file/response/request/state budgets are retained; no images, layers, scripts, candidate configuration, or native Renovate executable run in the service.",
   "probe_evidence": {
     "mcr": "Current exact public manifest bytes matched committed SHA-256; schema-2 OCI index.",
-    "forgejo": "Actual current source is codeberg.org, not code.forgejo.org. Same-origin /v2/token with service container_registry yielded exact manifest bytes matching committed SHA-256; schema-2 OCI index."
+    "forgejo": "Actual current source is codeberg.org, not code.forgejo.org. Same-origin /v2/token with service container_registry yielded exact manifest bytes matching committed SHA-256; schema-2 OCI index.",
+    "fedora": "The public exact-digest manifest endpoint served schema-2 OCI index bytes matching the proposed SHA-256. Image creation metadata is not a registry publication timestamp."
   }
 }

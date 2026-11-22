@@ -1223,6 +1223,7 @@ def snapshot(
             cache=cache if cache is not None else SnapshotCache(),
             lock_paths=LOCK_PATHS,
             max_bytes=MAX_SNAPSHOT_BYTES,
+            repository=api.repository,
         )
     except AcquisitionError as error:
         raise EligibilityError(str(error)) from error
