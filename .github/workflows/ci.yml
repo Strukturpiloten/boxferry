@@ -244,6 +244,7 @@ jobs:
       policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
       config_path: scripts/shared-validation-policy.json
       task: rust-quality
+      require_configured_task: true
 
   coverage:
     name: Coverage ratchet
@@ -257,6 +258,7 @@ jobs:
       policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
       config_path: scripts/shared-validation-policy.json
       task: coverage
+      require_configured_task: true
 
   msrv:
     name: MSRV
@@ -270,6 +272,7 @@ jobs:
       policy_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
       config_path: scripts/shared-validation-policy.json
       task: msrv
+      require_configured_task: true
 
   dependencies:
     name: Dependency and license policy
