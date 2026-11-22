@@ -12,10 +12,12 @@ import tempfile
 import unittest
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from boxferry_ci import __main__ as cli
 from boxferry_ci import dependencies, eligibility
@@ -399,15 +401,243 @@ class InventoryAPI(SnapshotAPI):
         if suffix.startswith("compare/"):
             self.requests += 1
             self.seen.append(suffix)
+            base, tested = suffix.removeprefix("compare/").split("?", 1)[0].split("...")
+            old_files, new_files = self.files[base], self.files[tested]
             return {
-                "merge_base_commit": {"sha": BASE},
+                "merge_base_commit": {"sha": base},
                 "files": [
                     {"filename": path}
-                    for path in sorted(self.files[BASE].keys() | self.files[HEAD].keys())
-                    if self.files[BASE].get(path) != self.files[HEAD].get(path)
+                    for path in sorted(old_files.keys() | new_files.keys())
+                    if old_files.get(path) != new_files.get(path)
                 ],
             }
         return super().get(suffix)
+
+
+class FedoraAgeSnapshots(unittest.TestCase):
+    """Exercise trusted candidate snapshots and the PR/queue age policy together."""
+
+    repository = "Strukturpiloten/podman-lens"
+    path = "scripts/native-runtime-pins.sh"
+    image = "registry.fedoraproject.org/fedora"
+    manifest_url = "https://registry.fedoraproject.org/v2/fedora/manifests/"
+    queue = "c" * 40
+
+    def setUp(self) -> None:
+        self.old_pins = self.pins("sha256:" + "1" * 64)
+        self.manifest = (
+            b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json",'
+            b'"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json",'
+            b'"platform":{"os":"linux","architecture":"amd64"},"size":572,"digest":"sha256:'
+            + b"3" * 64
+            + b'"}]}'
+        )
+        self.digest = "sha256:" + hashlib.sha256(self.manifest).hexdigest()
+        self.new_pins = self.pins(self.digest)
+        self.files = {
+            BASE: {self.path: self.old_pins},
+            HEAD: {self.path: self.new_pins},
+            self.queue: {self.path: self.new_pins},
+        }
+        self.state: dict[str, Any] = {"schema_version": 1, "first_seen": {}}
+
+    def pins(self, digest: str) -> bytes:
+        return (
+            "#!/usr/bin/env bash\n"
+            "readonly PODMAN_NATIVE_RPM_BUILD=6.1.9-1.fc45\n"
+            'readonly PODMAN_NATIVE_VERSION="v${PODMAN_NATIVE_RPM_BUILD%%-*}"\n'
+            'readonly PODMAN_NATIVE_RPM_RELEASE="${PODMAN_NATIVE_RPM_BUILD#*-}"\n'
+            f"# renovate: datasource=docker depName={self.image}\n"
+            f"readonly PODMAN_NATIVE_BASE_IMAGE={self.image}:45@{digest}\n"
+        ).encode()
+
+    def evaluate(
+        self,
+        *,
+        now: datetime = NOW,
+        scope: str = "pull_request",
+        tested: str = HEAD,
+        api: SnapshotAPI | None = None,
+    ) -> dict[str, Any]:
+        if api is None:
+            api = InventoryAPI(self.files)
+            api.repository = self.repository
+        candidate = eligibility.Candidate(BASE, tested, 184, HEAD, "renovate[bot]", "Bot", scope)
+        return eligibility.evaluate(api, candidate, self.state, now)
+
+    def test_exact_pr_and_queue_hold_matures_at_72_hours(self) -> None:
+        api = InventoryAPI(self.files)
+        api.repository = self.repository
+        with patch.object(eligibility, "registry_fetch", return_value=self.manifest) as fetch:
+            report = self.evaluate(api=api)
+            fetch.assert_called_once()
+            self.assertEqual(
+                fetch.call_args.args[1],
+                self.manifest_url + self.digest,
+            )
+            self.assertIn(
+                "application/vnd.oci.image.index.v1+json", fetch.call_args.args[2]["Accept"]
+            )
+            fetch.reset_mock()
+            fresh_queue = self.evaluate(scope="merge_group", tested=self.queue)
+            fetch.assert_called_once()
+        self.assertIn(f"contents/{self.path}?ref={BASE}", api.seen)
+        self.assertIn(f"contents/{self.path}?ref={HEAD}", api.seen)
+        self.assertEqual(report["candidate_sha"], HEAD)
+        self.assertEqual(report["base_sha"], BASE)
+        self.assertEqual(report["scope"], "pull_request")
+        self.assertEqual(fresh_queue["candidate_sha"], self.queue)
+        self.assertEqual(fresh_queue["source_head_sha"], HEAD)
+        self.assertEqual(fresh_queue["scope"], "merge_group")
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(fresh_queue["status"], "waiting")
+        self.assertEqual(report["results"], fresh_queue["results"])
+        result = report["results"][0]
+        material = [
+            "boxferry-operational-v1",
+            "oci",
+            "registry.fedoraproject.org",
+            "fedora",
+            self.digest,
+        ]
+        key = hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(result["artifact_key"], key)
+        self.assertEqual(result["name"], self.image)
+        self.assertEqual(result["integrity"], [self.digest])
+        self.assertEqual(result["age_evidence"], "manifest-first-seen")
+        self.assertTrue(result["artifact_immutable"])
+        self.assertEqual(report["state"]["first_seen"], {key: "2026-11-03T12:00:00Z"})
+        self.assertEqual(report["retry_at"], "2026-11-06T12:00:00Z")
+        self.assertTrue(report["retry_eligible"])
+
+        self.state = report["state"]
+        boundary = NOW + timedelta(hours=72)
+        with patch.object(eligibility, "registry_fetch") as fetch:
+            for scope, tested in (("pull_request", HEAD), ("merge_group", self.queue)):
+                with self.subTest(scope=scope):
+                    before = self.evaluate(
+                        now=boundary - timedelta(microseconds=1), scope=scope, tested=tested
+                    )
+                    self.assertEqual(before["status"], "waiting")
+                    mature = self.evaluate(now=boundary, scope=scope, tested=tested)
+                    self.assertEqual(mature["status"], "pass")
+                    self.assertEqual(mature["results"][0]["artifact_key"], key)
+            fetch.assert_not_called()
+
+    def test_replacement_digest_starts_its_own_observation(self) -> None:
+        with patch.object(eligibility, "registry_fetch", return_value=self.manifest):
+            first = self.evaluate()
+        self.state = first["state"]
+        replacement = self.manifest.replace(b'"size":572', b'"size":573')
+        replacement_digest = "sha256:" + hashlib.sha256(replacement).hexdigest()
+        self.files[HEAD][self.path] = self.pins(replacement_digest)
+        with patch.object(eligibility, "registry_fetch", return_value=replacement) as fetch:
+            report = self.evaluate(now=NOW + timedelta(hours=80))
+            fetch.assert_called_once()
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(report["results"][0]["integrity"], [replacement_digest])
+        self.assertNotEqual(
+            report["results"][0]["artifact_key"], first["results"][0]["artifact_key"]
+        )
+        self.assertEqual(len(report["state"]["first_seen"]), 2)
+        self.assertEqual(report["retry_at"], "2026-11-09T20:00:00Z")
+
+    def test_missing_wrong_or_malformed_manifest_cannot_seed_state(self) -> None:
+        missing = HTTPError("https://registry.fedoraproject.org", 404, "missing", Message(), None)
+        for label, response, error in (("missing", b"", missing), ("wrong digest", b"{}", None)):
+            with (
+                self.subTest(label=label),
+                patch.object(
+                    eligibility, "registry_fetch", return_value=response, side_effect=error
+                ),
+            ):
+                report = self.evaluate()
+                self.assertEqual(report["status"], "failure")
+                self.assertEqual(report["state"]["first_seen"], {})
+        malformed = self.manifest.replace(b'"schemaVersion":2', b'"schemaVersion":1')
+        self.files[HEAD][self.path] = self.pins("sha256:" + hashlib.sha256(malformed).hexdigest())
+        with patch.object(eligibility, "registry_fetch", return_value=malformed):
+            report = self.evaluate()
+        self.assertEqual(report["status"], "failure")
+        self.assertEqual(report["state"]["first_seen"], {})
+
+    def test_malformed_or_future_observation_is_refused(self) -> None:
+        with patch.object(eligibility, "registry_fetch", return_value=self.manifest):
+            result = self.evaluate()
+        key = result["results"][0]["artifact_key"]
+        for observed in ("invalid", "2026-11-04T12:00:00Z"):
+            with (
+                self.subTest(observed=observed),
+                patch.object(eligibility, "registry_fetch") as fetch,
+            ):
+                self.state["first_seen"][key] = observed
+                report = self.evaluate()
+                self.assertEqual(report["status"], "failure")
+                fetch.assert_not_called()
+
+    def test_candidate_configuration_or_comparison_cannot_remove_coverage(self) -> None:
+        class EmptyComparison(InventoryAPI):
+            def get(self, suffix: str) -> dict[str, Any]:
+                response = super().get(suffix)
+                if suffix.startswith("compare/"):
+                    response["files"] = []
+                return response
+
+        self.files[HEAD][".github/renovate.json"] = b'{"enabled": false}'
+        api = EmptyComparison(self.files)
+        api.repository = self.repository
+        with patch.object(eligibility, "registry_fetch", return_value=self.manifest):
+            self.assertEqual(self.evaluate(api=api)["status"], "waiting")
+        without_pin = self.new_pins.rsplit(b"readonly PODMAN_NATIVE_BASE_IMAGE=", 1)[0]
+        for changed in (
+            without_pin,
+            self.new_pins.replace(b"fedora:45@", b"fedora:46@"),
+            self.new_pins.replace(b"datasource=docker", b"datasource=disabled"),
+            self.new_pins + self.new_pins,
+            b": <<'FAKE'\n" + self.new_pins + b"FAKE\n",
+        ):
+            with (
+                self.subTest(changed=changed),
+                patch.object(eligibility, "registry_fetch") as fetch,
+            ):
+                self.files[HEAD][self.path] = changed
+                self.assertEqual(self.evaluate(api=api)["status"], "failure")
+                fetch.assert_not_called()
+        self.files[HEAD]["scripts/moved-pins.sh"] = self.files[HEAD].pop(self.path)
+        self.files[self.queue] = self.files[HEAD].copy()
+        with patch.object(eligibility, "registry_fetch") as fetch:
+            self.assertEqual(self.evaluate(api=api)["status"], "failure")
+            self.assertEqual(
+                self.evaluate(scope="merge_group", tested=self.queue)["status"], "failure"
+            )
+            fetch.assert_not_called()
+
+    def test_same_digest_at_another_path_does_not_hide_age_for_the_owned_pin(self) -> None:
+        other = json.dumps({"image": f"{self.image}:45@{self.digest}"}).encode()
+        self.files[BASE][IMAGE] = self.files[HEAD][IMAGE] = other
+        with patch.object(eligibility, "registry_fetch", return_value=self.manifest) as fetch:
+            report = self.evaluate()
+            fetch.assert_called_once()
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["results"][0]["path"], self.path)
+
+    def test_other_runtime_pins_and_repositories_are_outside_this_reader(self) -> None:
+        self.files[HEAD][self.path] = self.old_pins.replace(b"6.1.9-1", b"6.1.9-2")
+        self.files[HEAD]["scripts/kind-vm-image.json"] = b"ignored by this reader"
+        with patch.object(eligibility, "registry_fetch") as fetch:
+            unchanged = self.evaluate()
+            self.assertEqual(unchanged["status"], "pass")
+            self.assertEqual(unchanged["results"], [])
+            self.files[HEAD][self.path] = self.new_pins
+            other = InventoryAPI(self.files)
+            report = self.evaluate(api=other)
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["results"], [])
+            self.assertFalse(
+                any(self.path in path for path in other.seen if path.startswith("contents/"))
+            )
+            fetch.assert_not_called()
 
 
 class GitInventorySnapshots(unittest.TestCase):
