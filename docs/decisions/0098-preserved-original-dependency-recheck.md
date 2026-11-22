@@ -42,9 +42,13 @@ finite retry, but cannot approve `X`, source `H` or a future queue candidate.
 Completed durable preparation and a later completed matching receipt may authorize one
 existing original-run `rerun-failed-jobs` request. Fresh source, target, provider, original
 attempt, protection and checkpoint reads precede it. Existing normal retries share the same
-allowance. Base churn cannot reset consumed or uncertain budgets. Timeout, cancellation,
-failed or missing history, changed attempts and incomplete artifacts keep their existing
-fences; no ambiguous POST is repeated.
+allowance. Before reserving an ordinary PR retry, the service checks the original run's
+attempt-specific candidate hint. A conflict with either the current synthetic SHA or base,
+or an unreadable or ambiguous hint, prevents the ordinary retry without spending its budget.
+A matching hint is only a consistency check. Confirmed absence preserves the legacy path,
+and the service still checks that the candidate is current before retrying. Base churn cannot
+reset consumed or uncertain budgets. Timeout, cancellation, failed or missing history, changed
+attempts and incomplete artifacts keep their existing fences. No ambiguous POST is repeated.
 
 Original green permits only normal admission into the protected ALLGREEN queue with build
 and merge limits one. A real fresh combined candidate must independently pass its complete

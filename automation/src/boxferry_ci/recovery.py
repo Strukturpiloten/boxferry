@@ -10,10 +10,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import lzma
 import re
+import sys
 import tempfile
 import tomllib
 import zipfile
+import zlib
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +30,24 @@ from .eligibility_state import validate_state
 
 HINT_FILE = "dependency-candidate-hint.json"
 HINT_LIMIT = 16 * 1024
+_HINT_DECODE_ERRORS: tuple[type[Exception], ...] = (
+    EOFError,
+    UnicodeDecodeError,
+    json.JSONDecodeError,
+    OSError,
+    RuntimeError,
+    lzma.LZMAError,
+    zipfile.BadZipFile,
+    zlib.error,
+)
+if sys.version_info >= (3, 14):
+    try:
+        from compression.zstd import ZstdError
+    except ImportError:
+        pass  # An unavailable ZIP decoder raises RuntimeError instead.
+    else:
+        _HINT_DECODE_ERRORS += (ZstdError,)
+
 REBASE_LABEL = "rebase"
 ACTIONS_APP = 15368
 READER_PATH = "Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml"
@@ -223,12 +244,7 @@ def candidate_hint(
             ):
                 raise RecoveryRefused("candidate hint archive has an unsupported member")
             payload = json.loads(archive.read(entries[0]), object_pairs_hook=unique_object)
-    except (
-        zipfile.BadZipFile,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        NotImplementedError,
-    ) as error:
+    except _HINT_DECODE_ERRORS as error:
         raise RecoveryRefused("candidate hint archive is malformed") from error
     expected = {
         "schema": 1,

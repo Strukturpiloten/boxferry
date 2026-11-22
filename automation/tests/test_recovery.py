@@ -1659,6 +1659,7 @@ class ServiceCheckpointTests(unittest.TestCase):
         api = fixture.api
         original = deepcopy(fixture.original)
         original["pull_requests"][0]["base"]["sha"] = B
+        api.archives[1] = archive({**fixture.hint, "candidate_sha": N, "base_sha": B})
         api.responses[f"actions/workflows/ci.yml/runs?head_sha={H}&per_page=20"] = {
             "workflow_runs": [original],
         }
