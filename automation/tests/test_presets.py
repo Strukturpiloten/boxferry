@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from native_preset_source import pinned_preset_input
-
 from boxferry_ci.devcontainer_updates import limited_config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -210,6 +208,35 @@ def _shared() -> dict[str, Any]:
 
 
 class PresetTests(unittest.TestCase):
+    def test_consumer_can_load_policy_examples_with_only_the_pinned_package(self) -> None:
+        script = textwrap.dedent("""
+            import importlib.util
+            import sys
+            from pathlib import Path
+
+            root = Path(sys.argv[1])
+            examples = root / "automation/tests/test_presets.py"
+            sys.path.insert(0, str(root / "automation/src"))
+            import_path = sys.path[:]
+            spec = importlib.util.spec_from_file_location("shared_preset_examples", examples)
+            assert spec is not None and spec.loader is not None
+            presets = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(presets)
+            presets.assert_automatic_policy(presets.consumer_config(root / ".github/renovate.json"))
+            assert sys.path == import_path
+            assert "native_preset_source" not in sys.modules
+        """)
+        with tempfile.TemporaryDirectory() as directory:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-S", "-B", "-c", script, str(ROOT)],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_automatic_policy_including_major_compiler_image_checksum(self) -> None:
         assert_automatic_policy(_shared())
 
@@ -864,6 +891,9 @@ class NativePresetTests(unittest.TestCase):
     def _native_report(self) -> dict[str, Any]:
         if self._cached_native_report is not None:
             return self._cached_native_report
+        # Consumers load the policy examples without the producer's test directory.
+        from native_preset_source import pinned_preset_input
+
         runtime = Path(
             os.environ.get("BOXFERRY_RENOVATE_PACKAGE", ROOT / "target/tools/renovate")
         ).resolve()
