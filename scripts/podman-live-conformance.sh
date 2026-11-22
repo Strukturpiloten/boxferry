@@ -830,7 +830,8 @@ verify_run_owned_archive_alias() {
 }
 
 record_run_owned_archive_alias() {
-  local source=$1 alias=$2 description=$3 status=0 source_id source_identity observed_digest alias_suffix
+  local source=$1 alias=$2 description=$3 required_platform=${4:-}
+  local status=0 source_id source_identity observed_digest alias_suffix source_format='{{.Id}} {{.Digest}}'
   [[ "${run_id}" =~ ^[a-z][a-z0-9-]{0,95}$ && "${alias}" == "localhost/boxferry-archive/${run_id}/"* ]] || return 1
   alias_suffix=${alias#"localhost/boxferry-archive/${run_id}/"}
   [[ "${alias_suffix}" =~ ^(workload|forgejo|nextcloud|paperless|immich|observability):[a-z0-9][a-z0-9._-]{0,63}$ &&
@@ -843,10 +844,20 @@ record_run_owned_archive_alias() {
     native_presence_unverified=true
     return "${status}"
   fi
-  source_identity="$(engine_operation 'verify archive source identity' image inspect --format '{{.Id}} {{.Digest}}' "${source}" 2> /dev/null)" || {
+  if [[ -n "${required_platform}" ]]; then
+    source_format+=' {{.Os}}/{{.Architecture}}'
+  fi
+  source_identity="$(engine_operation 'verify archive source identity' image inspect --format "${source_format}" "${source}" 2> /dev/null)" || {
     native_presence_unverified=true
     return 2
   }
+  if [[ -n "${required_platform}" ]]; then
+    if [[ "${source_identity##* }" != "${required_platform}" ]]; then
+      printf '%s source image platform is not %s; refusing to archive it.\n' "${description}" "${required_platform}" >&2
+      return 1
+    fi
+    source_identity="${source_identity% *}"
+  fi
   [[ "${source_identity}" =~ ^(sha256:)?[0-9a-f]{64}\ sha256:[0-9a-f]{64}$ ]] || {
     native_presence_unverified=true
     return 2

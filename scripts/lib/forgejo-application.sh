@@ -86,18 +86,31 @@ forgejo_validate_provider() {
 forgejo_prepare_image_archive() {
   local archive=${1:?archive path required}
   [[ -s "${archive}" ]] && return 0
-  local fixture id reference expected_digest observed_digest cache_status archive_alias
-  local -a references=()
+  local fixture id reference expected_digest observed_digest cache_status archive_alias platform
+  local -a references=() source_references=() pull_platform=()
   fixture="$(forgejo_fixture_root)" || return $?
   [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id reference _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
+    platform=""
+    pull_platform=()
+    if [[ "${id}" == forgejo ]]; then
+      platform=linux/amd64
+      pull_platform=(--platform "${platform}")
+    fi
     expected_digest="${reference##*@}"
     cache_status=0
     engine_image_available "probe Forgejo ${id} image cache" "${reference}" || cache_status=$?
+    if ((cache_status == 1)) && [[ "${id}" == forgejo &&
+      "${reference}" =~ ^codeberg\.org/forgejo/forgejo:[^/@]+@sha256:[0-9a-f]{64}$ ]]; then
+      # The official mirror serves the same qualified index and platform manifests.
+      reference="code.forgejo.org/${reference#codeberg.org/}"
+      cache_status=0
+      engine_image_available "probe Forgejo official mirror image cache" "${reference}" || cache_status=$?
+    fi
     if ((cache_status == 1)); then
       timed_operation 8m "pull digest-pinned Forgejo ${id} image" \
-        "${engine}" pull --quiet "${reference}" \
+        "${engine}" pull --quiet "${pull_platform[@]}" "${reference}" \
         > "${artifact_root}/forgejo-${id}.pull.log" || return $?
       record_run_owned_host_image "${reference}" || return $?
     elif ((cache_status != 0)); then
@@ -111,8 +124,9 @@ forgejo_prepare_image_archive() {
       return 1
     }
     archive_alias="$(archive_host_alias forgejo "${id}")" || return $?
-    record_run_owned_archive_alias "${reference}" "${archive_alias}" "Forgejo ${id}" || return $?
+    record_run_owned_archive_alias "${reference}" "${archive_alias}" "Forgejo ${id}" "${platform}" || return $?
     references+=("${archive_alias}")
+    source_references+=("${reference}")
   done < "${fixture}/images.tsv" || return $?
   for archive_alias in "${references[@]}"; do
     verify_run_owned_archive_alias "${archive_alias}" || return $?
@@ -125,10 +139,9 @@ forgejo_prepare_image_archive() {
     bind_saved_docker_archive_identity "${archive_alias}" || return $?
     release_run_owned_host_image "${archive_alias}" || return $?
   done
-  while IFS=$'\t' read -r id reference _ _ _ _; do
-    [[ -z "${id}" || "${id}" == \#* ]] && continue
+  for reference in "${source_references[@]}"; do
     release_run_owned_host_image "${reference}" || return $?
-  done < "${fixture}/images.tsv" || return $?
+  done
 }
 
 forgejo_assert_loaded_images() {

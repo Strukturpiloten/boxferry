@@ -486,6 +486,7 @@ if images is state['nested'] and args[:2] in (['image', 'exists'], ['image', 'in
         if scenario == 'assert-first-error': finish(42)
 if args[:2] == ['image', 'exists']:
     if scenario == 'alias-unknown' and args[-1].startswith('localhost/boxferry-archive/'): finish(2)
+    if scenario == 'forgejo-mirror-unknown' and args[-1].startswith('code.forgejo.org/'): finish(2)
     if scenario == 'cleanup-unknown': finish(2)
     if scenario == 'cleanup-still-present' and args[-1] not in images: finish(0)
     finish(0 if args[-1] in images else 1)
@@ -499,6 +500,9 @@ if args[:2] == ['image', 'inspect']:
         if scenario == 'identity-malformed': print('PRIVATE/not-an-ID')
         elif scenario == 'identity-failed': finish(42)
         else: print('sha256:' + images[reference] + ' sha256:' + ('c' * 64 if scenario == 'digest-drift' else 'a' * 64))
+    elif template == '{{{{.Id}}}} {{{{.Digest}}}} {{{{.Os}}}}/{{{{.Architecture}}}}':
+        platform = 'linux/arm64' if scenario == 'wrong-forgejo-platform' else 'linux/amd64'
+        print('sha256:' + images[reference] + ' sha256:' + 'a' * 64 + ' ' + platform)
     elif template == '{{{{.Digest}}}}':
         print('sha256:' + ('c' * 64 if scenario == 'digest-drift' else 'a' * 64))
     elif template == '{{{{.Digest}}}} {{{{.Architecture}}}} {{{{.Os}}}}':
@@ -557,7 +561,11 @@ if args and args[0] == 'load':
                         state['nested'][descriptor['annotations']['org.opencontainers.image.ref.name']] = manifest['config']['digest'][7:]
     else: state['nested'].update(json.loads(archive.read_text()))
     finish()
-if args and args[0] == 'pull': finish(42)
+if args and args[0] == 'pull':
+    if scenario == 'forgejo-mirror-pull' and args[-1].startswith('code.forgejo.org/'):
+        images[args[-1]] = {self.image_id!r}
+        finish()
+    finish(42)
 if args and args[0] == 'exec': finish()
 finish(99)
 """, encoding="utf-8")
@@ -584,6 +592,54 @@ source {shlex.quote(str(LIB / 'native-presence.sh'))}
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_forgejo_archive_uses_the_exact_mirror_and_releases_only_its_own_pull(self) -> None:
+        canonical = "codeberg.org/forgejo/forgejo:16.0.3-rootless@sha256:" + "a" * 64
+        mirror = canonical.replace("codeberg.org/", "code.forgejo.org/", 1)
+        fixture = self.root / "fixtures/conformance/forgejo-application"
+        fixture.mkdir(parents=True)
+        (fixture / "images.tsv").write_text(
+            f"forgejo\t{canonical}\t16.0.3-rootless\tGPL-3.0-or-later\t"
+            "https://codeberg.org/forgejo/forgejo\ttransient-test-pull\n"
+        )
+        body = (
+            f"repository_root={shlex.quote(str(self.root))}\n"
+            f"source {shlex.quote(str(LIB / 'forgejo-application.sh'))}\n"
+            'forgejo_prepare_image_archive "$TEST_ARCHIVE"\n'
+        )
+        wrong_child_id = "b" * 64
+        cases = (
+            ("canonical-cache", {canonical: self.image_id}, 0, canonical, []),
+            ("mirror-cache", {mirror: self.image_id}, 0, mirror, []),
+            ("forgejo-mirror-pull", {}, 0, mirror, [["pull", "--quiet", "--platform", "linux/amd64", mirror]]),
+            ("forgejo-mirror-unknown", {}, 2, mirror, []),
+            ("pull-failed", {}, 42, mirror, [["pull", "--quiet", "--platform", "linux/amd64", mirror]]),
+            ("digest-drift", {mirror: self.image_id}, 1, mirror, []),
+            ("wrong-forgejo-platform", {canonical: wrong_child_id}, 1, canonical, []),
+            ("wrong-forgejo-platform", {mirror: wrong_child_id}, 1, mirror, []),
+        )
+        for scenario, images, status, selected, pulls in cases:
+            with self.subTest(scenario=scenario, selected=selected):
+                self.state.write_text(json.dumps({"host": images, "nested": {}}))
+                archive = self.root / "archive"
+                archive.unlink(missing_ok=True)
+                before = len(self.calls())
+                result = self.script(body, scenario)
+                self.assertEqual(result.returncode, status, result.stderr)
+                calls = self.calls()[before:]
+                probes = [args[-1] for args in calls if args[:2] == ["image", "exists"]]
+                self.assertEqual(probes[0], canonical)
+                self.assertEqual(mirror in probes, selected == mirror)
+                self.assertEqual([args for args in calls if args[0] == "pull"], pulls)
+                self.assertEqual(archive.exists(), status == 0)
+                self.assertEqual(json.loads(self.state.read_text())["host"], images)
+                if status == 0:
+                    self.assertIn(["image", "inspect", "--format", "{{.Digest}}", selected], calls)
+                    self.assertEqual(json.loads(archive.read_text()), {self.alias: self.image_id})
+                else:
+                    self.assertFalse(any(args[0] in ("tag", "save") for args in calls))
+                if scenario == "wrong-forgejo-platform":
+                    self.assertIn("source image platform is not linux/amd64", result.stderr)
 
     def test_aliases_are_run_unique_and_have_bounded_grammar_and_tag_lengths(self) -> None:
         result = self.script("archive_host_alias forgejo forgejo\nrun_id=other\narchive_host_alias forgejo forgejo\n")
