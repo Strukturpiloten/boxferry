@@ -529,14 +529,17 @@ class SourceReportDiagnosticContracts(unittest.TestCase):
 
     def test_changed_safe_cause_cannot_claim_survival_or_remove_failure_report(self) -> None:
         expected = {
-            "unavailable": "controlled metadata unavailable [REDACTED]",
-            "malformed": "public repository has an unsupported default branch",
-            "invalid-revision": (
-                "resolved sibling SHA must be an exact lowercase 40-character Git SHA"
+            "unavailable": (
+                "compose-lens canonical Git HEAD read failed "
+                "(controlled Git transport unavailable [REDACTED])"
             ),
-            "unavailable-report-loss": "controlled metadata unavailable [REDACTED]",
+            "malformed": "compose-lens canonical Git HEAD advertisement is malformed",
+            "invalid-revision": (
+                "compose-lens canonical Git advertisement has an invalid commit SHA"
+            ),
         }
-        self.assertEqual(self.diagnostic.EXPECTED_CAUSES, expected)
+        expected["unavailable-report-loss"] = expected["unavailable"]
+        self.assertEqual(self.diagnostic.GIT_CAUSES, expected)
         for case, cause in expected.items():
             root, identity = self.identity(case)
             self.assertEqual(self.fixture(root, case).returncode, 1)
@@ -624,6 +627,8 @@ class SourceReportDiagnosticContracts(unittest.TestCase):
         summary_path = root / "fixture/fixture.json"
         original = summary_path.read_bytes()
         for key, value in (
+            ("schema", 1),
+            ("schema", 3),
             ("candidate_sha", "b" * 40),
             ("policy_sha", "b" * 40),
             ("automation_sha", "b" * 40),

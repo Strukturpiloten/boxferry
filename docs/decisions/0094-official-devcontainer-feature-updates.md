@@ -4,6 +4,7 @@
 - Date: 2026-11-04
 - Amended: 2026-11-06; conventional VS Code local development and standard hosted storage
 - Amended: 2026-11-08; scoped metadata reader and Python-only queue authority
+- Amended: 2026-11-22; canonical Git authority for sibling resolution
 - Builds on: ADR 0092 shared development automation and ADR 0079 runtime selection
 
 ## Context
@@ -64,7 +65,10 @@ Required image qualification binds the actual candidate, independently trusted
 policy, admitted automation, complete input fingerprint and image identity. It
 builds and executes reviewed non-root probes on native Linux x64 and ARM64 using
 reviewed backends; local execution remains Podman-only. BoxFerry workspace probes
-require all seven real credential-free recorded checkouts. Fresh hosted runners
+require all seven real credential-free recorded checkouts. One bounded smart Git v2
+response per canonical HTTPS sibling binds symbolic HEAD to the matching branch tip.
+Both hosted lanes share the resulting manifest with the exact tested BoxFerry revision.
+Fresh hosted runners
 use standard runtime storage; actual DockerRootDir or Podman graphRoot must share
 the existing disk budget filesystem without resetting its initial baseline. Only
 reviewed verifier/probes execute, not lifecycle commands or cargo

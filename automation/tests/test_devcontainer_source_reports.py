@@ -11,18 +11,20 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Generator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from threading import Thread
 from unittest.mock import patch
 
 import yaml
 from source_report_fixture import CASES, SECRET, exercise
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from boxferry_ci import dependencies
 from boxferry_ci import devcontainer_validation as validation
 from boxferry_ci.gate import GateFailure, verify_devcontainer_gate
 from boxferry_ci.planner import Comparison, make_plan
 from boxferry_ci.policy import load_policy
+from boxferry_ci.runner import RunResult, run
 
 ROOT = Path(__file__).resolve().parents[2]
 CANDIDATE, POLICY, AUTOMATION = "a" * 40, "b" * 40, "c" * 40
@@ -59,11 +61,15 @@ class SourceReportTests(unittest.TestCase):
             code = validation.main(self.argv)
         return code, stderr.getvalue()
 
-    def test_real_cli_http_reader_failure_report_and_exact_bindings(self) -> None:
+    def test_real_cli_git_reader_failure_report_and_exact_bindings(self) -> None:
         for case in CASES:
             with self.subTest(case=case):
                 directory = self.root / case
                 summary = exercise(ROOT, directory, case, CANDIDATE, POLICY, AUTOMATION)
+                self.assertEqual(summary["schema"], 2)
+                self.assertEqual(
+                    summary["metadata_requests"], 6 if case in ("success", "missing-report") else 1
+                )
                 self.assertEqual(
                     summary["actual_cli_exit"], 0 if case in ("success", "missing-report") else 1
                 )
@@ -76,20 +82,87 @@ class SourceReportTests(unittest.TestCase):
                     self.assertFalse(summary["exports_present"])
                     self.assertNotIn(SECRET, (directory / "resolver.stderr").read_text())
 
-    def test_malformed_json_and_unavailable_http_metadata_do_not_escape_cli(self) -> None:
-        for body in (b"not json", b"[]", b'{"sha": "main"}'):
-            with (
-                self.subTest(body=body),
-                patch.object(dependencies.urllib.request, "build_opener") as opener,
-            ):
-                opener.return_value.open.return_value = io.BytesIO(body)
-                code, stderr = self.invoke()
-                self.assertEqual(code, 1)
-                self.assertEqual(json.loads(self.output.read_text())["status"], "failure")
-                self.assertFalse(self.exports.exists())
-                self.assertIn("diagnostic artifact", stderr)
+    def test_http_failures_and_dumb_git_responses_refuse_without_fallback(self) -> None:
+        requests: list[tuple[str, str]] = []
+        fixture_status = 200
 
-    def test_invalid_identity_is_not_recorded_as_trusted_or_sent_to_http(self) -> None:
+        class Transport(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                requests.append(("GET", self.path))
+                raw = (
+                    b"ref: refs/heads/release/current\n"
+                    if self.path.endswith("/HEAD")
+                    else b"a" * 40 + b"\trefs/heads/release/current\n"
+                )
+                self.reply(200, raw)
+
+            def do_POST(self) -> None:
+                requests.append(("POST", self.path))
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.reply(fixture_status, b"ref: refs/heads/release/current\n")
+
+            def reply(self, status: int, raw: bytes) -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(raw)))
+                if status == 302:
+                    self.send_header("Location", "/compose-lens.git/HEAD")
+                self.end_headers()
+                self.wfile.write(raw)
+
+        with HTTPServer(("127.0.0.1", 0), Transport) as server:
+            worker = Thread(target=server.serve_forever)
+            worker.start()
+
+            def loopback(
+                argv: tuple[str, ...],
+                *,
+                cwd: Path,
+                environment: dict[str, str],
+                stage: str,
+                timeout_seconds: float,
+                max_output_bytes: int,
+            ) -> RunResult:
+                self.assertEqual(
+                    argv[-1], "https://github.com/Strukturpiloten/compose-lens.git/git-upload-pack"
+                )
+                url = f"http://127.0.0.1:{server.server_port}/compose-lens.git/git-upload-pack"
+                return run(
+                    (*("=http" if arg == "=https" else arg for arg in argv[:-1]), url),
+                    cwd=cwd,
+                    environment=environment,
+                    stage=stage,
+                    timeout_seconds=timeout_seconds,
+                    max_output_bytes=max_output_bytes,
+                )
+
+            try:
+                for fixture_status, cause in (
+                    (200, "requires a smart ls-refs response"),
+                    (302, "HTTP 302"),
+                    (403, "HTTP 403"),
+                    (503, "HTTP 503"),
+                ):
+                    with (
+                        self.subTest(status=fixture_status),
+                        patch.object(validation, "run", side_effect=loopback),
+                    ):
+                        requests.clear()
+                        code, stderr = self.invoke()
+                        self.assertEqual(code, 1)
+                        self.assertEqual(requests, [("POST", "/compose-lens.git/git-upload-pack")])
+                        self.assertIn(cause, json.loads(self.output.read_text())["cause"])
+                        self.assertIn(cause, stderr)
+                        self.assertFalse(self.exports.exists())
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+
+    def test_invalid_identity_is_not_recorded_as_trusted_or_resolved(self) -> None:
         for flag, field in (
             ("--candidate-sha", "candidate_sha"),
             ("--policy-sha", "policy_sha"),
