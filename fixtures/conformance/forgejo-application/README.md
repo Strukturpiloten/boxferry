@@ -21,6 +21,11 @@ privacy review before sharing.
 
 The host verifies every immutable image digest, builds one archive, and loads it before starting
 the nested API. Nested provisioning uses only local `registry.invalid` tags with `--pull=never`.
+If the canonical Codeberg Forgejo image is absent from the host cache, the harness acquires the
+same tag and digest from `code.forgejo.org` and explicitly pulls `linux/amd64`. The qualified
+index and its `linux/amd64` child match the official mirror byte for byte. The harness verifies
+the platform of the exact image ID it archives, including cache hits.
+[Forgejo container mirror](https://forgejo.org/download/#container-image)
 Forgejo 16.0.3 is GPL-3.0-or-later, PostgreSQL uses the PostgreSQL license, `alpine/git` is
 Apache-2.0, and Docker Compose 5.5.0 is Apache-2.0. BoxFerry redistributes none of them.
 
