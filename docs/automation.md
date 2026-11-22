@@ -53,3 +53,9 @@ The complete unittest entrypoint uses bounded descriptor capture, redacted/neutr
 ## Eligibility resolution diagnostics
 
 Non-authorizing diagnostics report validated event/run/attempt/SHA, stage/guard, counts and bindings; unknowns are `null`. Raw API, error, environment, credential and URL values are excluded. At most four 4 KiB records preserve original failures; receipt, retry, merge and callback semantics remain unchanged.
+
+## Read-only release inventory
+
+Credential-free [inventory preparation](../.github/workflows/shared-release-inventory.yml) requires
+successful release validation and both exact-candidate gate receipts (`candidate_sha`,
+`published_api_candidate_sha`) before emitting either after inventory validation.

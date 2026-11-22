@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "repository": "Strukturpiloten/boxferry",
+  "revision": "fba206d732ea7ed9373386ae58101e76e1e3c9fb",
+  "origin": "https://github.com/Strukturpiloten/boxferry/commit/fba206d732ea7ed9373386ae58101e76e1e3c9fb",
+  "purpose": "Exact historical #604 postimages admitted by PR #608; inert data, never execute or import.",
+  "license": "MPL-2.0 (repository-owned source; see root LICENSE)",
+  "redistribution": "Permitted under the repository MPL-2.0 license.",
+  "modifications": "None; byte-identical Git blobs, stored as non-executable .txt files.",
+  "oracle": "No external implementation source or oracle used.",
+  "files": {
+    "shared-release-prepare.yml.txt": {
+      "source_path": ".github/workflows/shared-release-prepare.yml",
+      "git_blob": "e9955893ed4958b0584bcb5a5801bd218b6f38e9",
+      "original_mode": 420,
+      "size": 3982,
+      "sha256": "9b0d8b73511a5d924dbb7349dd6d7fe35fefb0e59ad97f8db41973fa60b3a6e5"
+    },
+    "release.py.txt": {
+      "source_path": "automation/src/boxferry_ci/release.py",
+      "git_blob": "84fcec92de1b08899707830fa60231ed15e36b43",
+      "original_mode": 420,
+      "size": 32964,
+      "sha256": "bc4fb17aee42d4ffca9e56c73f534bfdb95c9401cb872572a103b380e52f28f3"
+    },
+    "test_release.py.txt": {
+      "source_path": "automation/tests/test_release.py",
+      "git_blob": "f7cbea22fe2f4e35c0aec22ef1429f1c99537fb6",
+      "original_mode": 420,
+      "size": 46975,
+      "sha256": "44a52a8558b99dfe8e0918b5ab76a34d2f96512d9e201da51645135bbdb13c20"
+    }
+  }
+}

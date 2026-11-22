@@ -1600,6 +1600,84 @@ class OrchestrationTests(unittest.TestCase):
                 self.assertLessEqual(reader.tree.call_count, 2)
 
 
+class ProducerClosureInvocationTests(unittest.TestCase):
+    def test_discovery_relative_imports_and_startup_preload_run_one_real_proof(self) -> None:
+        program = """
+import json, subprocess, sys, unittest
+from pathlib import Path
+from unittest.mock import patch
+assert ("boxferry_ci.release" in sys.modules) == (sys.argv[2] == "preloaded")
+suite = unittest.defaultTestLoader.discover(sys.argv[1], pattern="test_zero_age_delta.py")
+def cases(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from cases(item)
+        elif item.id().endswith(
+                ".ProducerClosureTests.test_complete_minimal_producer_accepts_exact_604_and_closed_606_delta"):
+            yield item
+selected = list(cases(suite))
+assert len(selected) == 1
+real_run, children = subprocess.run, []
+def record(*args, **kwargs):
+    result = real_run(*args, **kwargs)
+    if args[0][0] == sys.executable:
+        children.append((args[0], result))
+    return result
+result = unittest.TestResult()
+with patch.object(subprocess, "run", side_effect=record):
+    unittest.TestSuite(selected).run(result)
+assert result.testsRun == 1 and result.wasSuccessful(), (result.errors, result.failures)
+assert len(children) == 1, len(children)
+argv, child = children[0]
+assert argv[1:4] == ["-I", "-S", "-c"]
+assert all(Path(path).is_absolute() for path in argv[-3:])
+assert json.loads(child.stdout) == {"assertions": 9, "verifications": 1}
+print(json.dumps({"children": len(children), **json.loads(child.stdout)}))
+"""
+        for variant in ("discovery", "relative", "preloaded"):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                scratch = Path(directory)
+                environment = dict(os.environ)
+                environment["PYTHONPATH"] = str(ROOT / "automation/src")
+                cwd = ROOT
+                if variant != "discovery":
+                    cwd = scratch
+                    environment["PYTHONPATH"] = os.pathsep.join(
+                        [
+                            os.path.relpath(ROOT / path, scratch)
+                            for path in ("automation/src", "automation/tests")
+                        ]
+                        + ["."]
+                    )
+                marker = scratch / "startup-count"
+                if variant == "preloaded":
+                    # Stop a broken recursive implementation after a second startup.
+                    (scratch / "sitecustomize.py").write_text(
+                        "from pathlib import Path\n"
+                        f"record = Path({str(marker)!r})\n"
+                        "count = int(record.read_text()) + 1 if record.exists() else 1\n"
+                        "record.write_text(str(count))\n"
+                        "if count > 1: raise SystemExit('recursive startup')\n"
+                        "import boxferry_ci.release\n"
+                    )
+                child = subprocess.run(
+                    [sys.executable, "-c", program, str(ROOT / "automation/tests"), variant],
+                    cwd=cwd,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=45,
+                    check=False,
+                )
+                self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                self.assertEqual(
+                    json.loads(child.stdout),
+                    {"children": 1, "assertions": 9, "verifications": 1},
+                )
+                if variant == "preloaded":
+                    self.assertEqual(marker.read_text(), "1")
+
+
 class ProducerClosureTests(unittest.TestCase):
     # Independent review anchors, deliberately not read back from the checker.
     EXPECTED_604: ClassVar[dict[str, str]] = {
@@ -1650,8 +1728,12 @@ jobs:
         for path in cls.EXPECTED_604:
             before_files[path] = b"inert pre-604 fixture bytes\n", 0o644
         after_files = dict(before_files)
-        for path in IMPLEMENTATION_PATHS | cls.EXPECTED_604.keys():
+        for path in IMPLEMENTATION_PATHS:
             after_files[path] = (ROOT / path).read_bytes(), 0o644
+        # Historical #604 bytes must survive unrelated changes to current release code.
+        historical = ROOT / "automation/tests/fixtures/release-prepare-604"
+        for path in cls.EXPECTED_604:
+            after_files[path] = (historical / (Path(path).name + ".txt")).read_bytes(), 0o644
         for path in FIXTURE_ROOT.rglob("*.txt"):
             after_files[path.relative_to(ROOT).as_posix()] = path.read_bytes(), 0o644
         after_files[WAITER] = expected_waiter(old_waiter), 0o644
@@ -1667,7 +1749,85 @@ jobs:
             git(root, "commit", "-qm", "exact-reviewed-composition-fixture")
             cls.after = read_tree(root, git(root, "rev-parse", "HEAD"))
 
+    def test_historical_604_provenance_and_closed_snapshot_inventory(self) -> None:
+        import hashlib
+
+        historical = ROOT / "automation/tests/fixtures/release-prepare-604"
+        provenance = json.loads((historical / "provenance.json").read_text())
+        self.assertEqual(provenance["revision"], "fba206d732ea7ed9373386ae58101e76e1e3c9fb")
+        self.assertEqual(provenance["repository"], "Strukturpiloten/boxferry")
+        self.assertIn("MPL-2.0", provenance["license"])
+        expected = {Path(path).name + ".txt": path for path in self.EXPECTED_604}
+        self.assertEqual(set(provenance["files"]), set(expected))
+        self.assertEqual(
+            {path.name for path in historical.iterdir()},
+            set(expected) | {"README.md", "provenance.json"},
+        )
+        for name, source in expected.items():
+            path = historical / name
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.stat().st_mode & 0o111, 0)
+            data = path.read_bytes()
+            record = provenance["files"][name]
+            self.assertEqual(record["source_path"], source)
+            self.assertEqual(record["original_mode"], 0o644)
+            self.assertEqual(record["size"], len(data))
+            self.assertEqual(record["sha256"], self.EXPECTED_604[source])
+            self.assertEqual(hashlib.sha256(data).hexdigest(), self.EXPECTED_604[source])
+            self.assertEqual(record["git_blob"], entry(data).oid)
+        renovate = json.loads((ROOT / ".github/renovate.json").read_text())
+        self.assertIn("**/tests/**", renovate["ignorePaths"])
+
     def test_complete_minimal_producer_accepts_exact_604_and_closed_606_delta(self) -> None:
+        # Load this exact test file with explicit paths and no ambient startup hooks.
+        # Call the helper directly: re-entering a discovery-facing ID could recurse.
+        program = """
+import importlib.util, json, sys
+sys.path[:0] = sys.argv[1:3]
+spec = importlib.util.spec_from_file_location("test_zero_age_delta", sys.argv[3])
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+case_type = module.ProducerClosureTests
+case_type.setUpClass()
+case = case_type("test_complete_minimal_producer_accepts_exact_604_and_closed_606_delta")
+helper = case._assert_complete_minimal_producer
+counts = {"assertions": 0, "verifications": 0}
+def record(frame, event, arg):
+    if event == "call":
+        if frame.f_code is module.verify_producer.__code__:
+            counts["verifications"] += 1
+        if (frame.f_back is not None and frame.f_back.f_code is helper.__func__.__code__
+                and frame.f_code.co_name.startswith("assert")):
+            counts["assertions"] += 1
+sys.setprofile(record)
+try:
+    helper()
+finally:
+    sys.setprofile(None)
+print(json.dumps(counts))
+"""
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                program,
+                str((ROOT / "automation/src").resolve()),
+                str((ROOT / "automation/tests").resolve()),
+                str(Path(__file__).resolve()),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+        self.assertEqual(json.loads(child.stdout), {"assertions": 9, "verifications": 1})
+
+    def _assert_complete_minimal_producer(self) -> None:
         self.assertEqual(set(REQUIRED_604), set(self.EXPECTED_604))
         for path, digest in self.EXPECTED_604.items():
             self.assertEqual(self.after.entries[path].digest, digest)
