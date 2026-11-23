@@ -193,7 +193,7 @@ class InventoryTests(unittest.TestCase):
         self.assertNotIn("uses", guard)
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
         self.assertEqual(workflow["permissions"], {"contents": "read"})
-        self.assertEqual(job["timeout-minutes"], 15)
+        self.assertEqual(job["timeout-minutes"], 10)
         self.assertNotIn("secrets", call)
         self.assertNotIn("environment", job)
         self.assertNotIn("if", job)

@@ -47,7 +47,7 @@ jobs:
   prepare:
     name: Validate complete ordered crate inventory
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     outputs:
       candidate_sha: ${{ steps.inventory.outputs.candidate_sha }}
       published_api_candidate_sha: ${{ steps.inventory.outputs.published_api_candidate_sha }}

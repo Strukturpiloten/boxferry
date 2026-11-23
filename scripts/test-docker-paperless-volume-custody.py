@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 import importlib.util
 import json
 import os
 import pathlib
+import resource
+import select
 import signal
 import socket
 import stat
@@ -39,9 +42,6 @@ transport = load("custody_transport", ROOT / "scripts/lib/docker-paperless-trans
 def raw(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
-
-def fd_count():
-    return len(os.listdir("/proc/self/fd"))
 
 
 class DirectoryControls(unittest.TestCase):
@@ -88,14 +88,21 @@ class DirectoryControls(unittest.TestCase):
         self.listener.bind(str(self.socket_directory / "docker.sock"))
         self.listener.listen(8)
         self.listener.settimeout(.02)
+        self.readiness = select.poll()
+        self.readiness.register(self.listener, select.POLLIN)
         self.stopped = threading.Event()
+        self.fd_snapshot_lock = threading.Lock()
         def accept():
             while not self.stopped.is_set():
-                try:
-                    stream, _ = self.listener.accept()
-                except socket.timeout:
+                # Wait outside the lock so an idle listener cannot starve snapshots.
+                if not self.readiness.poll(20):
                     continue
-                stream.close()
+                with self.fd_snapshot_lock:
+                    try:
+                        stream, _ = self.listener.accept()
+                    except socket.timeout:
+                        continue
+                    stream.close()
         self.thread = threading.Thread(target=accept)
         self.thread.start()
         self.addCleanup(self.stop_socket)
@@ -172,6 +179,76 @@ class DirectoryControls(unittest.TestCase):
         self.thread.join(timeout=2)
         self.listener.close()
 
+    def fd_count(self):
+        # Serialize the whole accept/close lifetime with every FD snapshot.
+        with self.fd_snapshot_lock:
+            return len(os.listdir("/proc/self/fd"))
+
+    def test_fd_snapshot_waits_for_accepted_stream_close(self):
+        baseline = self.fd_count()
+        accepted, release = threading.Event(), threading.Event()
+        contended, sampled = threading.Event(), threading.Event()
+        counts, errors = [], []
+        lock = self.fd_snapshot_lock
+        original_accept = socket.socket.accept
+
+        class ObservedLock:
+            def __enter__(self):
+                if not lock.acquire(blocking=False):
+                    contended.set()
+                    if not lock.acquire(timeout=2):
+                        raise TimeoutError("FD snapshot lock did not become available")
+                return self
+
+            def __exit__(self, *_args):
+                lock.release()
+
+        def held_accept(listener):
+            stream, address = original_accept(listener)
+            if listener is self.listener:
+                accepted.set()
+                if not release.wait(2):
+                    errors.append("accepted stream release timed out")
+            return stream, address
+
+        def sample():
+            try:
+                counts.append(self.fd_count())
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                sampled.set()
+
+        sampler = threading.Thread(target=sample)
+        with mock.patch.object(self, "fd_snapshot_lock", ObservedLock()), \
+             mock.patch.object(socket.socket, "accept", held_accept):
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.connect(str(self.socket_directory / "docker.sock"))
+                self.assertTrue(accepted.wait(2), "fixture did not accept the connection")
+                # The ordinary count sees the intentionally held accepted socket.
+                self.assertEqual(len(os.listdir("/proc/self/fd")), baseline + 1)
+                sampler.start()
+                self.assertTrue(contended.wait(2), "snapshot did not wait for stream closure")
+                self.assertFalse(sampled.is_set())
+            finally:
+                release.set()
+                if sampler.ident is not None:
+                    sampler.join(timeout=2)
+            self.assertFalse(sampler.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(counts, [baseline])
+        self.assertEqual(self.fd_count(), baseline)
+
+    def test_fd_snapshot_still_detects_retained_directory_descriptor(self):
+        baseline = self.fd_count()
+        retained = self.real_open(self.root, custody.OPATH)
+        try:
+            self.assertEqual(self.fd_count(), baseline + 1)
+        finally:
+            os.close(retained)
+        self.assertEqual(self.fd_count(), baseline)
+
     def role(self, role):
         return self.graph / ("volumes/" + self.prefix + "-paper-" + role + "/_data")
 
@@ -183,7 +260,7 @@ class DirectoryControls(unittest.TestCase):
     def test_all_six_retained_objects_and_no_storage_mutations(self):
         before = {str(path): (path.stat().st_mode, path.stat().st_uid, path.stat().st_gid, path.read_bytes())
                   for path in self.graph.rglob("unchanged")}
-        count = fd_count()
+        count = self.fd_count()
         lease = self.lease()
         self.assertEqual(len(lease.fds), 17)
         for _ in range(3):
@@ -192,7 +269,7 @@ class DirectoryControls(unittest.TestCase):
         self.assertGreater(lease.read_bytes, 0)
         lease.close()
         self.assertEqual(lease.fds, {})
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
         self.assertEqual(before, {str(path): (path.stat().st_mode, path.stat().st_uid, path.stat().st_gid, path.read_bytes())
                                  for path in self.graph.rglob("unchanged")})
         with self.assertRaises(custody.Refused):
@@ -201,7 +278,7 @@ class DirectoryControls(unittest.TestCase):
     def test_replace_every_role_with_recreated_metadata_refuses_and_closes(self):
         for role in custody.ROLES:
             with self.subTest(role=role):
-                count = fd_count()
+                count = self.fd_count()
                 lease = self.lease()
                 path = self.role(role)
                 retained = path.with_name("retained")
@@ -210,7 +287,7 @@ class DirectoryControls(unittest.TestCase):
                 with self.assertRaises(custody.Refused):
                     lease.check()
                 self.assertEqual(lease.fds, {})
-                self.assertEqual(fd_count(), count)
+                self.assertEqual(self.fd_count(), count)
                 path.rmdir()
                 retained.rename(path)
 
@@ -221,20 +298,20 @@ class DirectoryControls(unittest.TestCase):
                 retained = path.with_name("retained")
                 path.rename(retained)
                 path.symlink_to(self.role("media" if role != "media" else "data"))
-                count = fd_count()
+                count = self.fd_count()
                 with self.assertRaises(OSError):
                     self.lease()
-                self.assertEqual(fd_count(), count)
+                self.assertEqual(self.fd_count(), count)
                 path.unlink()
                 retained.rename(path)
         graph = self.graph
         moved = graph.with_name("original")
         graph.rename(moved)
         graph.symlink_to(moved)
-        count = fd_count()
+        count = self.fd_count()
         with self.assertRaises(OSError):
             self.lease()
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
 
     def test_short_proc_reads_reach_eof_and_charge_every_observed_byte(self):
         lease = self.lease()
@@ -248,13 +325,13 @@ class DirectoryControls(unittest.TestCase):
     def test_oversize_short_proc_reads_charge_the_probe_and_close_temporary_fd(self):
         lease = self.lease()
         (self.proc / "bounded-inventory").write_bytes(b"x" * 17)
-        count, before = fd_count(), lease.read_bytes
+        count, before = self.fd_count(), lease.read_bytes
         original = os.read
         with mock.patch.object(custody.os, "read", side_effect=lambda fd, size: original(fd, min(size, 7))):
             with self.assertRaises(custody.Refused):
                 lease.read(lease.fds["proc"], "bounded-inventory", 16)
         self.assertEqual(lease.read_bytes - before, 17)
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
 
     def test_short_proc_read_cannot_hide_later_volume_submount(self):
         lease = self.lease()
@@ -330,24 +407,24 @@ class DirectoryControls(unittest.TestCase):
 
     def test_partial_acquisition_closes_all_known_handles(self):
         self.role("redisdata").rename(self.role("redisdata").with_name("retained"))
-        count = fd_count()
+        count = self.fd_count()
         with self.assertRaises(FileNotFoundError):
             self.lease()
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
 
     def test_canonical_socket_mode_is_fixed_and_parent_drift_refuses_before_io(self):
-        count = fd_count()
+        count = self.fd_count()
         self.socket_directory.chmod(0o700)
         with self.assertRaises(custody.Refused):
             self.lease()
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
         self.socket_directory.chmod(0o777)
         self.base.chmod(0o777)
         with mock.patch.object(custody.Lease, "observe", side_effect=AssertionError("new native I/O")), \
                 mock.patch.object(custody.Lease, "process", side_effect=AssertionError("new proc I/O")):
             with self.assertRaises(custody.Refused):
                 self.lease()
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
 
     def test_current_root_and_mount_namespace_drift_cannot_hide_behind_held_root(self):
         lease = self.lease()
@@ -368,11 +445,11 @@ class DirectoryControls(unittest.TestCase):
             if path.endswith('source-paper-redisdata/_data'):
                 path = path.replace('source-paper-redisdata', 'source-paper-pgdata')
             return original(root, path)
-        count = fd_count()
+        count = self.fd_count()
         with mock.patch.object(custody, 'directory', side_effect=alias):
             with self.assertRaises(custody.Refused):
                 self.lease()
-        self.assertEqual(fd_count(), count)
+        self.assertEqual(self.fd_count(), count)
         lease = self.lease()
         (self.proc/'ns/mnt').unlink()
         (self.proc/'ns/mnt').symlink_to('/proc/self/ns/user')
@@ -419,6 +496,22 @@ class DirectoryControls(unittest.TestCase):
                 self.assertFalse(lease.fds)
                 (self.proc / "cmdline").write_bytes(old_command)
                 lease.path.write_bytes(old_binding)
+
+
+class HighFdDirectoryControls(DirectoryControls):
+    def setUp(self):
+        if resource.getrlimit(resource.RLIMIT_NOFILE)[0] <= 1024:
+            self.skipTest("descriptor limit cannot accommodate a listener above FD_SETSIZE")
+        original_socket = socket.socket
+
+        def high_socket(*args, **kwargs):
+            with original_socket(*args, **kwargs) as listener:
+                descriptor = fcntl.fcntl(listener, fcntl.F_DUPFD_CLOEXEC, 1024)
+            return original_socket(fileno=descriptor)
+
+        with mock.patch.object(socket, "socket", side_effect=high_socket):
+            super().setUp()
+        self.assertGreaterEqual(self.listener.fileno(), 1024)
 
 
 class SocketCustodyControls(unittest.TestCase):
