@@ -212,7 +212,11 @@ def verify_gate(policy: dict[str, Any], needs: object, candidate_sha: str) -> st
 
 
 def publication_inventory(
-    metadata: object, policy: dict[str, Any], repository_root: Path
+    metadata: object,
+    policy: dict[str, Any],
+    repository_root: Path,
+    *,
+    inventory_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, set[str]]]:
     if not isinstance(metadata, dict) or not isinstance(metadata.get("packages"), list):
         raise ReleaseError("invalid Cargo metadata")
@@ -229,10 +233,16 @@ def publication_inventory(
         if not isinstance(name, str) or not PACKAGE.fullmatch(name) or name in workspace_names:
             raise ReleaseError("invalid or duplicate workspace package")
         workspace_names.add(name)
-        if package.get("publish") == []:
-            continue
         publish = package.get("publish")
-        if publish is not None and publish != ["crates-io"]:
+        private_inventory_member = (
+            publish == []
+            and inventory_only
+            and policy.get("publication_enabled") is False
+            and name in policy["packages"]
+        )
+        if publish == [] and not private_inventory_member:
+            continue
+        if publish is not None and publish != ["crates-io"] and not private_inventory_member:
             raise ReleaseError(f"unsupported publication registry: {name}")
         version = package.get("version")
         if not isinstance(version, str) or not VERSION.fullmatch(version):
@@ -713,7 +723,12 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=120,
             )
         )
-        packages, dependencies = publication_inventory(metadata, policy, args.repository_root)
+        packages, dependencies = publication_inventory(
+            metadata,
+            policy,
+            args.repository_root,
+            inventory_only=args.command == "prepare-inventory",
+        )
         if args.command == "prepare-inventory":
             verify_bindings(args.repository_root, args.candidate_sha, args.automation_sha)
             write_outputs(
