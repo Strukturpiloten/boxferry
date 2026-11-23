@@ -50,7 +50,7 @@ permissions:
 jobs:
   check:
     name: Public API compatibility
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     outputs:
       candidate_sha: ${{ steps.result.outputs.candidate_sha }}

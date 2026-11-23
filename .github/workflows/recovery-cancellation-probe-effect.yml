@@ -36,7 +36,7 @@ permissions:
 jobs:
   effect:
     name: 629 inert dependent witness
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 6
     permissions:
       contents: read
