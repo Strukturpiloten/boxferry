@@ -256,6 +256,29 @@ class ConsumerContracts(unittest.TestCase):
         )
         self.assertNotIn("shared-devcontainer-updates.yml@", workflow())
 
+    def test_rust_callers_require_explicit_trusted_tasks(self) -> None:
+        for name, task in (("rust", "rust-quality"), ("coverage", "coverage"), ("msrv", "msrv")):
+            with self.subTest(job=name):
+                source = job(name)
+                self.assertIn(
+                    "uses: Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@" + PIN,
+                    source,
+                )
+                inputs = dict(re.findall(r"^      ([a-z_]+): (.+)$", source, re.MULTILINE))
+                required = {
+                    "candidate_sha": "${{ github.sha }}",
+                    "automation_sha": PIN,
+                    "policy_sha": "${{ github.event.pull_request.base.sha || "
+                    "github.event.merge_group.base_sha || github.sha }}",
+                    "config_path": "scripts/shared-validation-policy.json",
+                    "task": task,
+                    "require_configured_task": "true",
+                }
+                for key, value in required.items():
+                    self.assertEqual(inputs.get(key), value, key)
+                self.assertIn("needs: validation-plan", source)
+                self.assertIn(f"if: needs.validation-plan.outputs.select_{name} == 'true'", source)
+
     def test_repository_native_suites_and_coverage_floors_remain_owned(self) -> None:
         policy = json.loads((ROOT / "scripts/shared-validation-policy.json").read_text())
         quality = policy["tasks"]["rust-quality"]["commands"]
