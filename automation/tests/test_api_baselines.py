@@ -1036,7 +1036,6 @@ class PolicyCases(unittest.TestCase):
         self.assertIn("baseline-version: ${{ steps.baseline.outputs.baseline_version }}", shared)
         self.assertIn("api_purpose: ${{ inputs.api_purpose || 'development' }}", ci)
         self.assertIn("api_purpose: published", release)
-        self.assertIn('"${PUBLISHED_API_CANDIDATE}" != "${GITHUB_SHA}"', release)
         guard = release[release.index("  release-validation:") : release.index("  publish:")]
         self.assertNotIn("validation_only", guard)
         aggregate = guard.split("  release-prepare:", 1)[0]
@@ -1050,6 +1049,21 @@ class PolicyCases(unittest.TestCase):
         self.assertIn(f"automation_sha: {manifest['revision']}", aggregate)
         self.assertIn("needs_json: ${{ toJSON(needs) }}", aggregate)
         self.assertIn("config_path: scripts/shared-release-policy.json", aggregate)
+        prepare = guard.split("  release-prepare:", 1)[1]
+        self.assertIn("shared-release-inventory.yml@" + manifest["revision"], prepare)
+        self.assertIn("validation_result: ${{ needs.release-validation.result }}", prepare)
+        self.assertIn(
+            "validation_sha: ${{ needs.release-validation.outputs.candidate_sha }}", prepare
+        )
+        self.assertIn(
+            "published_api_candidate_sha: "
+            "${{ needs.release-validation.outputs.published_api_candidate_sha }}",
+            prepare,
+        )
+        self.assertNotIn(
+            "published_api_candidate_sha: ${{ needs.release-validation.outputs.candidate_sha }}",
+            prepare,
+        )
         self.assertIn("needs.release-validation.outputs.published_api_candidate_sha", guard)
         self.assertIn("needs.release-validation.outputs.candidate_sha", guard)
         self.assertNotIn("published_api_candidate_sha: ${{ github.sha }}", guard)

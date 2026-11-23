@@ -174,10 +174,10 @@ jobs:
     permissions:
       contents: read
     # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
-    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-validation.yml@745f3311eb11120bc68695f1c518a289781a4e1b # automation-v1 interface v1
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-validation.yml@53a2104938e4fcff2a5db8e8920c4bf4ba476ed9 # automation-v1 interface v1
     with:
       candidate_sha: ${{ github.sha }}
-      automation_sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+      automation_sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
       policy_sha: ${{ github.sha }}
       config_path: scripts/shared-release-policy.json
       needs_json: ${{ toJSON(needs) }}
@@ -189,113 +189,18 @@ jobs:
       github.repository == 'Strukturpiloten/boxferry' &&
       needs.release-validation.result == 'success' &&
       needs.release-validation.outputs.candidate_sha == github.sha
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
     permissions:
       contents: read
-    outputs:
-      candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}
-      published_api_candidate_sha: ${{ steps.candidate.outputs.published_api_candidate_sha }}
-    steps:
-      - name: Require distinct exact published API evidence before read-only preparation
-        shell: bash
-        env:
-          VALIDATED_CANDIDATE: ${{ needs.release-validation.outputs.candidate_sha }}
-          PUBLISHED_API_CANDIDATE: ${{ needs.release-validation.outputs.published_api_candidate_sha }}
-        run: |
-          set -euo pipefail
-          if [[ "${VALIDATED_CANDIDATE}" != "${GITHUB_SHA}" || "${PUBLISHED_API_CANDIDATE}" != "${GITHUB_SHA}" ]]; then
-            echo 'Read-only preparation requires distinct exact published API evidence.' >&2
-            exit 1
-          fi
-      - name: Check out immutable shared publication authority
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Strukturpiloten/boxferry
-          # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
-          ref: 745f3311eb11120bc68695f1c518a289781a4e1b
-          path: _automation
-          persist-credentials: false
-      - name: Check out the held exact release candidate for crate preparation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-validation.outputs.candidate_sha }}
-          path: source
-          persist-credentials: false
-      - name: Install locked shared Python tools
-        uses: ./_automation/.github/actions/shared-python
-      - name: Install configured Rust toolchain
-        working-directory: source
-        run: rustup show active-toolchain
-      - name: Validate boxferry-model through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry-model
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Validate boxferry-engine through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry-engine
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Validate boxferry-compose through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry-compose
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Validate boxferry-podman through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry-podman
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Validate boxferry-quadlet through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry-quadlet
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Validate boxferry through the shared crate component
-        uses: ./_automation/.github/actions/shared-crate-publish
-        with:
-          candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
-          release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
-          package: boxferry
-          validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          validation-result: ${{ needs.release-validation.result }}
-          validation-only: "true"
-      - name: Bind successful read-only package preparation
-        id: candidate
-        env:
-          CANDIDATE_SHA: ${{ needs.release-validation.outputs.candidate_sha }}
-          PUBLISHED_API_CANDIDATE: ${{ needs.release-validation.outputs.published_api_candidate_sha }}
-        run: |
-          set -euo pipefail
-          printf 'candidate_sha=%s\n' "${PUBLISHED_API_CANDIDATE}" >> "${GITHUB_OUTPUT}"
-          printf 'published_api_candidate_sha=%s\n' "${PUBLISHED_API_CANDIDATE}" >> "${GITHUB_OUTPUT}"
+    # Reviewed immutable bootstrap infrastructure; no automation release exists yet.
+    uses: Strukturpiloten/boxferry/.github/workflows/shared-release-inventory.yml@53a2104938e4fcff2a5db8e8920c4bf4ba476ed9 # automation-v1 interface v1
+    with:
+      candidate_sha: ${{ github.sha }}
+      automation_sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
+      policy_sha: ${{ github.sha }}
+      config_path: scripts/shared-release-policy.json
+      validation_sha: ${{ needs.release-validation.outputs.candidate_sha }}
+      validation_result: ${{ needs.release-validation.result }}
+      published_api_candidate_sha: ${{ needs.release-validation.outputs.published_api_candidate_sha }}
 
   publish:
     name: Publish BoxFerry
@@ -338,7 +243,7 @@ jobs:
         with:
           repository: Strukturpiloten/boxferry
           # renovate: datasource=github-digest depName=Strukturpiloten/boxferry currentValue=automation-v1
-          ref: 745f3311eb11120bc68695f1c518a289781a4e1b
+          ref: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           path: _automation
           persist-credentials: false
       - name: Check out the held exact release candidate for crate preparation
@@ -513,7 +418,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry-model
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
@@ -524,7 +429,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry-engine
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
@@ -535,7 +440,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry-compose
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
@@ -546,7 +451,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry-podman
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
@@ -557,7 +462,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry-quadlet
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}
@@ -568,7 +473,7 @@ jobs:
         uses: ./_automation/.github/actions/shared-crate-publish
         with:
           candidate-sha: ${{ needs.release-validation.outputs.candidate_sha }}
-          automation-sha: 745f3311eb11120bc68695f1c518a289781a4e1b
+          automation-sha: 53a2104938e4fcff2a5db8e8920c4bf4ba476ed9
           release-config: ${{ github.workspace }}/source/scripts/shared-release-policy.json
           package: boxferry
           validation-sha: ${{ needs.release-validation.outputs.candidate_sha }}

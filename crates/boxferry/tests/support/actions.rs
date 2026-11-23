@@ -424,6 +424,7 @@ fn is_reviewed_shared_bootstrap(reference: &str) -> bool {
             | "shared-rust-dependencies.yml"
             | "shared-rust-semver.yml"
             | "shared-release-prepare.yml"
+            | "shared-release-inventory.yml"
             | "shared-release-validation.yml"
             | "shared-devcontainer-validation.yml"
             | "shared-devcontainer-updates.yml"
@@ -513,6 +514,7 @@ mod tests {
         for workflow in [
             "shared-rust-ci.yml",
             "shared-release-prepare.yml",
+            "shared-release-inventory.yml",
             "shared-devcontainer-validation.yml",
             "shared-devcontainer-updates.yml",
         ] {
