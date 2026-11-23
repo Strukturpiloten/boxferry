@@ -289,6 +289,13 @@
       ]
     },
     {
+      "description": "Native Actions exclusively owns the inventory workflow runner; suppress the legacy regex duplicate only here.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-runners"],
+      "matchFileNames": [".github/workflows/shared-release-inventory.yml"],
+      "enabled": false
+    },
+    {
       "description": "Keep shared Dev Container qualification visible in update notes",
       "matchManagers": ["custom.regex"],
       "matchFileNames": [".devcontainer/Dockerfile"],

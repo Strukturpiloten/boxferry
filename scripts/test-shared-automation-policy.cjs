@@ -71,7 +71,24 @@
       ".github/workflows/reviewed-application-validation.yml",
       ".github/workflows/reviewed-docker-consumer-validation.yml",
     ];
+    const inventoryPath = ".github/workflows/shared-release-inventory.yml";
+    const inventory = fs.readFileSync(path.join(root, inventoryPath), "utf8");
+    const extractedInventory = await require(
+      base + "modules/manager/github-actions/extract.js",
+    ).extractPackageFile(inventory, inventoryPath, {});
+    const checkout = extractedInventory.deps.filter((dep) => dep.depName === "actions/checkout");
+    assert.equal(checkout.length, 1, "inventory checkout has one native owner");
+    assert.equal(checkout[0].currentDigest, "3d3c42e5aac5ba805825da76410c181273ba90b1");
+    assert.equal(checkout[0].currentValue, "v7.0.1");
     const ordinary = [
+      [
+        "inventory checkout",
+        "github-actions",
+        "github-tags",
+        "actions/checkout",
+        inventoryPath,
+        "digest",
+      ],
       [
         "App-token Action",
         "github-actions",
@@ -139,6 +156,69 @@
       // It does not grant authority from a hand-built projection or description metadata.
       const { config } = await resolveConfigPresets(candidate);
       assert.equal(config.rebaseWhen, "auto", "actual native resolved rebaseWhen");
+      // Extract both managers from actual held-preset/local definitions, then apply
+      // effective rules to the combined rows: extraction alone cannot prove ownership.
+      const inventoryRows = extractedInventory.deps.map((dep) => ({
+        ...dep,
+        manager: "github-actions",
+        packageName: dep.depName,
+        packageFile: inventoryPath,
+        updateType: "digest",
+      }));
+      for (const manager of config.customManagers || []) {
+        if (manager.datasourceTemplate !== "github-runners") continue;
+        assert.ok(
+          manager.managerFilePatterns.some((pattern) =>
+            new RegExp(pattern.slice(1, -1)).test(inventoryPath),
+          ),
+        );
+        const extracted = require(
+          base + "modules/manager/custom/regex/index.js",
+        ).extractPackageFile(inventory, inventoryPath, manager);
+        for (const dep of extracted?.deps || [])
+          inventoryRows.push({
+            ...dep,
+            manager: "custom.regex",
+            packageName: dep.depName,
+            packageFile: inventoryPath,
+            updateType: "major",
+          });
+      }
+      const runners = inventoryRows.filter((dep) => dep.datasource === "github-runners");
+      assert.equal(runners.length, 2, "inventory has both actual runner extraction rows");
+      assert.deepEqual(runners.map((dep) => dep.manager).sort(), [
+        "custom.regex",
+        "github-actions",
+      ]);
+      const effectiveRunners = await Promise.all(
+        runners.map((dep) => applyPackageRules({ ...config, ...dep })),
+      );
+      const active = effectiveRunners.filter((dep) => dep.enabled !== false);
+      assert.equal(active.length, 1, "inventory has one enabled runner updater");
+      assert.equal(active[0].manager, "github-actions", "inventory native runner owner");
+      assert.equal(active[0].depName, "ubuntu");
+      assert.equal(active[0].currentValue, "24.04");
+      assert.equal(active[0].groupName, "GitHub-hosted runners");
+      assert.equal(active[0].minimumReleaseAge, "3 days");
+      assert.equal(active[0].minimumReleaseAgeBehaviour, "timestamp-optional");
+      assert.equal(active[0].automerge, true);
+      assert.equal(active[0].dependencyDashboardApproval, false);
+      const legacy = runners.find((dep) => dep.manager === "custom.regex");
+      const otherFile = await applyPackageRules({
+        ...config,
+        ...legacy,
+        packageFile: ".github/workflows/ci.yml",
+      });
+      assert.notEqual(otherFile.enabled, false, "other runner definitions keep their owner");
+      const effectiveCheckout = await applyPackageRules({
+        ...config,
+        ...inventoryRows.find((dep) => dep.depName === "actions/checkout"),
+      });
+      assert.notEqual(effectiveCheckout.enabled, false, "checkout digest updater remains enabled");
+      assert.equal(effectiveCheckout.pinDigests, true);
+      assert.equal(effectiveCheckout.groupName, "GitHub Actions");
+      assert.equal(effectiveCheckout.minimumReleaseAge, "3 days");
+
       for (const [label, ...fields] of ordinary) {
         const actual = await applyPackageRules({ ...config, ...dependency(...fields) });
         assert.equal(actual.automerge, true, label + " automerge");
@@ -147,7 +227,7 @@
         assert.equal(actual.platformAutomerge, false, label + " protected queue semantics");
         assert.notEqual(actual.enabled, false, label + " enabled");
         assert.equal(actual.minimumReleaseAge, "3 days", label + " ordinary age");
-        if (label === "App-token Action") {
+        if (label === "App-token Action" || label === "inventory checkout") {
           assert.equal(actual.pinDigests, true, label + " digest pinning");
           assert.equal(actual.groupName, "GitHub Actions", label + " native group");
         }
@@ -349,6 +429,22 @@
         changed.packageRules.push(structuredClone(changed.packageRules[index]));
       else changed.packageRules[index].matchFileNames = [admissionPaths[0]];
       await assert.rejects(() => checkActualPolicy(changed), /admission/);
+    }
+    for (const disabledManager of ["none", "github-actions"]) {
+      const changed = structuredClone(local);
+      changed.packageRules = changed.packageRules.filter(
+        (rule) =>
+          rule.description !==
+          "Native Actions exclusively owns the inventory workflow runner; suppress the legacy regex duplicate only here.",
+      );
+      if (disabledManager === "github-actions")
+        changed.packageRules.push({
+          matchManagers: ["custom.regex", "github-actions"],
+          matchDatasources: ["github-runners"],
+          matchFileNames: [inventoryPath],
+          enabled: false,
+        });
+      await assert.rejects(() => checkActualPolicy(changed), /one enabled runner updater/);
     }
     console.log(
       "Actual native local policy and nineteen late-override/lock/admission counterfactuals passed.",

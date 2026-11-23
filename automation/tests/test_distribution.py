@@ -334,6 +334,7 @@ class DistributionTests(unittest.TestCase):
             "renovate-presets/default.json",
             "templates/caller.yml",
             ".github/workflows/shared-ci.yml",
+            ".github/workflows/shared-release-inventory.yml",
             ".github/actions/shared-python/action.yml",
             subject.WORKFLOW,
         ):

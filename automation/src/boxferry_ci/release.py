@@ -604,7 +604,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("gate", "prepare-crate", "publish-crate", "classify-queue", "prepare-branch"),
+        choices=(
+            "gate",
+            "prepare-inventory",
+            "prepare-crate",
+            "publish-crate",
+            "classify-queue",
+            "prepare-branch",
+        ),
     )
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument("--config", type=Path)
@@ -614,6 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--package")
     parser.add_argument("--validation-sha")
     parser.add_argument("--validation-result")
+    parser.add_argument("--published-api-candidate-sha")
     parser.add_argument("--validation-only", choices=("true", "false"), default="true")
     parser.add_argument("--bootstrap", choices=("true", "false"), default="false")
     parser.add_argument("--queue-base-sha")
@@ -690,6 +698,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ReleaseError(
                 "publication preparation needs the complete exact-candidate release gate"
             )
+        if args.command == "prepare-inventory":
+            if args.published_api_candidate_sha != args.candidate_sha:
+                raise ReleaseError(
+                    "inventory preparation needs the distinct exact published API proof"
+                )
+            if args.package or args.validation_only != "true" or args.bootstrap != "false":
+                raise ReleaseError("inventory preparation is intrinsically read-only")
         metadata = read_json(
             subprocess.check_output(
                 ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
@@ -699,6 +714,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         packages, dependencies = publication_inventory(metadata, policy, args.repository_root)
+        if args.command == "prepare-inventory":
+            verify_bindings(args.repository_root, args.candidate_sha, args.automation_sha)
+            write_outputs(
+                {
+                    "candidate_sha": args.validation_sha,
+                    "published_api_candidate_sha": args.published_api_candidate_sha,
+                }
+            )
+            return 0
         if args.package not in packages:
             raise ReleaseError("package is outside the configured publication inventory")
         version = packages[args.package]["version"]

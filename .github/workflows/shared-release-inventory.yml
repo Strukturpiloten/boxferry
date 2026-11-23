@@ -1,0 +1,110 @@
+---
+name: Shared read-only release inventory
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact caller revision tested in this run.
+        required: true
+        type: string
+      automation_sha:
+        description: Expected immutable BoxFerry commit; must equal the defining job workflow SHA.
+        required: true
+        type: string
+      policy_sha:
+        description: Trusted PR or merge queue base, otherwise the candidate SHA.
+        required: true
+        type: string
+      config_path:
+        description: Repository-relative release policy path in the trusted revision.
+        required: true
+        type: string
+      validation_sha:
+        description: Actual generic candidate output from the complete release gate.
+        required: true
+        type: string
+      validation_result:
+        description: Actual result of the complete release gate job.
+        required: true
+        type: string
+      published_api_candidate_sha:
+        description: Actual distinct published API candidate output from the release gate.
+        required: true
+        type: string
+    outputs:
+      candidate_sha:
+        description: Verified release gate candidate whose complete inventory passed.
+        value: ${{ jobs.prepare.outputs.candidate_sha }}
+      published_api_candidate_sha:
+        description: Verified distinct published API proof for that candidate.
+        value: ${{ jobs.prepare.outputs.published_api_candidate_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Validate complete ordered crate inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      candidate_sha: ${{ steps.inventory.outputs.candidate_sha }}
+      published_api_candidate_sha: ${{ steps.inventory.outputs.published_api_candidate_sha }}
+    steps:
+      - name: Require defining automation revision and both release gate receipts before setup
+        shell: bash
+        env:
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          VALIDATION_SHA: ${{ inputs.validation_sha }}
+          VALIDATION_RESULT: ${{ inputs.validation_result }}
+          PUBLISHED_API_CANDIDATE_SHA: ${{ inputs.published_api_candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${AUTOMATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "${AUTOMATION_SHA}" = "${WORKFLOW_SHA}"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "${CANDIDATE_SHA}" = "${GITHUB_SHA}"
+          test "${VALIDATION_RESULT}" = success
+          test "${VALIDATION_SHA}" = "${CANDIDATE_SHA}"
+          test "${PUBLISHED_API_CANDIDATE_SHA}" = "${CANDIDATE_SHA}"
+      - name: Check out immutable shared automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ job.workflow_sha }}
+          path: _automation
+          persist-credentials: false
+      - name: Bind caller candidate and trusted policy
+        id: source
+        uses: ./_automation/.github/actions/shared-source
+        with:
+          candidate-sha: ${{ inputs.candidate_sha }}
+          automation-sha: ${{ inputs.automation_sha }}
+          policy-sha: ${{ inputs.policy_sha }}
+          config-path: ${{ inputs.config_path }}
+      - name: Install the locked shared Python project
+        uses: ./_automation/.github/actions/shared-python
+      - name: Select the configured Rust toolchain
+        working-directory: source
+        run: rustup show active-toolchain
+      - name: Validate the inventory once and expose verified receipts
+        id: inventory
+        shell: bash
+        env:
+          POLICY_CONFIG: ${{ steps.source.outputs.config }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          VALIDATION_SHA: ${{ inputs.validation_sha }}
+          VALIDATION_RESULT: ${{ inputs.validation_result }}
+          PUBLISHED_API_CANDIDATE_SHA: ${{ inputs.published_api_candidate_sha }}
+        run: |
+          set -euo pipefail
+          uv run --locked --project _automation/automation python -m boxferry_ci.release prepare-inventory \
+            --repository-root source --config "${POLICY_CONFIG}" \
+            --candidate-sha "${CANDIDATE_SHA}" --automation-sha "${AUTOMATION_SHA}" \
+            --validation-sha "${VALIDATION_SHA}" --validation-result "${VALIDATION_RESULT}" \
+            --published-api-candidate-sha "${PUBLISHED_API_CANDIDATE_SHA}"
