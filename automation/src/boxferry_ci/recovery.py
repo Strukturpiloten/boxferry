@@ -1627,6 +1627,8 @@ def ordinary_native_changes(
     *,
     python_manifests: bool = False,
 ) -> None:
+    from .cargo_tools import COVERAGE_FILE, DOCKERFILE, coverage_version
+
     commits, files = comparison.get("commits"), comparison.get("files")
     if (
         not isinstance(commits, list)
@@ -1668,7 +1670,8 @@ def ordinary_native_changes(
         cargo = path == "Cargo.toml" or re.fullmatch(r"crates/[^/]+/Cargo.toml", path) is not None
         npm = path in {"package.json", "automation/devcontainer/package.json"}
         python = python_manifests and path in {"pyproject.toml", "automation/pyproject.toml"}
-        if path not in core.LOCK_PATHS and not cargo and not npm and not python:
+        coverage = path == COVERAGE_FILE
+        if path not in core.LOCK_PATHS and not cargo and not npm and not python and not coverage:
             raise RecoveryRefused(
                 "retained source supports only the reviewed package manifests and known locks"
                 if python_manifests
@@ -1680,6 +1683,22 @@ def ordinary_native_changes(
             or (modes[merge_base][path] != modes[candidate.source_head][path])
         ):
             raise RecoveryRefused("native dependency file is new, missing or changed mode")
+        if coverage:
+            if DOCKERFILE in trees[merge_base] or DOCKERFILE in trees[candidate.source_head]:
+                raise RecoveryRefused("coverage version file requires an image-less repository")
+            before = required_file(api, path, merge_base, trees[merge_base])
+            after = required_file(api, path, candidate.source_head, trees[candidate.source_head])
+            try:
+                previous, current = (
+                    coverage_version(data.decode("ascii")) for data in (before, after)
+                )
+            except ValueError as error:
+                raise RecoveryRefused("coverage version file is malformed") from error
+            if (
+                previous == current
+                or before.replace(previous.encode(), current.encode(), 1) != after
+            ):
+                raise RecoveryRefused("coverage source requires a genuine version-only edit")
         if cargo or npm or python:
             before = required_file(api, path, merge_base, trees[merge_base])
             after = required_file(api, path, candidate.source_head, trees[candidate.source_head])
