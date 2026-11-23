@@ -13,8 +13,14 @@ import tomllib
 from pathlib import Path
 
 from boxferry_ci.contracts import ContractError, exact_sha, object_value, relative_path
-from boxferry_ci.gate import GateFailure, verify_devcontainer_gate, verify_gate
+from boxferry_ci.gate import (
+    GateFailure,
+    verify_devcontainer_gate,
+    verify_gate,
+    verify_native_conformance,
+)
 from boxferry_ci.planner import Comparison, git, git_text, make_plan, verify_policy_revision
+from boxferry_ci.podman_native import NATIVE_JOB, select_native_conformance
 from boxferry_ci.policy import DEFAULT_TASKS, Policy, Task, load_policy
 from boxferry_ci.runner import RunCancelled, RunResult, protected_values, redact, run
 
@@ -39,6 +45,12 @@ def _parser() -> argparse.ArgumentParser:
         if name in {"plan", "run-local"}:
             command.add_argument("--base-ref", default="origin/main")
             command.add_argument("--force-full", "--full", dest="force_full", action="store_true")
+        if name in {"plan", "gate"}:
+            command.add_argument(
+                "--bootstrap-podman-native-conformance",
+                action="store_true",
+                help="Enable the native prerequisite on the reviewed pre-adoption PodmanLens base.",
+            )
         if name == "plan":
             command.add_argument("--github-output", type=Path)
         elif name == "gate":
@@ -213,6 +225,22 @@ def _plan(args: argparse.Namespace, policy: Policy) -> dict[str, object]:
     )
 
 
+def _native_selection(
+    args: argparse.Namespace, policy: Policy, plan: dict[str, object]
+) -> bool | None:
+    return select_native_conformance(
+        args.repository_root,
+        policy,
+        Comparison(
+            args.event,
+            exact_sha(plan["base_sha"], "base SHA"),
+            exact_sha(plan["head_sha"], "head SHA"),
+            exact_sha(plan["tested_sha"], "tested SHA"),
+        ),
+        bootstrap=args.bootstrap_podman_native_conformance,
+    )
+
+
 def _write_report(args: argparse.Namespace, report: dict[str, object]) -> None:
     path: Path | None = getattr(args, "report_json", None)
     if path is not None:
@@ -324,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         policy = _policy(args)
         if args.command == "plan":
             plan = _plan(args, policy)
+            native_selected = _native_selection(args, policy, plan)
             encoded = json.dumps(plan, sort_keys=True, separators=(",", ":"))
             if args.github_output:
                 with args.github_output.open("a", encoding="utf-8") as stream:
@@ -331,8 +360,13 @@ def main(argv: list[str] | None = None) -> int:
                     jobs = object_value(plan["jobs"], "plan jobs")
                     for job, selected in jobs.items():
                         stream.write(f"select_{job.replace('-', '_')}={str(selected).lower()}\n")
+                    if native_selected is not None:
+                        stream.write(f"select_native_conformance={str(native_selected).lower()}\n")
             print(encoded)
-            _write_report(args, {"schema": 1, "status": "success", "plan": plan})
+            plan_report: dict[str, object] = {"schema": 1, "status": "success", "plan": plan}
+            if native_selected is not None:
+                plan_report["native_conformance_selected"] = native_selected
+            _write_report(args, plan_report)
         elif args.command == "gate":
             comparison = Comparison(
                 args.event,
@@ -341,13 +375,23 @@ def main(argv: list[str] | None = None) -> int:
                 exact_sha(args.tested_sha, "tested SHA"),
             )
             verifier = verify_devcontainer_gate if args.devcontainer_validation else verify_gate
+            expected_plan = _plan(args, policy)
+            native_selected = _native_selection(args, policy, expected_plan)
+            needs = json.loads(args.needs_json)
+            native_result = None
+            if native_selected is not None:
+                needs, native_result = verify_native_conformance(
+                    needs, native_selected, comparison.tested_sha
+                )
             results = verifier(
                 json.loads(args.plan_json),
-                json.loads(args.needs_json),
+                needs,
                 policy,
                 comparison,
-                expected_plan=_plan(args, policy),
+                expected_plan=expected_plan,
             )
+            if native_result is not None:
+                results.append((NATIVE_JOB, native_result))
             gate_report: dict[str, object] = {"status": "success", "results": results}
             print(json.dumps(gate_report, sort_keys=True))
             _write_report(args, gate_report)

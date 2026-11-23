@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Current active native conformance inputs. Historical capture provenance is separate.
+# These constants are consumed by sourced scripts and the native workflow.
+# shellcheck disable=SC2034
+readonly PODMAN_NATIVE_RPM_BUILD=6.1.3-1.fc45
+readonly PODMAN_NATIVE_VERSION="v${PODMAN_NATIVE_RPM_BUILD%%-*}"
+readonly PODMAN_NATIVE_RPM_RELEASE="${PODMAN_NATIVE_RPM_BUILD#*-}"
+# The maintainer reviews these integrity records together with Fedora build updates.
+readonly PODMAN_NATIVE_RPM_SHA256=1d1e37c805f0f20e9669503ae7e8a87330665efdc42a47ccf10109dccbe81660
+readonly PODMAN_NATIVE_SOURCE_REVISION=85b994955e0b4e30fbce9c8351cab85676140ede
+readonly PODMAN_NATIVE_SOURCE_RPM_SHA256=1d1a423febe13d2fdf903f6a79317c8790b572f0cfb4c4f72fb6d40ad660e1d2
+readonly PODMAN_NATIVE_SOURCE_ARCHIVE_SHA256=6253aee14e573f747ca77e5a83a0df4ef9c2f609604f56715070ed06b6f9ddd8
+# renovate: datasource=docker depName=registry.fedoraproject.org/fedora
+readonly PODMAN_NATIVE_BASE_IMAGE=registry.fedoraproject.org/fedora:45@sha256:4c23d9596db49777190ff3a6ed7bae33374c409d1f62affc8ef654da10416ffc
+readonly PODMAN_NATIVE_COMPOSE_PATH=releases/45/Everything
+readonly PODMAN_NATIVE_REPOMD_SHA256=b773d5b26da503ff3512dd90059216904a980ae046e77ec3cb6e65aec62a5802
+readonly PODMAN_NATIVE_PRIMARY_SHA256=ac48b5bd2c3127d576c86b5756921d4ad02fabb33f2f9c5da89d683231b8f774

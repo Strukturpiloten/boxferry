@@ -23,6 +23,8 @@ For PRs/merge queues, the planner compares trusted base and tested candidate; kn
 
 Main, manual, release and local [complete gates](../scripts/check-all.sh) remain complete; focused feedback cannot replace them. Legacy defaults remain; `require_configured_task: true` rejects missing or malformed tasks before Rust setup. The [Dev Container seed adapter](../automation/src/boxferry_ci/devcontainer_seed.py) stays opt-in with reviewed approvals. Image qualification and updater activation remain separate under #563; ordinary adoption enables no image job or schedule.
 
+See [PodmanLens Fedora qualification and caller adoption](decisions/0092-shared-development-automation.md#conditional-podmanlens-native-qualification).
+
 The [Python project](../automation/pyproject.toml) and [lockfile](../automation/uv.lock) own uv, Ruff and ty. The interface-1 loader verifies pinned source. The [Node action](../.github/actions/shared-node/action.yml) uses locked Python, producer CI version and cache inputs. Native automation validates Node ownership and replacements; Rust checks Action pins. Updater caching stays disabled; adoption awaits producer admission. Repositories own checks, thresholds, native suites, binaries and evidence under [ADR 0079](decisions/0079-native-test-runtime-selection.md).
 
 [Proposed original-graph recovery](decisions/0098-preserved-original-dependency-recheck.md)

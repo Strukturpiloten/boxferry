@@ -7,11 +7,32 @@ import re
 from boxferry_ci.contracts import ContractError, exact_sha, object_value, strings
 from boxferry_ci.devcontainer_seed import DEVCONTAINER_JOB, require_devcontainer_policy
 from boxferry_ci.planner import PLAN_SCHEMA, Comparison
+from boxferry_ci.podman_native import NATIVE_JOB
 from boxferry_ci.policy import Policy
 
 
 class GateFailure(ContractError):
     """The contract is valid, but one or more required checks did not pass."""
+
+
+def verify_native_conformance(
+    needs_value: object, selected: bool, tested_sha: str
+) -> tuple[dict[str, object], str]:
+    """Verify one supplemental receipt and leave the other dependencies for the base gate."""
+    needs = dict(object_value(needs_value, "aggregate job dependencies"))
+    outcome = object_value(needs.pop(NATIVE_JOB, None), f"{NATIVE_JOB} outcome")
+    result = outcome.get("result")
+    if not isinstance(result, str) or result not in {"success", "failure", "cancelled", "skipped"}:
+        raise ContractError(f"{NATIVE_JOB} has a missing or unknown result")
+    if result != ("success" if selected else "skipped"):
+        status = "selected" if selected else "unselected"
+        raise GateFailure(f"{status} {NATIVE_JOB} concluded {result}")
+    if selected:
+        outputs = object_value(outcome.get("outputs"), f"{NATIVE_JOB} outputs")
+        candidate = exact_sha(outputs.get("candidate_sha"), "native conformance candidate receipt")
+        if candidate != tested_sha:
+            raise ContractError("native conformance receipt does not identify the tested candidate")
+    return needs, result
 
 
 def verify_gate(

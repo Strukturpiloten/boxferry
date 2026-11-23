@@ -107,6 +107,30 @@ opt in and advance matching references only after an actual admitted immutable
 producer successor and distribution have been observed. This decision does not
 claim that rollout or native/App acceptance has completed.
 
+### Conditional PodmanLens native qualification
+
+PodmanLens adds the supplemental `native-conformance` job to Required CI's
+dependencies and sets `"podman_native_conformance": true` in its canonical
+validation policy. The shared planner and Required CI both read trusted
+policy and compare the owned Fedora 45 image declaration on the event base and
+exact tested PR or merge-group commit. The shared inert parser also serves
+the existing eligibility policy. An invalid pin or comparison refuses the
+qualification decision. An unchanged digest or another event requires a planned skip.
+The planner emits `select_native_conformance` through `plan --github-output`
+separately from the ordinary plan. Required CI recalculates this selection and
+requires a successful selected job with `outputs.candidate_sha` for the tested
+commit. An unselected job must report a skip.
+
+During adoption, pass `--bootstrap-podman-native-conformance` to both `plan` and
+`gate` against the reviewed pre-adoption policy. After adoption, the base policy requires the dependency
+even without the flag and a candidate cannot remove the opt-in. The ordinary
+dependency inventory, schema 3 plan and Dev Container receipt checks remain in
+force. PodmanLens runs and validates both native modes and cleanup before issuing
+an exact-candidate receipt. Dependency age and publication admission keep their
+own authority. BoxFerry [#704](https://github.com/Strukturpiloten/boxferry/issues/704)
+tracks producer admission. PodmanLens [#185](https://github.com/Strukturpiloten/podman-lens/issues/185)
+owns caller adoption and actual native execution.
+
 ## Consequences
 
 Common fixes and version upgrades have one reviewed source. Consumers still need

@@ -298,8 +298,11 @@ def _probe(text: str, path: str) -> list[Pin]:
 
 def _fedora_base(root: Path) -> Pin | None:
     text = _read(root, PODMAN_NATIVE_PINS)
-    if text is None:
-        return None
+    return None if text is None else parse_fedora_base(text)
+
+
+def parse_fedora_base(text: str) -> Pin:
+    """Read the owned Fedora slot as data for both eligibility and qualification."""
     lines = text.split("\n")
     # Require inert assignments so a literal in a heredoc or an alternate
     # shell assignment cannot hide the effective declaration.
