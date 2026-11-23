@@ -96,7 +96,7 @@ class InventoryTests(unittest.TestCase):
         self.config.write_text(json.dumps(self.policy))
 
     def invoke(
-        self, changes: Mapping[str, str | None] | None = None
+        self, changes: Mapping[str, str | None] | None = None, *, command: str = "prepare-inventory"
     ) -> subprocess.CompletedProcess[str]:
         options: dict[str, str | None] = {
             "repository-root": str(self.root),
@@ -108,7 +108,7 @@ class InventoryTests(unittest.TestCase):
             "published-api-candidate-sha": SHA,
         }
         options.update(changes or {})
-        args = ["prepare-inventory"]
+        args = [command]
         for key, value in options.items():
             if value is not None:
                 args.extend(["--" + key, value])
@@ -136,6 +136,77 @@ class InventoryTests(unittest.TestCase):
                     self.output.read_text(),
                     f"existing=retained\ncandidate_sha={SHA}\npublished_api_candidate_sha={SHA}\n",
                 )
+
+    def private_workspace(self, names: list[str]) -> None:
+        self.workspace(names)
+        for name in names:
+            manifest = self.root / name / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text().replace("[package]\n", "[package]\npublish = false\n")
+            )
+        self.policy["publication_enabled"] = False
+        self.config.write_text(json.dumps(self.policy))
+
+    def test_explicit_private_inventory_with_disabled_publication(self) -> None:
+        self.private_workspace(["private-base", "private-app"])
+        child = self.invoke()
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(self.calls.read_text(), "metadata\n")
+        self.assertEqual(
+            self.output.read_text(),
+            f"existing=retained\ncandidate_sha={SHA}\npublished_api_candidate_sha={SHA}\n",
+        )
+
+    def test_private_inventory_needs_explicit_false_and_never_prepares_or_publishes(self) -> None:
+        self.private_workspace(["private-app"])
+        for enabled in (True, None):
+            policy = dict(self.policy)
+            if enabled is None:
+                del policy["publication_enabled"]
+            else:
+                policy["publication_enabled"] = enabled
+            self.config.write_text(json.dumps(policy))
+            child = self.invoke()
+            self.assertNotEqual(child.returncode, 0)
+            self.assertEqual(self.output.read_text(), "existing=retained\n")
+        self.config.write_text(json.dumps(self.policy))
+        for command in ("prepare-crate", "publish-crate"):
+            for validation_only in ("true", "false"):
+                with self.subTest(command=command, validation_only=validation_only):
+                    child = self.invoke(
+                        {"package": "private-app", "validation-only": validation_only},
+                        command=command,
+                    )
+                    self.assertNotEqual(child.returncode, 0)
+                    self.assertEqual(self.calls.read_text(), "metadata\n")
+                    self.assertEqual(self.output.read_text(), "existing=retained\n")
+
+    def test_private_inventory_preserves_membership_order_version_and_registry_checks(self) -> None:
+        self.private_workspace(["base", "normal", "build", "dev"])
+        for inventory in (
+            ["normal", "build", "dev"],
+            ["foreign", "base", "normal", "build", "dev"],
+            ["normal", "base", "build", "dev"],
+            ["base", "build", "normal", "dev"],
+            ["base", "normal", "dev", "build"],
+        ):
+            with self.subTest(inventory=inventory):
+                self.config.write_text(json.dumps(self.policy | {"packages": inventory}))
+                child = self.invoke()
+                self.assertNotEqual(child.returncode, 0)
+                self.assertEqual(self.output.read_text(), "existing=retained\n")
+        self.config.write_text(json.dumps(self.policy))
+        manifest = self.root / "dev/Cargo.toml"
+        original = manifest.read_text()
+        for changed in (
+            original.replace('version = "0.1.0"', 'version = "0.1.1"', 1),
+            original.replace('version = "0.1.0"', 'version = "0.1.0-beta.1"', 1),
+            original.replace("publish = false", 'publish = ["other-registry"]'),
+        ):
+            manifest.write_text(changed)
+            child = self.invoke()
+            self.assertNotEqual(child.returncode, 0)
+            self.assertEqual(self.output.read_text(), "existing=retained\n")
 
     def test_failed_missing_stale_proofs_refuse_before_metadata_and_emit_nothing(self) -> None:
         self.workspace(["compose-lens"])

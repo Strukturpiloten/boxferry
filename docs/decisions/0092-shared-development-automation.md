@@ -59,6 +59,11 @@ source, so conflating those commits could execute or attest the wrong scripts.
    compatibility requires positive contract evidence and verified canonical
    absence; an arbitrary 404 must not create success. Existing #485 owns first
    publication parity rather than a competing exception.
+   When the trusted policy sets `publication_enabled: false`, read-only
+   `prepare-inventory` can validate listed private crates alongside every publishable
+   workspace member. It requires both exact-candidate gate receipts and checks
+   workspace membership, registry, lockstep version and dependency order.
+   Per-crate preparation and publication still require publishable Cargo members.
 7. Routine tool and dependency pins have one automatic Renovate owner, explicit extraction/integrity,
    producer/consumer regressions, and rollback to the prior reviewed immutable
    revision. Distribution and merge occur automatically after required checks as
