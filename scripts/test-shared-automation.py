@@ -16,7 +16,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 from typing import Any
@@ -1180,19 +1179,38 @@ def source_job(source: str, name: str) -> str:
 def require_release_boundaries(source: str) -> None:
     prepare = source_job(source, "release-prepare")
     publish = source_job(source, "publish")
-    header, steps = prepare.split("    steps:\n", 1)
-    if "published_api_candidate_sha" in header.split("    if:", 1)[1].split("    runs-on:", 1)[0]:
-        raise AssertionError("missing published proof must fail read-only preparation, not skip it")
-    if not steps.startswith("      - name: Require distinct exact published API evidence"):
-        raise AssertionError("published proof must precede read-only package setup")
-    binding = (
-        "PUBLISHED_API_CANDIDATE: "
-        "${{ needs.release-validation.outputs.published_api_candidate_sha }}"
+    header, supplied = prepare.split("    with:\n", 1)
+    if "published_api_candidate_sha" in header:
+        raise AssertionError("missing published proof must fail inside preparation, not skip it")
+    expected_header = (
+        "    needs: release-validation\n"
+        "    if: >-\n"
+        "      github.repository == 'Strukturpiloten/boxferry' &&\n"
+        "      needs.release-validation.result == 'success' &&\n"
+        "      needs.release-validation.outputs.candidate_sha == github.sha\n"
     )
-    if prepare.count(binding) != 2 or "secrets." in prepare:
-        raise AssertionError("read-only preparation needs real published proof and no credentials")
-    if "PUBLISHED_API_CANDIDATE: ${{ needs.release-validation.outputs.candidate_sha }}" in prepare:
-        raise AssertionError("generic candidate is not published API proof")
+    if expected_header not in header or "    permissions:\n      contents: read\n" not in header:
+        raise AssertionError("read-only preparation must preserve its eligibility and permissions")
+    if f"shared-release-inventory.yml@{PIN} # automation-v1 interface v1" not in header:
+        raise AssertionError("inventory workflow must use the coherent immutable shared source")
+    if any(field in prepare for field in ("    steps:", "    outputs:", "    runs-on:", "secrets")):
+        raise AssertionError(
+            "inventory preparation delegates setup and verified outputs without secrets"
+        )
+    expected = {
+        "candidate_sha": "${{ github.sha }}",
+        "automation_sha": PIN,
+        "policy_sha": "${{ github.sha }}",
+        "config_path": "scripts/shared-release-policy.json",
+        "validation_sha": "${{ needs.release-validation.outputs.candidate_sha }}",
+        "validation_result": "${{ needs.release-validation.result }}",
+        "published_api_candidate_sha": (
+            "${{ needs.release-validation.outputs.published_api_candidate_sha }}"
+        ),
+    }
+    rows = re.findall(r"(?m)^      ([a-z_]+): ([^\n]+)$", supplied)
+    if len(rows) != len(expected) or dict(rows) != expected:
+        raise AssertionError("inventory preparation must forward the real distinct gate receipts")
     for required in [
         "workflow_dispatch:",
         "!inputs.validation_only",
@@ -1206,31 +1224,6 @@ def require_release_boundaries(source: str) -> None:
     ]:
         if required not in source:
             raise AssertionError(f"publication boundary missing: {required}")
-    if "printf 'candidate_sha=%s\\n' \"${PUBLISHED_API_CANDIDATE}\"" not in prepare:
-        raise AssertionError("read-only candidate binding must derive from published proof")
-    guard = textwrap.dedent(steps.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
-    for validated, published, expected in [
-        ("a" * 40, "a" * 40, 0),
-        ("a" * 40, "", 1),
-        ("a" * 40, "b" * 40, 1),
-        ("b" * 40, "a" * 40, 1),
-    ]:
-        result = subprocess.run(
-            ["bash", "-c", guard],
-            env={
-                "PATH": os.defpath,
-                "GITHUB_SHA": "a" * 40,
-                "VALIDATED_CANDIDATE": validated,
-                "PUBLISHED_API_CANDIDATE": published,
-            },
-            capture_output=True,
-            check=False,
-            timeout=5,
-        )
-        if result.returncode != expected:
-            raise AssertionError(
-                "read-only published-proof guard accepted a missing/stale candidate"
-            )
     if publish.count('validation-only: "false"') != 6:
         raise AssertionError("protected publication must use the six configured common components")
 
@@ -1246,9 +1239,29 @@ class ReleaseConsumerContracts(unittest.TestCase):
     def test_missing_generic_or_stale_api_proof_is_rejected_as_source(self) -> None:
         mutations = [
             self.release.replace(
-                "PUBLISHED_API_CANDIDATE: "
+                "published_api_candidate_sha: "
                 "${{ needs.release-validation.outputs.published_api_candidate_sha }}",
-                "PUBLISHED_API_CANDIDATE: ${{ needs.release-validation.outputs.candidate_sha }}",
+                "published_api_candidate_sha: "
+                "${{ needs.release-validation.outputs.candidate_sha }}",
+            ),
+            self.release.replace(
+                "validation_result: ${{ needs.release-validation.result }}",
+                "validation_result: success",
+            ),
+            self.release.replace(
+                "validation_sha: ${{ needs.release-validation.outputs.candidate_sha }}",
+                "validation_sha: ${{ github.sha }}",
+            ),
+            self.release.replace(
+                "      published_api_candidate_sha: "
+                "${{ needs.release-validation.outputs.published_api_candidate_sha }}\n",
+                "",
+            ),
+            self.release.replace(
+                "    needs: release-validation\n    if: >-",
+                "    needs: release-validation\n    if: >-\n"
+                "      needs.release-validation.outputs.published_api_candidate_sha "
+                "== github.sha &&",
             ),
             self.release.replace("environment: release", "environment: unrelated"),
             self.release.replace("!inputs.validation_only", "true"),
@@ -1286,15 +1299,17 @@ class ReleaseConsumerContracts(unittest.TestCase):
                 "release-binary-evidence",
             ],
         )
-        for name, validation in (("release-prepare", "true"), ("publish", "false")):
-            block = source_job(self.release, name)
-            found = re.findall(r"(?m)^          package: (boxferry[\w-]*)$", block)
-            self.assertEqual(found, packages)
-            self.assertEqual(block.count(f'validation-only: "{validation}"'), 6)
-            self.assertEqual(
-                block.count("uses: ./_automation/.github/actions/shared-crate-publish"),
-                6,
-            )
+        publish = source_job(self.release, "publish")
+        found = re.findall(r"(?m)^          package: (boxferry[\w-]*)$", publish)
+        self.assertEqual(found, packages)
+        self.assertEqual(publish.count('validation-only: "false"'), 6)
+        self.assertEqual(
+            publish.count("uses: ./_automation/.github/actions/shared-crate-publish"), 6
+        )
+        prepare = source_job(self.release, "release-prepare")
+        self.assertNotIn("package:", prepare)
+        self.assertNotIn("shared-crate-publish", prepare)
+        self.assertIn("config_path: scripts/shared-release-policy.json", prepare)
         self.assertNotIn("secrets.", source_job(self.release, "release-prepare"))
         self.assertEqual(
             source_job(self.release, "publish").count(
@@ -1744,6 +1759,21 @@ try {
   const common = JSON.parse(fs.readFileSync(scratch + '/renovate-presets/common.json','utf8'));
   const local = JSON.parse(fs.readFileSync(scratch + '/.github/renovate.json','utf8'));
   const pin = JSON.parse(fs.readFileSync(scratch + '/.github/automation.json','utf8')).revision;
+  const cache = require(runtime+'/dist/util/cache/memory/index.js');
+  cache.init();
+  for (const name of ['common','rust']) {
+    const ref = `github>Strukturpiloten/boxferry//renovate-presets/${name}#${pin}`;
+    assert.ok(local.extends.includes(ref));
+    cache.set('preset:'+ref,
+      JSON.parse(fs.readFileSync(sourceRoot+'/.native-presets/'+name+'.json','utf8')));
+  }
+  const {config} = await require(runtime+'/dist/config/presets/index.js')
+    .resolveConfigPresets(local);
+  const {applyPackageRules} = require(runtime+'/dist/util/package-rules/index.js');
+  const {normalizeDepNames} =
+    require(runtime+'/dist/workers/repository/extract/manager-files.js');
+  const noReleaseAge = require(runtime+'/dist/config/massage.js')
+    .massageConfig({minimumReleaseAge:'0 days'}).minimumReleaseAge;
   const next = 'a'.repeat(40);
   assert.notEqual(pin,next);
   // Independent literal-declaration inventory: [custom.regex, native github-actions].
@@ -1755,7 +1785,7 @@ try {
     ['.github/workflows/devcontainer-feature-qualification.yml',[1,1]],
     ['.github/workflows/devcontainer-source-report-diagnostics.yml',[0,0]],
     ['.github/workflows/release-plz.yml',[1,1]],
-    ['.github/workflows/release.yml',[15,1]],
+    ['.github/workflows/release.yml',[9,2]],
   ]);
   let count = 0;
   for (const [file,counts] of expected) {
@@ -1800,6 +1830,17 @@ try {
     for (const row of rows) {
       assert.equal(row.dep.currentDigest,pin);
       assert.equal(row.dep.currentValue,'automation-v1');
+      normalizeDepNames(row.dep);
+      const effective = await applyPackageRules({...config,...row.dep,
+        manager:row.manager === 'regex' ? 'custom.regex' : row.manager,
+        packageFile:file,updateType:'digest'});
+      assert.notEqual(effective.enabled,false,file+' enabled owner');
+      assert.equal(effective.groupName,'Shared BoxFerry automation',file+' adoption group');
+      assert.equal(effective.minimumReleaseAge,noReleaseAge,file+' first-party age');
+      assert.equal(effective.automerge,true,file+' ordinary automerge');
+      assert.equal(effective.dependencyDashboardApproval,false,file+' ordinary approval');
+      if (row.manager === 'github-actions')
+        assert.equal(effective.pinDigests,true,file+' native immutable workflow owner');
       fs.writeFileSync(scratch+'/'+file,content);
       const updated = await doAutoReplace({...row.definition,...row.extracted,...row.dep,
         manager:row.manager,depIndex:row.depIndex,packageFile:file,
@@ -1830,7 +1871,7 @@ try {
     assert.equal(coherent,content.split(pin).join(next),
       file+' coherent complete source replacement');
   }
-  assert.equal(count,47,'every operational source declaration has an exclusive tested owner');
+  assert.equal(count,42,'every operational source declaration has an exclusive tested owner');
 
 } finally {
   process.chdir(parent);
