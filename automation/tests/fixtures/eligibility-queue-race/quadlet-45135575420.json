@@ -1,0 +1,348 @@
+{
+  "schema": 1,
+  "provenance": {
+    "source": "Selected public GitHub metadata and immutable BoxFerry shared caller inputs from QuadletLens; no native oracle source",
+    "repository": "Strukturpiloten/quadlet-lens",
+    "license": "Repository-owned regression, MPL-2.0",
+    "redistribution": "Allowed; public nonsecret metadata and reviewed caller inputs",
+    "incident": "45135575420/job/137560926896",
+    "recorded_error": "queue candidate has no unique exact source PR; multi-entry groups are unsupported",
+    "queue_count": 0,
+    "terminal_artifact_count": 0,
+    "boundary": "Offline counterfactual service replay; historical failure and fences remain unchanged; final in-window readbacks are explicit test assumptions"
+  },
+  "implementation": "cf3578f47416e1b27b770fe4a81918844fb2d58b",
+  "base": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+  "head": "86c0c50f8157dbf244601e4a0854e44be7fb8dba",
+  "source": {
+    "id": 45134105668,
+    "name": "CI",
+    "head_branch": "gh-readonly-queue/main/pr-209-c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+    "head_sha": "86c0c50f8157dbf244601e4a0854e44be7fb8dba",
+    "path": ".github/workflows/ci.yml",
+    "event": "merge_group",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-23T07:51:10Z",
+    "updated_at": "2026-11-23T08:03:22Z",
+    "run_attempt": 1,
+    "referenced_workflows": [
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-dependencies.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      },
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-ci.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      },
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-rust-semver.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      },
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-devcontainer-validation.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      },
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-dependency-wait.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      }
+    ],
+    "repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    },
+    "head_repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    }
+  },
+  "service": {
+    "id": 45135575420,
+    "name": "Dependency eligibility service",
+    "head_branch": "main",
+    "head_sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+    "path": ".github/workflows/dependency-eligibility.yml",
+    "event": "workflow_run",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-23T08:03:24Z",
+    "updated_at": "2026-11-23T08:03:53Z",
+    "run_attempt": 1,
+    "referenced_workflows": [
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      }
+    ],
+    "repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    },
+    "head_repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    }
+  },
+  "receipt_run": {
+    "id": 45134111159,
+    "name": "Dependency eligibility service",
+    "head_branch": "main",
+    "head_sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+    "path": ".github/workflows/dependency-eligibility.yml",
+    "event": "workflow_run",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-23T07:51:13Z",
+    "updated_at": "2026-11-23T07:51:42Z",
+    "run_attempt": 1,
+    "referenced_workflows": [
+      {
+        "path": "Strukturpiloten/boxferry/.github/workflows/shared-dependency-eligibility.yml@cf3578f47416e1b27b770fe4a81918844fb2d58b",
+        "sha": "cf3578f47416e1b27b770fe4a81918844fb2d58b"
+      }
+    ],
+    "repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    },
+    "head_repository": {
+      "full_name": "Strukturpiloten/quadlet-lens"
+    }
+  },
+  "receipt_state": {
+    "deferred_candidates": [],
+    "dependency_state": {
+      "first_seen": {
+        "09cf9ea36cdd8b982c2530e8730b31e6d10d834caafdbf1c3045708f37668cf9": "2026-11-06T23:23:52.204135Z",
+        "0d394fd93c4d49eb3ecc7b980e9a3318dfa100bdae484f15d66574bb7c3ff087": "2026-11-06T23:23:52.204135Z",
+        "0f7c5f36e6909bbedb966291f4114316f1b770209d7b4fee1bf823fdf1a2254f": "2026-11-06T23:23:52.204135Z",
+        "11d2b29ae6c9add18064683333408836649e5d7b145da2da4f1a36e2d442231e": "2026-11-10T10:35:09.585632Z",
+        "2eb49cc85e14359653e624cb8cd1d18f05b0ee7451d000c3770e68d604a817c3": "2026-11-15T09:13:40.846873Z",
+        "363d6d7b716d8ed65ecc582559c061bbaadf8a7f3392241ac06032ad6245f53e": "2026-11-14T15:05:31.830482Z",
+        "5461811a2ff359cd09aec0aaaa0f133f5c8c1a063b4488c9dd5fb476071da765": "2026-11-06T23:23:52.204135Z",
+        "5508455ad4878dc31230029baaa1e39e8e470de064c516b6dd69e49ffcedf0dc": "2026-11-23T07:35:25.821052Z",
+        "55ae987b3ef7d657d5eb010062d3da564ba161cf81d37e3718705bb2d7039233": "2026-11-06T23:23:52.204135Z",
+        "57e720f142595b1a108fd7682ed20644c7adc872136e7b648273098088743554": "2026-11-16T02:51:16.205064Z",
+        "5a7b5065ba8d4888fccbf81d2c75a2f48d2354e82388e3d5ca77dc183c20e3b8": "2026-11-06T23:23:52.204135Z",
+        "63de95d2c6d27ab6e51bd63de57e9787cd93493d61ed146eacb549dc36e89254": "2026-11-19T06:00:34.112306Z",
+        "71f42e9f31a1cc2ce893592eb4b35a66f0b854af7c0dcdfbaa53f04c67c75a2f": "2026-11-06T23:23:52.204135Z",
+        "7b9b527663f6c6f38df579bced92754d327efd873598138d07ee4ddb3feb4dd6": "2026-11-06T23:23:52.204135Z",
+        "829ac3278ffbd79c31bd93dfe2ddff6e2f2b53a524db09294e77eafd7e6e098b": "2026-11-11T12:06:07.047241Z",
+        "89cc9bd0f98698e1865a3e29e316ae4f020f1c43254ad61493cfb34cb21e0729": "2026-11-06T23:23:52.204135Z",
+        "abb42ccfd6ef57c8da7e21c560142173f9c50c3c69801535b6a78701ce0d8a49": "2026-11-06T23:23:52.204135Z",
+        "b4c8002f441fee704d449d859d9cd911e8e4a9128b6f9767813c52ba77ff83b7": "2026-11-15T09:13:40.846873Z",
+        "b7f5ef65fd39e0b6532cc53abb054bc8ceb3fcadc98c479197eb6cc991ada350": "2026-11-15T09:13:40.846873Z",
+        "b967977903e85e0ed2925607062c44bf61c81b90888a1c2eec2691987f09751a": "2026-11-06T23:23:52.204135Z",
+        "c7a109c749c51dac92edef63d210cc6dec3e1942ac79fed57c7a3b59d7e328ea": "2026-11-23T07:35:25.821052Z",
+        "c881da4c3aafe584b15657275413f06490ca910c16a5f54d4277499f9b164991": "2026-11-06T23:23:52.204135Z",
+        "c8fcd289e4835146d6f47c7bd90d9b9399211a7b3b9b647e41f8e09429cf006a": "2026-11-15T09:13:40.846873Z",
+        "d47b3c7f37d7ef1e33ea6136c5e345931b093bdb1479feab56e16405a7c78809": "2026-11-15T09:13:40.846873Z",
+        "db9ac8e9a46a61b64bee56b2a3acdcf661a4d3a33368c32dd70b5c2ee05588b1": "2026-11-06T23:23:52.204135Z",
+        "ec3758cb30f89161293848e0fb34f5cab01f5c19f0189ca32022ce77da36a87c": "2026-11-06T23:23:52.204135Z",
+        "fa83a6347772b55a9ccecca5de3ae63b2d821326713fdcced1614f31810219af": "2026-11-15T09:13:40.846873Z"
+      },
+      "schema_version": 1
+    },
+    "implementation_revision": "cf3578f47416e1b27b770fe4a81918844fb2d58b",
+    "infrastructure_errors": [],
+    "no_action_candidates": [],
+    "observed_at": "2026-11-23T07:51:21.614983+00:00",
+    "recoveries": {},
+    "recovery_frontier": {
+      "authority": true,
+      "fence": null,
+      "floor": "2026-11-23T04:08:07+00:00",
+      "pending": [],
+      "predecessor_run_id": 45133865621,
+      "protocol": 1,
+      "service_created_at": "2026-11-23T07:51:13+00:00"
+    },
+    "reports": {
+      "86c0c50f8157dbf244601e4a0854e44be7fb8dba": {
+        "base_sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+        "candidate_sha": "86c0c50f8157dbf244601e4a0854e44be7fb8dba",
+        "first_party_exempt": false,
+        "first_party_reason": "actor is not the trusted Renovate application",
+        "operational_coverage_gaps": [],
+        "pull_request": 209,
+        "results": [],
+        "retry_at": null,
+        "retry_eligible": false,
+        "schema_version": 1,
+        "scope": "merge_group",
+        "source_head_sha": "17373fa9537c69eae438d48737bab560762c6e3a",
+        "status": "pass"
+      }
+    },
+    "repository": "Strukturpiloten/quadlet-lens",
+    "reruns": {},
+    "run_attempt": 1,
+    "run_id": 45134111159,
+    "scan_cursor": 0,
+    "schema": 1,
+    "state_source": "trusted-run:45133865621",
+    "workflow_path": ".github/workflows/dependency-eligibility.yml"
+  },
+  "previous_state": {
+    "deferred_candidates": [],
+    "dependency_state": {
+      "first_seen": {
+        "09cf9ea36cdd8b982c2530e8730b31e6d10d834caafdbf1c3045708f37668cf9": "2026-11-06T23:23:52.204135Z",
+        "0d394fd93c4d49eb3ecc7b980e9a3318dfa100bdae484f15d66574bb7c3ff087": "2026-11-06T23:23:52.204135Z",
+        "0f7c5f36e6909bbedb966291f4114316f1b770209d7b4fee1bf823fdf1a2254f": "2026-11-06T23:23:52.204135Z",
+        "11d2b29ae6c9add18064683333408836649e5d7b145da2da4f1a36e2d442231e": "2026-11-10T10:35:09.585632Z",
+        "2eb49cc85e14359653e624cb8cd1d18f05b0ee7451d000c3770e68d604a817c3": "2026-11-15T09:13:40.846873Z",
+        "363d6d7b716d8ed65ecc582559c061bbaadf8a7f3392241ac06032ad6245f53e": "2026-11-14T15:05:31.830482Z",
+        "5461811a2ff359cd09aec0aaaa0f133f5c8c1a063b4488c9dd5fb476071da765": "2026-11-06T23:23:52.204135Z",
+        "5508455ad4878dc31230029baaa1e39e8e470de064c516b6dd69e49ffcedf0dc": "2026-11-23T07:35:25.821052Z",
+        "55ae987b3ef7d657d5eb010062d3da564ba161cf81d37e3718705bb2d7039233": "2026-11-06T23:23:52.204135Z",
+        "57e720f142595b1a108fd7682ed20644c7adc872136e7b648273098088743554": "2026-11-16T02:51:16.205064Z",
+        "5a7b5065ba8d4888fccbf81d2c75a2f48d2354e82388e3d5ca77dc183c20e3b8": "2026-11-06T23:23:52.204135Z",
+        "63de95d2c6d27ab6e51bd63de57e9787cd93493d61ed146eacb549dc36e89254": "2026-11-19T06:00:34.112306Z",
+        "71f42e9f31a1cc2ce893592eb4b35a66f0b854af7c0dcdfbaa53f04c67c75a2f": "2026-11-06T23:23:52.204135Z",
+        "7b9b527663f6c6f38df579bced92754d327efd873598138d07ee4ddb3feb4dd6": "2026-11-06T23:23:52.204135Z",
+        "829ac3278ffbd79c31bd93dfe2ddff6e2f2b53a524db09294e77eafd7e6e098b": "2026-11-11T12:06:07.047241Z",
+        "89cc9bd0f98698e1865a3e29e316ae4f020f1c43254ad61493cfb34cb21e0729": "2026-11-06T23:23:52.204135Z",
+        "abb42ccfd6ef57c8da7e21c560142173f9c50c3c69801535b6a78701ce0d8a49": "2026-11-06T23:23:52.204135Z",
+        "b4c8002f441fee704d449d859d9cd911e8e4a9128b6f9767813c52ba77ff83b7": "2026-11-15T09:13:40.846873Z",
+        "b7f5ef65fd39e0b6532cc53abb054bc8ceb3fcadc98c479197eb6cc991ada350": "2026-11-15T09:13:40.846873Z",
+        "b967977903e85e0ed2925607062c44bf61c81b90888a1c2eec2691987f09751a": "2026-11-06T23:23:52.204135Z",
+        "c7a109c749c51dac92edef63d210cc6dec3e1942ac79fed57c7a3b59d7e328ea": "2026-11-23T07:35:25.821052Z",
+        "c881da4c3aafe584b15657275413f06490ca910c16a5f54d4277499f9b164991": "2026-11-06T23:23:52.204135Z",
+        "c8fcd289e4835146d6f47c7bd90d9b9399211a7b3b9b647e41f8e09429cf006a": "2026-11-15T09:13:40.846873Z",
+        "d47b3c7f37d7ef1e33ea6136c5e345931b093bdb1479feab56e16405a7c78809": "2026-11-15T09:13:40.846873Z",
+        "db9ac8e9a46a61b64bee56b2a3acdcf661a4d3a33368c32dd70b5c2ee05588b1": "2026-11-06T23:23:52.204135Z",
+        "ec3758cb30f89161293848e0fb34f5cab01f5c19f0189ca32022ce77da36a87c": "2026-11-06T23:23:52.204135Z",
+        "fa83a6347772b55a9ccecca5de3ae63b2d821326713fdcced1614f31810219af": "2026-11-15T09:13:40.846873Z"
+      },
+      "schema_version": 1
+    },
+    "implementation_revision": "cf3578f47416e1b27b770fe4a81918844fb2d58b",
+    "infrastructure_errors": [
+      "PR 210: older-base recovery refused: original CI has a failure outside dependency admission"
+    ],
+    "no_action_candidates": [],
+    "observed_at": "2026-11-23T07:51:56.302316+00:00",
+    "recoveries": {},
+    "recovery_frontier": {
+      "authority": true,
+      "fence": null,
+      "floor": "2026-11-23T04:08:07+00:00",
+      "pending": [],
+      "predecessor_run_id": 45134111159,
+      "protocol": 1,
+      "service_created_at": "2026-11-23T07:51:25+00:00"
+    },
+    "reports": {
+      "62cfba7dc410ad5da857fbe7b4d2ccfb32ecef3f": {
+        "base_sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+        "candidate_sha": "62cfba7dc410ad5da857fbe7b4d2ccfb32ecef3f",
+        "first_party_exempt": false,
+        "first_party_reason": "update is not isolated to first-party Cargo manifests and lockfile",
+        "operational_coverage_gaps": [],
+        "pull_request": 210,
+        "results": [
+          {
+            "age_evidence": "artifact-first-seen",
+            "artifact_key": "c7a109c749c51dac92edef63d210cc6dec3e1942ac79fed57c7a3b59d7e328ea",
+            "ecosystem": "npm",
+            "evidence_at": "2026-11-23T07:35:25.821052Z",
+            "integrity": [
+              "sha512-IhlUBVT+kHBX+u3EjEsQdFB4q0Rl0Hx+JsGsvVkonNut1/n8Kv8yXzwk0pazC9uF35JlwMZ+LxV4CQ9YNAbG8w=="
+            ],
+            "metadata_url": "https://registry.npmjs.org/markdownlint/0.42.2",
+            "name": "markdownlint",
+            "reason": "72-hour publication or artifact observation hold",
+            "retry_at": "2026-11-26T07:35:25.821052Z",
+            "retry_eligible": true,
+            "status": "waiting",
+            "version": "0.42.2"
+          },
+          {
+            "age_evidence": "artifact-first-seen",
+            "artifact_key": "5508455ad4878dc31230029baaa1e39e8e470de064c516b6dd69e49ffcedf0dc",
+            "ecosystem": "npm",
+            "evidence_at": "2026-11-23T07:35:25.821052Z",
+            "integrity": [
+              "sha512-bgxzhJkgR7t2puRgePHZYVqKzC90etPzxOC+9ZNATjAVJB2zs7EAolfF1inVsrkgYN+ykVIHIxk0WypG2VVLZA=="
+            ],
+            "metadata_url": "https://registry.npmjs.org/markdownlint-cli2/0.24.2",
+            "name": "markdownlint-cli2",
+            "reason": "72-hour publication or artifact observation hold",
+            "retry_at": "2026-11-26T07:35:25.821052Z",
+            "retry_eligible": true,
+            "status": "waiting",
+            "version": "0.24.2"
+          }
+        ],
+        "retry_at": "2026-11-26T07:35:25.821052Z",
+        "retry_eligible": true,
+        "schema_version": 1,
+        "scope": "pull_request",
+        "source_head_sha": "0791800ef44bceeab927cdba1daa08dddf3a36cd",
+        "status": "waiting"
+      }
+    },
+    "repository": "Strukturpiloten/quadlet-lens",
+    "reruns": {},
+    "run_attempt": 1,
+    "run_id": 45134135919,
+    "scan_cursor": 0,
+    "schema": 1,
+    "state_source": "trusted-run:45134111159",
+    "workflow_path": ".github/workflows/dependency-eligibility.yml"
+  },
+  "pr": {
+    "number": 209,
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-11-23T08:03:32Z",
+    "mergeable": null,
+    "merge_commit_sha": "86c0c50f8157dbf244601e4a0854e44be7fb8dba",
+    "base": {
+      "ref": "main",
+      "sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975",
+      "repo": {
+        "full_name": "Strukturpiloten/quadlet-lens"
+      }
+    },
+    "head": {
+      "sha": "17373fa9537c69eae438d48737bab560762c6e3a",
+      "repo": {
+        "full_name": "Strukturpiloten/quadlet-lens"
+      }
+    },
+    "title": "ci: use the shared release inventory for QuadletLens",
+    "user": {
+      "login": "TheRealBecks",
+      "type": "User"
+    }
+  },
+  "commit": {
+    "sha": "86c0c50f8157dbf244601e4a0854e44be7fb8dba",
+    "parents": [
+      {
+        "sha": "c7a1f1db2fe28157596b0bf0d18c234a8e732975"
+      }
+    ]
+  },
+  "files": {
+    "contents/.github/automation.json?ref=c7a1f1db2fe28157596b0bf0d18c234a8e732975": {
+      "type": "file",
+      "size": 184,
+      "encoding": "base64",
+      "content": "ewogICJzY2hlbWEiOiAxLAogICJyZXBvc2l0b3J5IjogIlN0cnVrdHVycGls\nb3Rlbi9ib3hmZXJyeSIsCiAgInJldmlzaW9uIjogImNmMzU3OGY0NzQxNmUx\nYjI3Yjc3MGZlNGE4MTkxODg0NGZiMmQ1OGIiLAogICJwb2xpY3kiOiAic2Ny\naXB0cy92YWxpZGF0aW9uLXBvbGljeS5qc29uIiwKICAiaW50ZXJmYWNlIjog\nMQp9Cg==\n",
+      "sha": "ff537d44b00c43bf1170475b2aedc3932ac853e7"
+    },
+    "contents/.github/workflows/ci.yml?ref=c7a1f1db2fe28157596b0bf0d18c234a8e732975": {
+      "type": "file",
+      "size": 14276,
+      "encoding": "base64",
+      "content": "LS0tCm5hbWU6IENJCnBlcm1pc3Npb25zOgogIGNvbnRlbnRzOiByZWFkCmNv\nbmN1cnJlbmN5OgogIGdyb3VwOiBjaS0ke3sgZ2l0aHViLndvcmtmbG93IH19\nLSR7eyBnaXRodWIucmVmIH19CiAgY2FuY2VsLWluLXByb2dyZXNzOiB0cnVl\nCmVudjoKICBDQVJHT19URVJNX0NPTE9SOiBhbHdheXMKam9iczoKICB2YWxp\nZGF0aW9uLXBsYW46CiAgICBuYW1lOiBWYWxpZGF0aW9uIHBsYW4KICAgIHJ1\nbnMtb246IHVidW50dS0yNC4wNAogICAgdGltZW91dC1taW51dGVzOiA1CiAg\nICBvdXRwdXRzOgogICAgICBwbGFuOiAke3sgc3RlcHMucGxhbi5vdXRwdXRz\nLnBsYW4gfX0KICAgICAgcHJvZmlsZTogJHt7IHN0ZXBzLnBsYW4ub3V0cHV0\ncy5wcm9maWxlIH19CiAgICAgIHNlbGVjdF9ydXN0OiAke3sgc3RlcHMucGxh\nbi5vdXRwdXRzLnNlbGVjdF9ydXN0IH19CiAgICAgIHNlbGVjdF9jb3ZlcmFn\nZTogJHt7IHN0ZXBzLnBsYW4ub3V0cHV0cy5zZWxlY3RfY292ZXJhZ2UgfX0K\nICAgICAgc2VsZWN0X21zcnY6ICR7eyBzdGVwcy5wbGFuLm91dHB1dHMuc2Vs\nZWN0X21zcnYgfX0KICAgICAgc2VsZWN0X2RlcGVuZGVuY2llczogJHt7IHN0\nZXBzLnBsYW4ub3V0cHV0cy5zZWxlY3RfZGVwZW5kZW5jaWVzIH19CiAgICAg\nIHNlbGVjdF9hcGk6ICR7eyBzdGVwcy5wbGFuLm91dHB1dHMuc2VsZWN0X2Fw\naSB9fQogICAgICBzZWxlY3RfZG9jdW1lbnRhdGlvbjogJHt7IHN0ZXBzLnBs\nYW4ub3V0cHV0cy5zZWxlY3RfZG9jdW1lbnRhdGlvbiB9fQogICAgICBzZWxl\nY3RfbG9ja2ZpbGVfcmVsZWFzZV9hZ2U6ICR7eyBzdGVwcy5wbGFuLm91dHB1\ndHMuc2VsZWN0X2xvY2tmaWxlX3JlbGVhc2VfYWdlIH19CiAgICAgIHNlbGVj\ndF9kZXZjb250YWluZXJfdmFsaWRhdGlvbjogJHt7IHN0ZXBzLnBsYW4ub3V0\ncHV0cy5zZWxlY3RfZGV2Y29udGFpbmVyX3ZhbGlkYXRpb24gfX0KICAgIHN0\nZXBzOgogICAgICAtIG5hbWU6IENoZWNrIG91dCBpbW11dGFibGUgc2hhcmVk\nIGF1dG9tYXRpb24KICAgICAgICB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QDNk\nM2M0MmU1YWFjNWJhODA1ODI1ZGE3NjQxMGMxODEyNzNiYTkwYjEgIyB2Ny4w\nLjEKICAgICAgICB3aXRoOgogICAgICAgICAgcmVwb3NpdG9yeTogU3RydWt0\ndXJwaWxvdGVuL2JveGZlcnJ5CiAgICAgICAgICAjIHJlbm92YXRlOiBkYXRh\nc291cmNlPWdpdGh1Yi1kaWdlc3QgZGVwTmFtZT1TdHJ1a3R1cnBpbG90ZW4v\nYm94ZmVycnkgY3VycmVudFZhbHVlPWF1dG9tYXRpb24tdjEKICAgICAgICAg\nIHJlZjogY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgxOTE4ODQ0ZmIyZDU4\nYgogICAgICAgICAgcGF0aDogX2F1dG9tYXRpb24KICAgICAgICAgIHBlcnNp\nc3QtY3JlZGVudGlhbHM6IGZhbHNlCiAgICAgIC0gbmFtZTogQmluZCB0ZXN0\nZWQgY2FuZGlkYXRlIGFuZCB0cnVzdGVkIHBvbGljeQogICAgICAgIGlkOiBz\nb3VyY2UKICAgICAgICB1c2VzOiAuL19hdXRvbWF0aW9uLy5naXRodWIvYWN0\naW9ucy9zaGFyZWQtc291cmNlCiAgICAgICAgd2l0aDoKICAgICAgICAgIGNh\nbmRpZGF0ZS1zaGE6ICR7eyBnaXRodWIuc2hhIH19CiAgICAgICAgICBhdXRv\nbWF0aW9uLXNoYTogY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgxOTE4ODQ0\nZmIyZDU4YgogICAgICAgICAgcG9saWN5LXNoYTogJHt7IGdpdGh1Yi5ldmVu\ndC5wdWxsX3JlcXVlc3QuYmFzZS5zaGEgfHwgZ2l0aHViLmV2ZW50Lm1lcmdl\nX2dyb3VwLmJhc2Vfc2hhIHx8IGdpdGh1Yi5zaGEgfX0KICAgICAgICAgIGNv\nbmZpZy1wYXRoOiBzY3JpcHRzL3ZhbGlkYXRpb24tcG9saWN5Lmpzb24KICAg\nICAgLSBuYW1lOiBJbnN0YWxsIGxvY2tlZCBzaGFyZWQgUHl0aG9uIHRvb2xp\nbmcKICAgICAgICB1c2VzOiAuL19hdXRvbWF0aW9uLy5naXRodWIvYWN0aW9u\ncy9zaGFyZWQtcHl0aG9uCiAgICAgIC0gbmFtZTogU2VsZWN0IGV4YWN0LXJl\ndmlzaW9uIHZhbGlkYXRpb24gcGxhbgogICAgICAgIGlkOiBwbGFuCiAgICAg\nICAgZW52OgogICAgICAgICAgRVZFTlRfTkFNRTogJHt7IGdpdGh1Yi5ldmVu\ndF9uYW1lIH19CiAgICAgICAgICBCQVNFX1NIQTogJHt7IGdpdGh1Yi5ldmVu\ndC5wdWxsX3JlcXVlc3QuYmFzZS5zaGEgfHwgZ2l0aHViLmV2ZW50Lm1lcmdl\nX2dyb3VwLmJhc2Vfc2hhIH19CiAgICAgICAgICBIRUFEX1NIQTogJHt7IGdp\ndGh1Yi5ldmVudC5wdWxsX3JlcXVlc3QuaGVhZC5zaGEgfHwgZ2l0aHViLmV2\nZW50Lm1lcmdlX2dyb3VwLmhlYWRfc2hhIH19CiAgICAgICAgICBQT0xJQ1lf\nU0hBOiAke3sgZ2l0aHViLmV2ZW50LnB1bGxfcmVxdWVzdC5iYXNlLnNoYSB8\nfCBnaXRodWIuZXZlbnQubWVyZ2VfZ3JvdXAuYmFzZV9zaGEgfHwgZ2l0aHVi\nLnNoYSB9fQogICAgICAgICAgQVVUT01BVElPTl9TSEE6IGNmMzU3OGY0NzQx\nNmUxYjI3Yjc3MGZlNGE4MTkxODg0NGZiMmQ1OGIKICAgICAgICAgIFBPTElD\nWV9DT05GSUc6ICR7eyBzdGVwcy5zb3VyY2Uub3V0cHV0cy5jb25maWcgfX0K\nICAgICAgICBydW46IHwKICAgICAgICAgIHV2IHJ1biAtLWxvY2tlZCAtLXBy\nb2plY3QgX2F1dG9tYXRpb24vYXV0b21hdGlvbiBweXRob24gLW0gYm94ZmVy\ncnlfY2kgcGxhbiBcCiAgICAgICAgICAgIC0tcmVwb3NpdG9yeS1yb290IHNv\ndXJjZSAtLWNvbmZpZyAiJHtQT0xJQ1lfQ09ORklHfSIgXAogICAgICAgICAg\nICAtLWV2ZW50ICIke0VWRU5UX05BTUV9IiAtLWJhc2Utc2hhICIke0JBU0Vf\nU0hBfSIgLS1oZWFkLXNoYSAiJHtIRUFEX1NIQX0iIFwKICAgICAgICAgICAg\nLS10ZXN0ZWQtc2hhICIke0dJVEhVQl9TSEF9IiAtLXBvbGljeS1zaGEgIiR7\nUE9MSUNZX1NIQX0iIC0tYXV0b21hdGlvbi1zaGEgIiR7QVVUT01BVElPTl9T\nSEF9IiBcCiAgICAgICAgICAgIC0tZ2l0aHViLW91dHB1dCAiJHtHSVRIVUJf\nT1VUUFVUfSIKICBydXN0OgogICAgbmFtZTogUnVzdCBxdWFsaXR5CiAgICBu\nZWVkczogdmFsaWRhdGlvbi1wbGFuCiAgICBpZjogbmVlZHMudmFsaWRhdGlv\nbi1wbGFuLm91dHB1dHMuc2VsZWN0X3J1c3QgPT0gJ3RydWUnCiAgICBwZXJt\naXNzaW9uczoKICAgICAgY29udGVudHM6IHJlYWQKICAgIHVzZXM6IFN0cnVr\ndHVycGlsb3Rlbi9ib3hmZXJyeS8uZ2l0aHViL3dvcmtmbG93cy9zaGFyZWQt\ncnVzdC1jaS55bWxAY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgxOTE4ODQ0\nZmIyZDU4YiAjIGF1dG9tYXRpb24tdjEgaW50ZXJmYWNlIHYxCiAgICB3aXRo\nOgogICAgICBjYW5kaWRhdGVfc2hhOiAke3sgZ2l0aHViLnNoYSB9fQogICAg\nICBhdXRvbWF0aW9uX3NoYTogY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgx\nOTE4ODQ0ZmIyZDU4YgogICAgICBwb2xpY3lfc2hhOiAke3sgZ2l0aHViLmV2\nZW50LnB1bGxfcmVxdWVzdC5iYXNlLnNoYSB8fCBnaXRodWIuZXZlbnQubWVy\nZ2VfZ3JvdXAuYmFzZV9zaGEgfHwgZ2l0aHViLnNoYSB9fQogICAgICBjb25m\naWdfcGF0aDogc2NyaXB0cy92YWxpZGF0aW9uLXBvbGljeS5qc29uCiAgICAg\nIHRhc2s6IHJ1c3QtcXVhbGl0eQogICAgICByZXF1aXJlX2NvbmZpZ3VyZWRf\ndGFzazogdHJ1ZQogIGNvdmVyYWdlOgogICAgbmFtZTogQ292ZXJhZ2UgcmF0\nY2hldAogICAgbmVlZHM6IHZhbGlkYXRpb24tcGxhbgogICAgaWY6IG5lZWRz\nLnZhbGlkYXRpb24tcGxhbi5vdXRwdXRzLnNlbGVjdF9jb3ZlcmFnZSA9PSAn\ndHJ1ZScKICAgIHBlcm1pc3Npb25zOgogICAgICBjb250ZW50czogcmVhZAog\nICAgdXNlczogU3RydWt0dXJwaWxvdGVuL2JveGZlcnJ5Ly5naXRodWIvd29y\na2Zsb3dzL3NoYXJlZC1ydXN0LWNpLnltbEBjZjM1NzhmNDc0MTZlMWIyN2I3\nNzBmZTRhODE5MTg4NDRmYjJkNThiICMgYXV0b21hdGlvbi12MSBpbnRlcmZh\nY2UgdjEKICAgIHdpdGg6CiAgICAgIGNhbmRpZGF0ZV9zaGE6ICR7eyBnaXRo\ndWIuc2hhIH19CiAgICAgIGF1dG9tYXRpb25fc2hhOiBjZjM1NzhmNDc0MTZl\nMWIyN2I3NzBmZTRhODE5MTg4NDRmYjJkNThiCiAgICAgIHBvbGljeV9zaGE6\nICR7eyBnaXRodWIuZXZlbnQucHVsbF9yZXF1ZXN0LmJhc2Uuc2hhIHx8IGdp\ndGh1Yi5ldmVudC5tZXJnZV9ncm91cC5iYXNlX3NoYSB8fCBnaXRodWIuc2hh\nIH19CiAgICAgIGNvbmZpZ19wYXRoOiBzY3JpcHRzL3ZhbGlkYXRpb24tcG9s\naWN5Lmpzb24KICAgICAgdGFzazogY292ZXJhZ2UKICAgICAgcmVxdWlyZV9j\nb25maWd1cmVkX3Rhc2s6IHRydWUKICBtc3J2OgogICAgbmFtZTogTVNSVgog\nICAgbmVlZHM6IHZhbGlkYXRpb24tcGxhbgogICAgaWY6IG5lZWRzLnZhbGlk\nYXRpb24tcGxhbi5vdXRwdXRzLnNlbGVjdF9tc3J2ID09ICd0cnVlJwogICAg\ncGVybWlzc2lvbnM6CiAgICAgIGNvbnRlbnRzOiByZWFkCiAgICB1c2VzOiBT\ndHJ1a3R1cnBpbG90ZW4vYm94ZmVycnkvLmdpdGh1Yi93b3JrZmxvd3Mvc2hh\ncmVkLXJ1c3QtY2kueW1sQGNmMzU3OGY0NzQxNmUxYjI3Yjc3MGZlNGE4MTkx\nODg0NGZiMmQ1OGIgIyBhdXRvbWF0aW9uLXYxIGludGVyZmFjZSB2MQogICAg\nd2l0aDoKICAgICAgY2FuZGlkYXRlX3NoYTogJHt7IGdpdGh1Yi5zaGEgfX0K\nICAgICAgYXV0b21hdGlvbl9zaGE6IGNmMzU3OGY0NzQxNmUxYjI3Yjc3MGZl\nNGE4MTkxODg0NGZiMmQ1OGIKICAgICAgcG9saWN5X3NoYTogJHt7IGdpdGh1\nYi5ldmVudC5wdWxsX3JlcXVlc3QuYmFzZS5zaGEgfHwgZ2l0aHViLmV2ZW50\nLm1lcmdlX2dyb3VwLmJhc2Vfc2hhIHx8IGdpdGh1Yi5zaGEgfX0KICAgICAg\nY29uZmlnX3BhdGg6IHNjcmlwdHMvdmFsaWRhdGlvbi1wb2xpY3kuanNvbgog\nICAgICB0YXNrOiBtc3J2CiAgICAgIHJlcXVpcmVfY29uZmlndXJlZF90YXNr\nOiB0cnVlCiAgZGVwZW5kZW5jaWVzOgogICAgbmFtZTogRGVwZW5kZW5jeSBh\nbmQgbGljZW5zZSBwb2xpY3kKICAgIG5lZWRzOiB2YWxpZGF0aW9uLXBsYW4K\nICAgIGlmOiBuZWVkcy52YWxpZGF0aW9uLXBsYW4ub3V0cHV0cy5zZWxlY3Rf\nZGVwZW5kZW5jaWVzID09ICd0cnVlJwogICAgcGVybWlzc2lvbnM6CiAgICAg\nIGNvbnRlbnRzOiByZWFkCiAgICB1c2VzOiBTdHJ1a3R1cnBpbG90ZW4vYm94\nZmVycnkvLmdpdGh1Yi93b3JrZmxvd3Mvc2hhcmVkLXJ1c3QtZGVwZW5kZW5j\naWVzLnltbEBjZjM1NzhmNDc0MTZlMWIyN2I3NzBmZTRhODE5MTg4NDRmYjJk\nNThiICMgYXV0b21hdGlvbi12MSBpbnRlcmZhY2UgdjEKICAgIHdpdGg6CiAg\nICAgIGNhbmRpZGF0ZV9zaGE6ICR7eyBnaXRodWIuc2hhIH19CiAgICAgIGF1\ndG9tYXRpb25fc2hhOiBjZjM1NzhmNDc0MTZlMWIyN2I3NzBmZTRhODE5MTg4\nNDRmYjJkNThiCiAgICAgIHBvbGljeV9zaGE6ICR7eyBnaXRodWIuZXZlbnQu\ncHVsbF9yZXF1ZXN0LmJhc2Uuc2hhIHx8IGdpdGh1Yi5ldmVudC5tZXJnZV9n\ncm91cC5iYXNlX3NoYSB8fCBnaXRodWIuc2hhIH19CiAgICAgIGNvbmZpZ19w\nYXRoOiBzY3JpcHRzL3ZhbGlkYXRpb24tcG9saWN5Lmpzb24KICBhcGk6CiAg\nICBuYW1lOiBQdWJsaWMgQVBJIGNvbXBhdGliaWxpdHkKICAgIG5lZWRzOiB2\nYWxpZGF0aW9uLXBsYW4KICAgIGlmOiBuZWVkcy52YWxpZGF0aW9uLXBsYW4u\nb3V0cHV0cy5zZWxlY3RfYXBpID09ICd0cnVlJwogICAgcGVybWlzc2lvbnM6\nCiAgICAgIGNvbnRlbnRzOiByZWFkCiAgICB1c2VzOiBTdHJ1a3R1cnBpbG90\nZW4vYm94ZmVycnkvLmdpdGh1Yi93b3JrZmxvd3Mvc2hhcmVkLXJ1c3Qtc2Vt\ndmVyLnltbEBjZjM1NzhmNDc0MTZlMWIyN2I3NzBmZTRhODE5MTg4NDRmYjJk\nNThiICMgYXV0b21hdGlvbi12MSBpbnRlcmZhY2UgdjEKICAgIHdpdGg6CiAg\nICAgIGNhbmRpZGF0ZV9zaGE6ICR7eyBnaXRodWIuc2hhIH19CiAgICAgIGF1\ndG9tYXRpb25fc2hhOiBjZjM1NzhmNDc0MTZlMWIyN2I3NzBmZTRhODE5MTg4\nNDRmYjJkNThiCiAgICAgIHBvbGljeV9zaGE6ICR7eyBnaXRodWIuZXZlbnQu\ncHVsbF9yZXF1ZXN0LmJhc2Uuc2hhIHx8IGdpdGh1Yi5ldmVudC5tZXJnZV9n\ncm91cC5iYXNlX3NoYSB8fCBnaXRodWIuc2hhIH19CiAgICAgIGNvbmZpZ19w\nYXRoOiBzY3JpcHRzL3ZhbGlkYXRpb24tcG9saWN5Lmpzb24KICAgICAgcGFj\na2FnZTogcXVhZGxldC1sZW5zCiAgICAgIGFwaV9wdXJwb3NlOiAke3sgaW5w\ndXRzLmFwaV9wdXJwb3NlIHx8ICdkZXZlbG9wbWVudCcgfX0KICBkb2N1bWVu\ndGF0aW9uOgogICAgbmFtZTogUmVwb3NpdG9yeSBmaWxlcyBhbmQgZG9jdW1l\nbnRhdGlvbgogICAgbmVlZHM6IHZhbGlkYXRpb24tcGxhbgogICAgaWY6IG5l\nZWRzLnZhbGlkYXRpb24tcGxhbi5vdXRwdXRzLnNlbGVjdF9kb2N1bWVudGF0\naW9uID09ICd0cnVlJwogICAgcnVucy1vbjogdWJ1bnR1LTI0LjA0CiAgICB0\naW1lb3V0LW1pbnV0ZXM6IDE1CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBh\nY3Rpb25zL2NoZWNrb3V0QDNkM2M0MmU1YWFjNWJhODA1ODI1ZGE3NjQxMGMx\nODEyNzNiYTkwYjEgIyB2Ny4wLjEKICAgICAgICB3aXRoOgogICAgICAgICAg\nZmV0Y2gtZGVwdGg6IDAKICAgICAgICAgIHBlcnNpc3QtY3JlZGVudGlhbHM6\nIGZhbHNlCiAgICAgICAgICByZWY6ICR7eyBnaXRodWIuc2hhIH19CiAgICAg\nICAgbmFtZTogQ2hlY2sgb3V0IGV4YWN0IHRlc3RlZCByZXZpc2lvbgogICAg\nICAtIG5hbWU6IENoZWNrIG91dCBpbW11dGFibGUgc2hhcmVkIGF1dG9tYXRp\nb24KICAgICAgICB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QDNkM2M0MmU1YWFj\nNWJhODA1ODI1ZGE3NjQxMGMxODEyNzNiYTkwYjEgIyB2Ny4wLjEKICAgICAg\nICB3aXRoOgogICAgICAgICAgcmVwb3NpdG9yeTogU3RydWt0dXJwaWxvdGVu\nL2JveGZlcnJ5CiAgICAgICAgICAjIHJlbm92YXRlOiBkYXRhc291cmNlPWdp\ndGh1Yi1kaWdlc3QgZGVwTmFtZT1TdHJ1a3R1cnBpbG90ZW4vYm94ZmVycnkg\nY3VycmVudFZhbHVlPWF1dG9tYXRpb24tdjEKICAgICAgICAgIHJlZjogY2Yz\nNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgxOTE4ODQ0ZmIyZDU4YgogICAgICAg\nICAgcGF0aDogX2F1dG9tYXRpb24KICAgICAgICAgIHBlcnNpc3QtY3JlZGVu\ndGlhbHM6IGZhbHNlCiAgICAgIC0gbmFtZTogSW5zdGFsbCBsb2NrZWQgc2hh\ncmVkIFB5dGhvbiB0b29saW5nCiAgICAgICAgdXNlczogLi9fYXV0b21hdGlv\nbi8uZ2l0aHViL2FjdGlvbnMvc2hhcmVkLXB5dGhvbgogICAgICAtIG5hbWU6\nIEluc3RhbGwgY2Fub25pY2FsIE5vZGUuanMgZnJvbSBzZWxlY3RlZCBhdXRv\nbWF0aW9uCiAgICAgICAgdXNlczogLi9fYXV0b21hdGlvbi8uZ2l0aHViL2Fj\ndGlvbnMvc2hhcmVkLW5vZGUKICAgICAgICB3aXRoOgogICAgICAgICAgYXV0\nb21hdGlvbi1zaGE6IGNmMzU3OGY0NzQxNmUxYjI3Yjc3MGZlNGE4MTkxODg0\nNGZiMmQ1OGIKICAgICAgICAgIGNhY2hlOiBucG0KICAgICAgICAgIGNhY2hl\nLWRlcGVuZGVuY3ktcGF0aDogcGFja2FnZS1sb2NrLmpzb24KICAgICAgLSBu\nYW1lOiBJbnN0YWxsIGxvY2tlZCBOb2RlIGZpbGUtcXVhbGl0eSB0b29scwog\nICAgICAgIHJ1bjogfAogICAgICAgICAgbnBtIGNpIC0taWdub3JlLXNjcmlw\ndHMKICAgICAgICAgIHByaW50ZiAnJXNcbicgIiR7R0lUSFVCX1dPUktTUEFD\nRX0vbm9kZV9tb2R1bGVzLy5iaW4iID4+ICIke0dJVEhVQl9QQVRIfSIKICAg\nICAgLSBuYW1lOiBJbnN0YWxsIGNoZWNrc3VtLXBpbm5lZCBuYXRpdmUgZmls\nZS1xdWFsaXR5IHRvb2xzCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQg\nLWV1byBwaXBlZmFpbAogICAgICAgICAgdG9vbF9kaXI9IiR7UlVOTkVSX1RF\nTVB9L3F1YWRsZXQtbGVucy10b29scyIKICAgICAgICAgIGJhc2ggc2NyaXB0\ncy9pbnN0YWxsLWZpbGUtdG9vbHMuc2ggIiR7dG9vbF9kaXJ9IgogICAgICAg\nICAgcHl0aG9uMyBzY3JpcHRzL3NoYXJlZC1jaS5weSB0b29scyAtLWRlc3Rp\nbmF0aW9uICIke3Rvb2xfZGlyfSIgLS10b29scyBhY3Rpb25saW50IGx5Y2hl\nZQogICAgICAgICAgcHJpbnRmICclc1xuJyAiJHt0b29sX2Rpcn0iID4+ICIk\ne0dJVEhVQl9QQVRIfSIKICAgICAgLSBuYW1lOiBDaGVjayB3b3JrZmxvdyBz\neW50YXggd2l0aCBjYW5vbmljYWwgYWN0aW9ubGludAogICAgICAgIHJ1bjog\nYWN0aW9ubGludAogICAgICAtIG5hbWU6IENoZWNrIG5vbi1SdXN0IGZpbGUg\nZm9ybWF0dGluZyBhbmQgbGludAogICAgICAgIHJ1bjogYmFzaCBzY3JpcHRz\nL2NoZWNrLWZpbGVzLnNoIC0tY2hlY2sKICAgICAgLSBuYW1lOiBDaGVjayBs\nb2NhbCBkb2N1bWVudGF0aW9uIGxpbmtzIHdpdGhvdXQgbmV0d29yayBhY2Nl\nc3MKICAgICAgICBydW46IGx5Y2hlZSAtLWNvbmZpZyBseWNoZWUudG9tbCAt\nLXJvb3QtZGlyICIke0dJVEhVQl9XT1JLU1BBQ0V9IiAtLW9mZmxpbmUgJy4v\nKiovKi5tZCcKICAgICAgLSBuYW1lOiBDaGVjayByZXBvc2l0b3J5IFB5dGhv\nbiBhbmQgYXV0b21hdGlvbiBjb250cmFjdHMKICAgICAgICBydW46IHwKICAg\nICAgICAgIHV2IHJ1biAtLWxvY2tlZCAtLXByb2plY3QgX2F1dG9tYXRpb24v\nYXV0b21hdGlvbiBydWZmIGNoZWNrIC0tY29uZmlnIHB5cHJvamVjdC50b21s\nIHNjcmlwdHMKICAgICAgICAgIHV2IHJ1biAtLWxvY2tlZCAtLXByb2plY3Qg\nX2F1dG9tYXRpb24vYXV0b21hdGlvbiBydWZmIGZvcm1hdCAtLWNoZWNrIC0t\nY29uZmlnIHB5cHJvamVjdC50b21sIHNjcmlwdHMKICAgICAgICAgIHV2IHJ1\nbiAtLWxvY2tlZCAtLXByb2plY3QgX2F1dG9tYXRpb24vYXV0b21hdGlvbiB0\neSBjaGVjayAtLXByb2plY3QgLiBzY3JpcHRzCiAgICAgICAgICB1diBydW4g\nLS1sb2NrZWQgLS1wcm9qZWN0IF9hdXRvbWF0aW9uL2F1dG9tYXRpb24gcHl0\naG9uIHNjcmlwdHMvdGVzdC1hdXRvbWF0aW9uLWNvbnRyYWN0LnB5CiAgICAg\nICAgICB1diBydW4gLS1sb2NrZWQgLS1wcm9qZWN0IF9hdXRvbWF0aW9uL2F1\ndG9tYXRpb24gcHl0aG9uIHNjcmlwdHMvdGVzdC1ob3N0ZWQtZ2VuZXJhdG9y\nLXBvZG1hbi5weQogICAgICAtIG5hbWU6IFRlc3QgcmVsZWFzZSBtZXRhZGF0\nYSBwb2xpY3kKICAgICAgICBydW46IGJhc2ggc2NyaXB0cy90ZXN0LXJlbGVh\nc2UtbWV0YWRhdGEuc2gKICAgICAgLSBuYW1lOiBDaGVjayByZWxlYXNlIG1l\ndGFkYXRhIGFuZCBjaGFuZ2Vsb2cKICAgICAgICBlbnY6CiAgICAgICAgICBS\nRUxFQVNFX01FVEFEQVRBX01PREU6ICR7eyBnaXRodWIuZXZlbnRfbmFtZSA9\nPSAncHVsbF9yZXF1ZXN0JyAmJiBzdGFydHNXaXRoKGdpdGh1Yi5oZWFkX3Jl\nZiwgJ3JlbGVhc2UtcGx6LScpICYmICctLXJlbGVhc2UnIHx8ICctLWRldmVs\nb3BtZW50JyB9fQogICAgICAgIHJ1bjogYmFzaCBzY3JpcHRzL2NoZWNrLXJl\nbGVhc2UtbWV0YWRhdGEuc2ggIiR7UkVMRUFTRV9NRVRBREFUQV9NT0RFfSIK\nICBsb2NrZmlsZS1yZWxlYXNlLWFnZToKICAgIG5hbWU6IERlcGVuZGVuY3kg\nZWxpZ2liaWxpdHkKICAgIG5lZWRzOiB2YWxpZGF0aW9uLXBsYW4KICAgIGlm\nOiBuZWVkcy52YWxpZGF0aW9uLXBsYW4ub3V0cHV0cy5zZWxlY3RfbG9ja2Zp\nbGVfcmVsZWFzZV9hZ2UgPT0gJ3RydWUnCiAgICBwZXJtaXNzaW9uczoKICAg\nICAgYWN0aW9uczogcmVhZAogICAgICBjb250ZW50czogcmVhZAogICAgICBz\ndGF0dXNlczogcmVhZAogICAgdXNlczogU3RydWt0dXJwaWxvdGVuL2JveGZl\ncnJ5Ly5naXRodWIvd29ya2Zsb3dzL3NoYXJlZC1kZXBlbmRlbmN5LXdhaXQu\neW1sQGNmMzU3OGY0NzQxNmUxYjI3Yjc3MGZlNGE4MTkxODg0NGZiMmQ1OGIg\nIyBhdXRvbWF0aW9uLXYxIGludGVyZmFjZSB2MQogICAgd2l0aDoKICAgICAg\nY2FuZGlkYXRlX3NoYTogJHt7IGdpdGh1Yi5zaGEgfX0KICAgICAgYXV0b21h\ndGlvbl9zaGE6IGNmMzU3OGY0NzQxNmUxYjI3Yjc3MGZlNGE4MTkxODg0NGZi\nMmQ1OGIKICAgICAgcG9saWN5X3NoYTogJHt7IGdpdGh1Yi5ldmVudC5wdWxs\nX3JlcXVlc3QuYmFzZS5zaGEgfHwgZ2l0aHViLmV2ZW50Lm1lcmdlX2dyb3Vw\nLmJhc2Vfc2hhIHx8IGdpdGh1Yi5zaGEgfX0KICBkZXZjb250YWluZXItdmFs\naWRhdGlvbjoKICAgIG5hbWU6IE5hdGl2ZSBEZXYgQ29udGFpbmVyIGltYWdl\nIHF1YWxpZmljYXRpb24KICAgIG5lZWRzOiB2YWxpZGF0aW9uLXBsYW4KICAg\nIGlmOiBuZWVkcy52YWxpZGF0aW9uLXBsYW4ub3V0cHV0cy5zZWxlY3RfZGV2\nY29udGFpbmVyX3ZhbGlkYXRpb24gIT0gJ2ZhbHNlJwogICAgcGVybWlzc2lv\nbnM6CiAgICAgIGNvbnRlbnRzOiByZWFkCiAgICB1c2VzOiBTdHJ1a3R1cnBp\nbG90ZW4vYm94ZmVycnkvLmdpdGh1Yi93b3JrZmxvd3Mvc2hhcmVkLWRldmNv\nbnRhaW5lci12YWxpZGF0aW9uLnltbEBjZjM1NzhmNDc0MTZlMWIyN2I3NzBm\nZTRhODE5MTg4NDRmYjJkNThiICMgYXV0b21hdGlvbi12MSBpbnRlcmZhY2Ug\ndjEKICAgIHdpdGg6CiAgICAgIGNhbmRpZGF0ZV9zaGE6ICR7eyBnaXRodWIu\nc2hhIH19CiAgICAgIHBvbGljeV9zaGE6ICR7eyBnaXRodWIuZXZlbnQucHVs\nbF9yZXF1ZXN0LmJhc2Uuc2hhIHx8IGdpdGh1Yi5ldmVudC5tZXJnZV9ncm91\ncC5iYXNlX3NoYSB8fCBnaXRodWIuc2hhIH19CiAgICAgIGF1dG9tYXRpb25f\nc2hhOiBjZjM1NzhmNDc0MTZlMWIyN2I3NzBmZTRhODE5MTg4NDRmYjJkNThi\nCiAgICAgIGNvbmZpZ19wYXRoOiBzY3JpcHRzL3ZhbGlkYXRpb24tcG9saWN5\nLmpzb24KICBwci1nYXRlOgogICAgbmFtZTogUmVxdWlyZWQgQ0kKICAgIGlm\nOiBhbHdheXMoKQogICAgbmVlZHM6CiAgICAgIC0gdmFsaWRhdGlvbi1wbGFu\nCiAgICAgIC0gcnVzdAogICAgICAtIGNvdmVyYWdlCiAgICAgIC0gbXNydgog\nICAgICAtIGRlcGVuZGVuY2llcwogICAgICAtIGFwaQogICAgICAtIGRvY3Vt\nZW50YXRpb24KICAgICAgLSBsb2NrZmlsZS1yZWxlYXNlLWFnZQogICAgICAt\nIGRldmNvbnRhaW5lci12YWxpZGF0aW9uCiAgICBvdXRwdXRzOgogICAgICBj\nYW5kaWRhdGVfc2hhOiAke3sgc3RlcHMuZ2F0ZS5vdXRwdXRzLmNhbmRpZGF0\nZV9zaGEgfX0KICAgICAgcHVibGlzaGVkX2FwaV9jYW5kaWRhdGVfc2hhOiAk\ne3sgc3RlcHMuZ2F0ZS5vdXRwdXRzLnB1Ymxpc2hlZF9hcGlfY2FuZGlkYXRl\nX3NoYSB9fQogICAgcnVucy1vbjogdWJ1bnR1LTI0LjA0CiAgICB0aW1lb3V0\nLW1pbnV0ZXM6IDUKICAgIHN0ZXBzOgogICAgICAtIG5hbWU6IENoZWNrIG91\ndCBpbW11dGFibGUgc2hhcmVkIGF1dG9tYXRpb24KICAgICAgICB1c2VzOiBh\nY3Rpb25zL2NoZWNrb3V0QDNkM2M0MmU1YWFjNWJhODA1ODI1ZGE3NjQxMGMx\nODEyNzNiYTkwYjEgIyB2Ny4wLjEKICAgICAgICB3aXRoOgogICAgICAgICAg\ncmVwb3NpdG9yeTogU3RydWt0dXJwaWxvdGVuL2JveGZlcnJ5CiAgICAgICAg\nICAjIHJlbm92YXRlOiBkYXRhc291cmNlPWdpdGh1Yi1kaWdlc3QgZGVwTmFt\nZT1TdHJ1a3R1cnBpbG90ZW4vYm94ZmVycnkgY3VycmVudFZhbHVlPWF1dG9t\nYXRpb24tdjEKICAgICAgICAgIHJlZjogY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcw\nZmU0YTgxOTE4ODQ0ZmIyZDU4YgogICAgICAgICAgcGF0aDogX2F1dG9tYXRp\nb24KICAgICAgICAgIHBlcnNpc3QtY3JlZGVudGlhbHM6IGZhbHNlCiAgICAg\nIC0gbmFtZTogQmluZCB0ZXN0ZWQgY2FuZGlkYXRlIGFuZCB0cnVzdGVkIHBv\nbGljeQogICAgICAgIGlkOiBzb3VyY2UKICAgICAgICB1c2VzOiAuL19hdXRv\nbWF0aW9uLy5naXRodWIvYWN0aW9ucy9zaGFyZWQtc291cmNlCiAgICAgICAg\nd2l0aDoKICAgICAgICAgIGNhbmRpZGF0ZS1zaGE6ICR7eyBnaXRodWIuc2hh\nIH19CiAgICAgICAgICBhdXRvbWF0aW9uLXNoYTogY2YzNTc4ZjQ3NDE2ZTFi\nMjdiNzcwZmU0YTgxOTE4ODQ0ZmIyZDU4YgogICAgICAgICAgcG9saWN5LXNo\nYTogJHt7IGdpdGh1Yi5ldmVudC5wdWxsX3JlcXVlc3QuYmFzZS5zaGEgfHwg\nZ2l0aHViLmV2ZW50Lm1lcmdlX2dyb3VwLmJhc2Vfc2hhIHx8IGdpdGh1Yi5z\naGEgfX0KICAgICAgICAgIGNvbmZpZy1wYXRoOiBzY3JpcHRzL3ZhbGlkYXRp\nb24tcG9saWN5Lmpzb24KICAgICAgLSBuYW1lOiBJbnN0YWxsIGxvY2tlZCBz\naGFyZWQgUHl0aG9uIHRvb2xpbmcKICAgICAgICB1c2VzOiAuL19hdXRvbWF0\naW9uLy5naXRodWIvYWN0aW9ucy9zaGFyZWQtcHl0aG9uCiAgICAgIC0gbmFt\nZTogUmVxdWlyZSBzZWxlY3RlZCBqb2JzIGFuZCBwbGFubmVkIHNraXBzCiAg\nICAgICAgaWQ6IGdhdGUKICAgICAgICBlbnY6CiAgICAgICAgICBFVkVOVF9O\nQU1FOiAke3sgZ2l0aHViLmV2ZW50X25hbWUgfX0KICAgICAgICAgIEJBU0Vf\nU0hBOiAke3sgZ2l0aHViLmV2ZW50LnB1bGxfcmVxdWVzdC5iYXNlLnNoYSB8\nfCBnaXRodWIuZXZlbnQubWVyZ2VfZ3JvdXAuYmFzZV9zaGEgfX0KICAgICAg\nICAgIEhFQURfU0hBOiAke3sgZ2l0aHViLmV2ZW50LnB1bGxfcmVxdWVzdC5o\nZWFkLnNoYSB8fCBnaXRodWIuZXZlbnQubWVyZ2VfZ3JvdXAuaGVhZF9zaGEg\nfX0KICAgICAgICAgIFBPTElDWV9TSEE6ICR7eyBnaXRodWIuZXZlbnQucHVs\nbF9yZXF1ZXN0LmJhc2Uuc2hhIHx8IGdpdGh1Yi5ldmVudC5tZXJnZV9ncm91\ncC5iYXNlX3NoYSB8fCBnaXRodWIuc2hhIH19CiAgICAgICAgICBBVVRPTUFU\nSU9OX1NIQTogY2YzNTc4ZjQ3NDE2ZTFiMjdiNzcwZmU0YTgxOTE4ODQ0ZmIy\nZDU4YgogICAgICAgICAgUE9MSUNZX0NPTkZJRzogJHt7IHN0ZXBzLnNvdXJj\nZS5vdXRwdXRzLmNvbmZpZyB9fQogICAgICAgICAgUExBTl9KU09OOiAke3sg\nbmVlZHMudmFsaWRhdGlvbi1wbGFuLm91dHB1dHMucGxhbiB9fQogICAgICAg\nICAgTkVFRFNfSlNPTjogJHt7IHRvSlNPTihuZWVkcykgfX0KICAgICAgICAg\nIEFQSV9QVVJQT1NFOiAke3sgaW5wdXRzLmFwaV9wdXJwb3NlIHx8ICdkZXZl\nbG9wbWVudCcgfX0KICAgICAgICAgIFBVQkxJU0hFRF9BUElfQ0FORElEQVRF\nX1NIQTogJHt7IG5lZWRzLmFwaS5vdXRwdXRzLnB1Ymxpc2hlZF9hcGlfY2Fu\nZGlkYXRlX3NoYSB9fQogICAgICAgIHJ1bjogfAogICAgICAgICAgc2V0IC1l\ndW8gcGlwZWZhaWwKICAgICAgICAgIHV2IHJ1biAtLWxvY2tlZCAtLXByb2pl\nY3QgX2F1dG9tYXRpb24vYXV0b21hdGlvbiBweXRob24gLW0gYm94ZmVycnlf\nY2kgZ2F0ZSBcCiAgICAgICAgICAgIC0tcmVwb3NpdG9yeS1yb290IHNvdXJj\nZSAtLWNvbmZpZyAiJHtQT0xJQ1lfQ09ORklHfSIgXAogICAgICAgICAgICAt\nLWV2ZW50ICIke0VWRU5UX05BTUV9IiAtLWJhc2Utc2hhICIke0JBU0VfU0hB\nfSIgLS1oZWFkLXNoYSAiJHtIRUFEX1NIQX0iIFwKICAgICAgICAgICAgLS10\nZXN0ZWQtc2hhICIke0dJVEhVQl9TSEF9IiAtLXBvbGljeS1zaGEgIiR7UE9M\nSUNZX1NIQX0iIC0tYXV0b21hdGlvbi1zaGEgIiR7QVVUT01BVElPTl9TSEF9\nIiBcCiAgICAgICAgICAgIC0tcGxhbi1qc29uICIke1BMQU5fSlNPTn0iIC0t\nbmVlZHMtanNvbiAiJHtORUVEU19KU09OfSIgXAogICAgICAgICAgICAtLWRl\ndmNvbnRhaW5lci12YWxpZGF0aW9uCiAgICAgICAgICBjYXNlICIke0FQSV9Q\nVVJQT1NFfSIgaW4KICAgICAgICAgICAgcHVibGlzaGVkKQogICAgICAgICAg\nICAgIHRlc3QgIiR7UFVCTElTSEVEX0FQSV9DQU5ESURBVEVfU0hBfSIgPSAi\nJHtHSVRIVUJfU0hBfSIKICAgICAgICAgICAgICBwcmludGYgJ3B1Ymxpc2hl\nZF9hcGlfY2FuZGlkYXRlX3NoYT0lc1xuJyAiJHtQVUJMSVNIRURfQVBJX0NB\nTkRJREFURV9TSEF9IiA+PiAiJHtHSVRIVUJfT1VUUFVUfSIKICAgICAgICAg\nICAgICA7OwogICAgICAgICAgICBkZXZlbG9wbWVudCkgOzsKICAgICAgICAg\nICAgKikgZXhpdCAxIDs7CiAgICAgICAgICBlc2FjCiAgICAgICAgICBwcmlu\ndGYgJ2NhbmRpZGF0ZV9zaGE9JXNcbicgIiR7R0lUSFVCX1NIQX0iID4+ICIk\ne0dJVEhVQl9PVVRQVVR9IgpvbjoKICBwdXNoOgogICAgYnJhbmNoZXM6CiAg\nICAgIC0gbWFpbgogIHB1bGxfcmVxdWVzdDoKICB3b3JrZmxvd19kaXNwYXRj\naDoKICB3b3JrZmxvd19jYWxsOgogICAgaW5wdXRzOgogICAgICBhcGlfcHVy\ncG9zZToKICAgICAgICBkZXNjcmlwdGlvbjogUHVibGlzaGVkIEFQSSB2YWxp\nZGF0aW9uIGJ5IGRlZmF1bHQ7IG9yZGluYXJ5IENJIHNlbGVjdHMgZGV2ZWxv\ncG1lbnQuCiAgICAgICAgdHlwZTogc3RyaW5nCiAgICAgICAgZGVmYXVsdDog\ncHVibGlzaGVkCiAgICBvdXRwdXRzOgogICAgICBjYW5kaWRhdGVfc2hhOgog\nICAgICAgIGRlc2NyaXB0aW9uOiBFeGFjdCBjYW5kaWRhdGUgYWZ0ZXIgYWxs\nIHJlcXVpcmVkIHZhbGlkYXRpb24gc3VjY2VlZHMKICAgICAgICB2YWx1ZTog\nJHt7IGpvYnMucHItZ2F0ZS5vdXRwdXRzLmNhbmRpZGF0ZV9zaGEgfX0KICAg\nICAgcHVibGlzaGVkX2FwaV9jYW5kaWRhdGVfc2hhOgogICAgICAgIGRlc2Ny\naXB0aW9uOiBFeGFjdCBjYW5kaWRhdGUgd2l0aCBwdWJsaXNoZWQtcHVycG9z\nZSBBUEkgc3VjY2Vzcy4KICAgICAgICB2YWx1ZTogJHt7IGpvYnMucHItZ2F0\nZS5vdXRwdXRzLnB1Ymxpc2hlZF9hcGlfY2FuZGlkYXRlX3NoYSB9fQogIG1l\ncmdlX2dyb3VwOgo=\n",
+      "sha": "bf7e52c32b559c532df4ad796613c9dd0f66daff"
+    },
+    "contents/scripts/validation-policy.json?ref=c7a1f1db2fe28157596b0bf0d18c234a8e732975": {
+      "type": "file",
+      "size": 3332,
+      "encoding": "base64",
+      "content": "ewogICJzY2hlbWEiOiAyLAogICJyZXBvc2l0b3J5IjogIlN0cnVrdHVycGls\nb3Rlbi9xdWFkbGV0LWxlbnMiLAogICJqb2JzIjogWwogICAgInJ1c3QiLAog\nICAgImNvdmVyYWdlIiwKICAgICJtc3J2IiwKICAgICJkZXBlbmRlbmNpZXMi\nLAogICAgImFwaSIsCiAgICAiZG9jdW1lbnRhdGlvbiIsCiAgICAibG9ja2Zp\nbGUtcmVsZWFzZS1hZ2UiLAogICAgImRldmNvbnRhaW5lci12YWxpZGF0aW9u\nIgogIF0sCiAgInByb2ZpbGVfam9icyI6IHsKICAgICJwcm9zZSI6IFsiZG9j\ndW1lbnRhdGlvbiIsICJsb2NrZmlsZS1yZWxlYXNlLWFnZSJdLAogICAgImV4\nZWN1dGFibGUtZG9jcyI6IFsKICAgICAgInJ1c3QiLAogICAgICAiY292ZXJh\nZ2UiLAogICAgICAibXNydiIsCiAgICAgICJkZXBlbmRlbmNpZXMiLAogICAg\nICAiYXBpIiwKICAgICAgImRvY3VtZW50YXRpb24iLAogICAgICAibG9ja2Zp\nbGUtcmVsZWFzZS1hZ2UiCiAgICBdCiAgfSwKICAicHVibGljX2RvY3VtZW50\nYXRpb25fcm9vdCI6ICJkb2NzL3B1YmxpYy8iLAogICJmdWxsX2RvY3VtZW50\nYXRpb25fcm9vdHMiOiBbXSwKICAiZXhlY3V0YWJsZV9kb2N1bWVudGF0aW9u\nX3Jvb3RzIjogW10sCiAgImV4ZWN1dGFibGVfZG9jdW1lbnRhdGlvbl9wYXRo\ncyI6IFtdLAogICJkb2N1bWVudGF0aW9uX2V4YW1wbGVzX21hbmlmZXN0Ijog\nbnVsbCwKICAibG9jYWxfY29tbWFuZHMiOiB7CiAgICAicHJvc2UiOiBbCiAg\nICAgIFsiYmFzaCIsICJzY3JpcHRzL2NoZWNrLWZpbGVzLnNoIiwgIi0tY2hl\nY2siXSwKICAgICAgWyJseWNoZWUiLCAiLS1jb25maWciLCAibHljaGVlLnRv\nbWwiLCAiLS1yb290LWRpciIsICIuIiwgIi0tb2ZmbGluZSIsICIuLyoqLyou\nbWQiXQogICAgXSwKICAgICJleGVjdXRhYmxlLWRvY3MiOiBbWyJiYXNoIiwg\nInNjcmlwdHMvY2hlY2stYWxsLnNoIiwgIi0tY2hlY2siXV0sCiAgICAiZnVs\nbCI6IFtbImJhc2giLCAic2NyaXB0cy9jaGVjay1hbGwuc2giLCAiLS1jaGVj\nayJdXQogIH0sCiAgInRhc2tzIjogewogICAgInJ1c3QtcXVhbGl0eSI6IHsK\nICAgICAgImNvbW1hbmRzIjogWwogICAgICAgIFsiY2FyZ28iLCAiZm10Iiwg\nIi0tYWxsIiwgIi0tIiwgIi0tY2hlY2siXSwKICAgICAgICBbImNhcmdvIiwg\nImNpLWNoZWNrIl0sCiAgICAgICAgWyJjYXJnbyIsICJjaS1hcHBsaWNhdGlv\nbiJdLAogICAgICAgIFsiY2FyZ28iLCAiY2ktcG9saWN5Il0sCiAgICAgICAg\nWyJjYXJnbyIsICJjaS1jbGlwcHkiXSwKICAgICAgICBbImNhcmdvIiwgImNp\nLXRlc3QiXSwKICAgICAgICBbImNhcmdvIiwgImNpLWRvY3Rlc3QiXSwKICAg\nICAgICBbImNhcmdvIiwgImNpLWRvYyJdLAogICAgICAgIFsiY2FyZ28iLCAi\nY2ktcGFja2FnZSJdCiAgICAgIF0sCiAgICAgICJ0aW1lb3V0X3NlY29uZHMi\nOiAxODAwCiAgICB9LAogICAgImNvdmVyYWdlIjogewogICAgICAiY29tbWFu\nZHMiOiBbCiAgICAgICAgWyJjYXJnbyIsICJsbHZtLWNvdiIsICJjbGVhbiIs\nICItLWxvY2tlZCJdLAogICAgICAgIFsKICAgICAgICAgICJjYXJnbyIsCiAg\nICAgICAgICAibGx2bS1jb3YiLAogICAgICAgICAgIi0tbG9ja2VkIiwKICAg\nICAgICAgICItLW5vLWNsZWFuIiwKICAgICAgICAgICItLXdvcmtzcGFjZSIs\nCiAgICAgICAgICAiLS1hbGwtZmVhdHVyZXMiLAogICAgICAgICAgIi0tYWxs\nLXRhcmdldHMiLAogICAgICAgICAgIi0tc3VtbWFyeS1vbmx5IiwKICAgICAg\nICAgICItLWZhaWwtdW5kZXItcmVnaW9ucyIsCiAgICAgICAgICAiOTEiLAog\nICAgICAgICAgIi0tZmFpbC11bmRlci1mdW5jdGlvbnMiLAogICAgICAgICAg\nIjkyIiwKICAgICAgICAgICItLWZhaWwtdW5kZXItbGluZXMiLAogICAgICAg\nICAgIjkyIgogICAgICAgIF0KICAgICAgXSwKICAgICAgInRpbWVvdXRfc2Vj\nb25kcyI6IDE4MDAKICAgIH0sCiAgICAibXNydiI6IHsKICAgICAgImNvbW1h\nbmRzIjogWwogICAgICAgIFsiY2FyZ28iLCAiY2ktY2hlY2siXSwKICAgICAg\nICBbImNhcmdvIiwgImNpLXBvbGljeSJdCiAgICAgIF0sCiAgICAgICJ0aW1l\nb3V0X3NlY29uZHMiOiA5MDAKICAgIH0sCiAgICAicmVsZWFzZS1tZXRhZGF0\nYSI6IHsKICAgICAgImNvbW1hbmRzIjogW1siYmFzaCIsICJzY3JpcHRzL2No\nZWNrLXJlbGVhc2UtbWV0YWRhdGEuc2giLCAiLS1kZXZlbG9wbWVudCJdXQog\nICAgfSwKICAgICJyZWxlYXNlLW1ldGFkYXRhLXN0cmljdCI6IHsKICAgICAg\nImNvbW1hbmRzIjogW1siYmFzaCIsICJzY3JpcHRzL2NoZWNrLXJlbGVhc2Ut\nbWV0YWRhdGEuc2giLCAiLS1yZWxlYXNlIl1dCiAgICB9LAogICAgInB5dGhv\nbi1xdWFsaXR5IjogewogICAgICAiY29tbWFuZHMiOiBbCiAgICAgICAgWyJy\ndWZmIiwgImNoZWNrIiwgIi0tY29uZmlnIiwgInB5cHJvamVjdC50b21sIiwg\nInNjcmlwdHMiXSwKICAgICAgICBbInJ1ZmYiLCAiZm9ybWF0IiwgIi0tY2hl\nY2siLCAiLS1jb25maWciLCAicHlwcm9qZWN0LnRvbWwiLCAic2NyaXB0cyJd\nLAogICAgICAgIFsidHkiLCAiY2hlY2siLCAiLS1wcm9qZWN0IiwgIi4iLCAi\nc2NyaXB0cyJdLAogICAgICAgIFsicHl0aG9uMyIsICJzY3JpcHRzL3Rlc3Qt\nYXV0b21hdGlvbi1jb250cmFjdC5weSJdLAogICAgICAgIFsicHl0aG9uMyIs\nICJzY3JpcHRzL3Rlc3QtaG9zdGVkLWdlbmVyYXRvci1wb2RtYW4ucHkiXQog\nICAgICBdLAogICAgICAidGltZW91dF9zZWNvbmRzIjogMzAwCiAgICB9LAog\nICAgInB5dGhvbi1mb3JtYXQiOiB7ICJjb21tYW5kcyI6IFtbInJ1ZmYiLCAi\nZm9ybWF0IiwgIi0tY29uZmlnIiwgInB5cHJvamVjdC50b21sIiwgInNjcmlw\ndHMiXV0gfSwKICAgICJhcGktZGV2ZWxvcG1lbnQiOiB7CiAgICAgICJjb21t\nYW5kcyI6IFsKICAgICAgICBbCiAgICAgICAgICAicHl0aG9uIiwKICAgICAg\nICAgICItbSIsCiAgICAgICAgICAiYm94ZmVycnlfY2kuYXBpX2Jhc2VsaW5l\ncyIsCiAgICAgICAgICAicnVuIiwKICAgICAgICAgICItLXJlcG9zaXRvcnkt\ncm9vdCIsCiAgICAgICAgICAiLiIsCiAgICAgICAgICAiLS1yZXBvc2l0b3J5\nIiwKICAgICAgICAgICJTdHJ1a3R1cnBpbG90ZW4vcXVhZGxldC1sZW5zIiwK\nICAgICAgICAgICItLWFwaS1wdXJwb3NlIiwKICAgICAgICAgICJkZXZlbG9w\nbWVudCIsCiAgICAgICAgICAiLS1ldmVudCIsCiAgICAgICAgICAibG9jYWwi\nLAogICAgICAgICAgIi0tcGFja2FnZSIsCiAgICAgICAgICAicXVhZGxldC1s\nZW5zIiwKICAgICAgICAgICItLXJlcG9ydC1qc29uIiwKICAgICAgICAgICJ0\nYXJnZXQvYXBpLWJhc2VsaW5lLWxvY2FsLmpzb24iCiAgICAgICAgXQogICAg\nICBdLAogICAgICAidGltZW91dF9zZWNvbmRzIjogMTIwMAogICAgfQogIH0K\nfQo=\n",
+      "sha": "d3b3c9beeb917e635e6e76c4c3617de22d68a8df"
+    }
+  }
+}

@@ -575,11 +575,24 @@ def decode_artifact(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def run_artifact(api: GitHub, run_id: int) -> dict[str, Any]:
+def run_artifact(
+    api: GitHub, run_id: int, *, require_explicit_live_artifact: bool = False
+) -> dict[str, Any]:
     artifacts = api.get(f"actions/runs/{run_id}/artifacts?per_page=100")
+    if require_explicit_live_artifact and (
+        not isinstance(artifacts.get("artifacts"), list)
+        or len(artifacts["artifacts"]) > 100
+        or type(artifacts.get("total_count")) is not int
+        or artifacts["total_count"] != len(artifacts["artifacts"])
+    ):
+        raise EligibilityError("merged queue receipt artifact listing is incomplete")
     matches = [item for item in artifacts.get("artifacts", []) if item.get("name") == ARTIFACT_NAME]
     if len(matches) != 1 or matches[0].get("expired"):
         raise EligibilityError("trusted service run has no unique live state artifact")
+    if require_explicit_live_artifact and matches[0].get("expired") is not False:
+        raise EligibilityError(
+            "merged queue receipt artifact lacks explicit current expiry evidence"
+        )
     item = matches[0]
     if (
         type(item.get("id")) is not int
@@ -889,7 +902,7 @@ def _queue_entries(api: GitHub, default_branch: str) -> list[dict[str, Any]]:
     entries = queue.get("entries", {})
     if not isinstance(entries, dict):
         raise EligibilityError("merge queue entry metadata is malformed")
-    nodes = entries.get("nodes", [])
+    nodes = entries.get("nodes")
     total = entries.get("totalCount")
     if (
         type(total) is not int
@@ -1069,6 +1082,146 @@ def _current_queue_candidate(
     return binding
 
 
+class QueueGroupAbsent(EligibilityError):
+    """An empty queue at the exact tested target; not itself a no-effect proof."""
+
+    def __init__(self, rules: list[dict[str, Any]]) -> None:
+        super().__init__("tested queue group is absent at the exact target")
+        self.rules = rules
+
+
+def merged_queue_completion(
+    api: GitHub,
+    source: dict[str, Any],
+    implementation: str,
+    branch: str,
+    now: datetime,
+    absent: QueueGroupAbsent,
+) -> dict[str, Any]:
+    """Close only a successfully tested, receipted, exactly merged single-parent group.
+
+    This authenticates a prospective read-only closure, never repairs old history.
+    The ordinary exact-source receipt reader supplies policy provenance; the closed
+    immutable caller and GitHub's run/PR identities independently bind its lifecycle.
+    """
+    from .admission import AdmissionError, parse_manifest
+    from .recovery import RecoveryRefused, reader_reference, reader_shape
+
+    head = revision(source.get("head_sha"))
+    if (
+        not candidate_run(api, source, head)
+        or source.get("event") != "merge_group"
+        or source.get("status") != "completed"
+        or source.get("conclusion") != "success"
+        or type(source.get("id")) is not int
+        or source["id"] < 1
+        or type(source.get("run_attempt")) is not int
+        or source["run_attempt"] < 1
+        or not utc(source.get("created_at")) <= utc(source.get("updated_at")) <= now
+    ):
+        raise EligibilityError("absent queue lacks an exact successful completed CI run")
+    try:
+        reader_reference(source, implementation)
+    except RecoveryRefused as error:
+        raise EligibilityError("merged queue lacks the exact immutable reader reference") from error
+    commit = api.get(f"git/commits/{head}")
+    parents = commit.get("parents")
+    if commit.get("sha") != head or not isinstance(parents, list) or len(parents) != 1:
+        raise EligibilityError("merged queue closure requires exactly one tested parent")
+    if not isinstance(parents[0], dict):
+        raise EligibilityError("merged queue parent metadata is malformed")
+    base = revision(parents[0].get("sha"))
+    receipt = candidate_receipt(
+        api,
+        head,
+        implementation,
+        branch,
+        now,
+        expected_base_sha=base,
+        require_explicit_live_artifact=True,
+    )
+    if (
+        receipt is None
+        or receipt.get("status") != "pass"
+        or receipt.get("scope") != "merge_group"
+        or receipt.get("protected_queue_required")
+        or "evidence_kind" in receipt
+        or type(receipt.get("pull_request")) is not int
+        or receipt["pull_request"] < 1
+    ):
+        raise EligibilityError("merged queue lacks a passing exact-source queue receipt")
+    number = receipt["pull_request"]
+    pr = api.get(f"pulls/{number}")
+    identity = _queue_pr_identity_for_merged(api, pr, number, branch, head, receipt, source, now)
+    manifest = file_bytes(api, ".github/automation.json", base)
+    if manifest is None or file_bytes(api, ".github/automation.json", head) != manifest:
+        raise EligibilityError("merged queue admission authority changed")
+    try:
+        authority, policy_path = parse_manifest(manifest)
+    except AdmissionError as error:
+        raise EligibilityError("merged queue admission manifest is malformed") from error
+    policy = file_bytes(api, policy_path, base)
+    caller = file_bytes(api, workflow_file(api.repository), base)
+    if (
+        authority != implementation
+        or policy is None
+        or file_bytes(api, policy_path, head) != policy
+        or caller is None
+        or file_bytes(api, workflow_file(api.repository), head) != caller
+    ):
+        raise EligibilityError("merged queue caller or policy lacks unchanged exact authority")
+    try:
+        reader_shape(caller, implementation)
+    except RecoveryRefused as error:
+        raise EligibilityError("merged queue caller lacks the supported queue contract") from error
+    # All reads precede the candidate loop. Revalidate every mutable binding and
+    # the proof deadline; empty queue/target equality alone never closes a callback.
+    if (
+        api.get(f"actions/runs/{source['id']}") != source
+        or api.get(f"pulls/{number}") != pr
+        or require_single_entry_queue(api, branch) != absent.rules
+        or _queue_entries(api, branch)
+        or target_revision(api, branch) != head
+        or time.monotonic() >= api.deadline
+    ):
+        raise EligibilityError("merged queue lifecycle changed or proof expired")
+    return {
+        "pull_request": number,
+        "source_run_id": source["id"],
+        "source_head_sha": identity,
+        "reason": f"Successful exact queue candidate {head} already merged into the target",
+        "next_action": "No candidate evaluation, eligibility status or retry is needed.",
+    }
+
+
+def _queue_pr_identity_for_merged(
+    api: GitHub,
+    pr: dict[str, Any],
+    number: int,
+    branch: str,
+    head: str,
+    receipt: dict[str, Any],
+    source: dict[str, Any],
+    now: datetime,
+) -> str:
+    """Require the receipt's same-repository PR to have merged this exact commit."""
+    try:
+        pr_identity(pr, api.repository, number, expected_target=branch)
+    except ClosedPullRequest as closed:
+        if (
+            pr.get("merged") is True
+            and closed.merge_head == head
+            and closed.source_head == receipt.get("source_head_sha")
+            and (pr.get("head", {}).get("repo") or {}).get("full_name") == api.repository
+            and isinstance(pr.get("title"), str)
+            and 1 <= len(pr["title"]) <= 512
+            and not any(char in pr["title"] for char in "\r\n\0")
+            and utc(source.get("created_at")) <= utc(pr.get("merged_at")) <= now
+        ):
+            return closed.source_head
+    raise EligibilityError("absent queue is not bound to a verified exact merged source PR")
+
+
 def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
     """Bind current tested queues separately from historical synthetic PR hints."""
     revision(head)
@@ -1080,6 +1233,8 @@ def queue_candidate(api: GitHub, head: str, default_branch: str) -> Candidate:
     base = target_revision(api, default_branch)
     _resolution_observe("queue-snapshot", resolution_base_sha=base)
     require_ancestor(api, base, head)
+    if not nodes and base == head:
+        raise QueueGroupAbsent(rules)
     built = [
         node
         for node in nodes
@@ -1898,6 +2053,16 @@ def service(
                         raise EligibilityError("candidate CI run is stale relative to the live PR")
                     if candidate is not None:
                         candidates.append(candidate)
+            except QueueGroupAbsent as absent:
+                if event.get("action") != "completed" or source.get("id") != source_id:
+                    raise EligibilityError(
+                        "absent queue closure requires this exact completed callback"
+                    ) from absent
+                no_action.append(
+                    merged_queue_completion(
+                        api, source, implementation, default_branch, now, absent
+                    )
+                )
             except QueueTargetMoved as moved:
                 binding = moved.binding
                 if (
@@ -2206,6 +2371,7 @@ def candidate_receipt(
     now: datetime,
     *,
     expected_base_sha: str,
+    require_explicit_live_artifact: bool = False,
 ) -> dict[str, Any] | None:
     """Accept an exact SHA/base/implementation report from a completed trusted run."""
     revision(expected_base_sha)
@@ -2224,7 +2390,9 @@ def candidate_receipt(
         if not trusted_run(api, run, implementation, default_branch):
             return None
         payload = validate_state(
-            run_artifact(api, run_id),
+            run_artifact(
+                api, run_id, require_explicit_live_artifact=require_explicit_live_artifact
+            ),
             repository=api.repository,
             run_id=run_id,
             implementation=implementation,
