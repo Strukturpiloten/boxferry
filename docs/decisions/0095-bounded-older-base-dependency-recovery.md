@@ -122,6 +122,31 @@ report and sends no status, retry or handoff. Malformed, expired, unknown, combi
 and post-effect failures retain their strict paths. Existing failed same-authority history is
 never retroactively accepted or cleared; later stable events use the normal checkpoint protocol.
 
+A completed merge-group callback may also find an empty queue after its exact tested
+commit became the target. That observation alone is insufficient. The bounded closure
+requires successful same-repository CI at that SHA, its exact immutable reader reference,
+an exact match between the completed callback's source ID and both source-run reads,
+one direct tested parent, and a successful same-authority queue receipt naming that
+parent, PR and source head. The named same-repository PR must be closed and explicitly
+merged at that exact tested SHA, with a valid merge time after CI creation. The original
+base and tested trees must contain identical admission manifest, policy and supported
+immutable CI caller, selecting the executing authority. Fresh reads must retain the
+source run/attempt, PR identity/author/title, protections, empty queue and exact target
+within the existing deadline. The service persists a no-action checkpoint before any
+candidate evaluation or effect; it does not mint another candidate report or status.
+Both queue reads must explicitly contain their requested `nodes` list. This closure also
+requires a complete receipt artifact listing and explicit `expired: false`, followed by
+authenticated archive acquisition and the existing receipt provenance/time validation;
+legacy receipt consumers retain their existing invocation and metadata requirements.
+
+Unknown, incomplete, expired, changed or ambiguous evidence, unsuccessful CI, other
+callback actions, multiple-parent groups and a target already advanced beyond the tested
+SHA retain strict failure. This deliberately narrow lifecycle proof neither reconstructs
+removed queue entries nor assumes that absence proves cancellation safety. It preserves
+all inherited budgets, first-seen observations, cursor, pending attempts and historical
+fences. Source admission and coherent rollout, a real successful no-action closure, and
+later ordinary recovery with fresh protected-queue testing remain separate acceptance.
+
 ## Evidence and activation
 
 Focused tests cover wrong/missing base receipts, legacy argv, ordered parents,
