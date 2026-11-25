@@ -6608,6 +6608,51 @@ const REVIEWED_PRETTIER_EXCLUSIONS: &[&str] = &[
     "fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json",
 ];
 
+fn validate_file_formatter_invocations(script: &str) -> Result<(), String> {
+    for line in script.lines().filter(|line| {
+        line.trim_start().starts_with("run ") && (line.contains("prettier") || line.contains("markdownlint-cli2"))
+    }) {
+        if !line.trim_start().starts_with(r#"run "${node_tool[@]}" "#) {
+            return Err("formatters must execute through the selected producer runner".to_owned());
+        }
+        if (line.contains("prettier")
+            && (!line.contains("prettier --config .prettierrc.json --no-editorconfig")
+                || !line.contains("--ignore-path .prettierignore --ignore-unknown")))
+            || (line.contains("markdownlint-cli2") && !line.contains("markdownlint-cli2 --config .markdownlint.json"))
+        {
+            return Err("formatter calls must select caller-owned configuration and ignores explicitly".to_owned());
+        }
+    }
+
+    let markdown_format = script
+        .find(r#"run "${node_tool[@]}" prettier --config .prettierrc.json --no-editorconfig --write --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
+        .ok_or("non-Rust file runner must format Markdown with Prettier")?;
+    let markdown_fix = script
+        .find(r#"run "${node_tool[@]}" markdownlint-cli2 --config .markdownlint.json --fix "${markdown_literals[@]}""#)
+        .ok_or("non-Rust file runner must apply fixable Markdown lint rules")?;
+    let markdown_lint = script
+        .find(r#"run "${node_tool[@]}" markdownlint-cli2 --config .markdownlint.json "${markdown_literals[@]}""#)
+        .ok_or("non-Rust file runner must lint Markdown after formatting")?;
+    let markdown_check = script
+        .find(r#"run "${node_tool[@]}" prettier --config .prettierrc.json --no-editorconfig --check --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
+        .ok_or("non-Rust file runner must verify Markdown formatting")?;
+    if !(markdown_format < markdown_fix && markdown_fix < markdown_lint && markdown_lint < markdown_check) {
+        return Err("non-Rust file runner must format, fix, lint, then check Markdown in that order".to_owned());
+    }
+    for mode in ["--write", "--check"] {
+        let structured = format!(
+            r#"run "${{node_tool[@]}}" prettier --config .prettierrc.json --no-editorconfig {mode} --ignore-path .prettierignore --ignore-unknown "${{structured_files[@]}}""#
+        );
+        if !script.contains(&structured) {
+            return Err(format!(
+                "structured file formatting must retain literal paths and {mode} behavior"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[test]
 fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs() -> Result<(), String> {
     let root = repository_root();
@@ -6618,9 +6663,17 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
     for required in [
         "git ls-files --cached --others --exclude-standard",
         "list_existing_files",
-        "markdownlint-cli2 --fix",
-        "prettier --write",
-        "prettier --check",
+        r#"script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)""#,
+        r#"repository_root="$(cd -- "${script_directory}/.." && pwd -P)""#,
+        r#"node_tools_root="${BOXFERRY_NODE_TOOLS_ROOT:-${repository_root}}""#,
+        r#"node_tool=(bash "${script_directory}/run-node-tool.sh" "${node_tools_root}")"#,
+        r#"cd -- "${repository_root}""#,
+        r#"markdown_literals+=(":${file}")"#,
+        "list_existing_files '*.md'",
+        "'*.json' '*.jsonc' '*.yaml' '*.yml' '*.code-workspace'",
+        "list_existing_files '*.toml'",
+        "list_existing_files '*.sh'",
+        "':(glob)Dockerfile' ':(glob)**/Dockerfile' ':(glob)**/Dockerfile.*'",
         "check_yaml_document_markers",
         "fixtures/scenarios/real-world-compose-*/input.compose.yaml) continue ;;",
         "tombi format --check --offline",
@@ -6673,21 +6726,7 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
             "Prettier exclusions must remain limited to reviewed generated or immutable evidence inputs".to_owned(),
         );
     }
-    let markdown_format = script
-        .find(r#"prettier --write --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
-        .ok_or("non-Rust file runner must format Markdown with Prettier")?;
-    let markdown_fix = script
-        .find(r#"markdownlint-cli2 --fix "${markdown_literals[@]}""#)
-        .ok_or("non-Rust file runner must apply fixable Markdown lint rules")?;
-    let markdown_lint = script
-        .find(r#"markdownlint-cli2 "${markdown_literals[@]}""#)
-        .ok_or("non-Rust file runner must lint Markdown after formatting")?;
-    let markdown_check = script
-        .find(r#"prettier --check --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
-        .ok_or("non-Rust file runner must verify Markdown formatting")?;
-    if !(markdown_format < markdown_fix && markdown_fix < markdown_lint && markdown_lint < markdown_check) {
-        return Err("non-Rust file runner must format, fix, lint, then check Markdown in that order".to_owned());
-    }
+    validate_file_formatter_invocations(&script)?;
 
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;

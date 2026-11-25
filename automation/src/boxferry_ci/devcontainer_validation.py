@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import git_worktree_validation
+from . import bootstrap, git_worktree_validation
 from .contracts import ContractError, exact_sha
 from .operational import _json
 from .runner import (
@@ -624,6 +624,69 @@ def canonical_versions(automation: Path) -> dict[str, str]:
     if any(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None for value in versions.values()):
         raise ValidationError("canonical tool versions must be exact numeric releases")
     return versions
+
+
+def selected_markdownlint_versions(
+    candidate: Path, automation: Path, automation_sha: str
+) -> dict[str, str]:
+    """Select local ownership or explicitly opt into the trusted automation graph."""
+    marker = candidate / ".github/node-tools.json"
+    if not marker.exists() and not marker.is_symlink():
+        return markdownlint_versions(candidate)
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValidationError("Node source metadata contains duplicate keys")
+            result[key] = value
+        return result
+
+    try:
+        if not stat.S_ISREG(marker.lstat().st_mode) or marker.stat().st_size > 8192:
+            raise ValidationError("Node source marker must be bounded regular JSON")
+        selection = json.loads(marker.read_bytes(), object_pairs_hook=unique)
+        if (
+            not isinstance(selection, dict)
+            or set(selection) != {"schema", "source"}
+            or type(selection["schema"]) is not int
+            or selection["schema"] != 1
+            or selection["source"] not in ("local", "automation")
+        ):
+            raise ValidationError(
+                "Node source marker requires exactly schema 1 and source local/automation"
+            )
+        source = selection["source"]
+        if source == "local":
+            return markdownlint_versions(candidate)
+        config = bootstrap.load_config(candidate)
+        if config["revision"] != automation_sha:
+            raise ValidationError("Node source revision differs from trusted automation")
+        # Unrelated npm applications can coexist; formatter ownership cannot be duplicated.
+        package = candidate / "package.json"
+        if package.exists() or package.is_symlink():
+            if not stat.S_ISREG(package.lstat().st_mode) or package.stat().st_size > 2 * 1024**2:
+                raise ValidationError("consumer npm declaration must be bounded regular JSON")
+            document = json.loads(package.read_bytes(), object_pairs_hook=unique)
+            if not isinstance(document, dict):
+                raise ValidationError("consumer npm declaration must be an object")
+            for section in (
+                "dependencies",
+                "devDependencies",
+                "optionalDependencies",
+                "peerDependencies",
+            ):
+                entries = document.get(section, {})
+                if (
+                    not isinstance(entries, dict)
+                    or {"prettier", "markdownlint-cli2"} & entries.keys()
+                ):
+                    raise ValidationError(
+                        "consumer duplicates or ambiguously declares shared Node tools"
+                    )
+        return markdownlint_versions(automation)
+    except (OSError, ValueError, TypeError, RecursionError) as error:
+        raise ValidationError(f"invalid Node source selection: {error}") from error
 
 
 def markdownlint_versions(candidate: Path) -> dict[str, str]:
@@ -1632,7 +1695,7 @@ def qualify(
         _verify_origin(source, repository, commands)
         _held_revision(policy, policy_sha, commands)
         _verify_origin(policy, repository, commands)
-        _held_revision(automation, automation_sha, commands)
+        _held_revision(automation, automation_sha, commands, clean=True)
         _verify_origin(automation, "boxferry", commands)
         held = fingerprint(source, commands)
         report["input_sha256"] = held
@@ -1717,7 +1780,9 @@ def qualify(
         node = shutil.which("node")
         if node is None or not Path(node).is_file():
             raise ValidationError("trusted Node executable is unavailable")
-        probe_versions = canonical_versions(automation) | markdownlint_versions(snapshot)
+        probe_versions = canonical_versions(automation) | selected_markdownlint_versions(
+            snapshot, automation, automation_sha
+        )
         node_version = commands.call((node, "--version"), "node-version").strip()
         if node_version != "v" + probe_versions["node"]:
             raise ValidationError("host Node differs from selected canonical automation authority")

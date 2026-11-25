@@ -1,21 +1,18 @@
 # Shared development automation
 
-[ADR 0092](decisions/0092-shared-development-automation.md) assigns shared [automation](../automation/) and [workflows](../.github/workflows/) to BoxFerry. Lens products and website checks remain independent; incomplete adoption requires independent consumer validation.
+[ADR 0092](decisions/0092-shared-development-automation.md) assigns shared [automation](../automation/) and [workflows](../.github/workflows/) to BoxFerry. Lens and website checks retain independent validation and adoption.
 
 ## Revisions and admission
 
-[ADR 0101](decisions/0101-retire-zero-age-delta-bootstrap.md) retires the zero-age proof from
-new waiter revisions. Both registered permission repairs merged. Historical pinned workflows and
-the original [bootstrap decision](decisions/0097-read-only-zero-age-delta-bootstrap.md) retain
-the reviewed proof and its evidence.
+[ADR 0101](decisions/0101-retire-zero-age-delta-bootstrap.md) retires new zero-age proofs.
+Historical workflows retain the [original bootstrap evidence](decisions/0097-read-only-zero-age-delta-bootstrap.md).
 
 Immutable caller identities: `candidate_sha` is tested `github.sha`; `automation_sha` matches the reusable workflow's full BoxFerry SHA; `policy_sha` is the trusted PR/merge-queue base, or candidate for other events. Validate policy paths against the trusted checkout. The [admission reader](../.github/workflows/shared-dependency-wait.yml) reads the exact base manifest: for base A/candidate B, A checks the exact candidate, reporting implementation A; CI validates B. There is no candidate fallback. Ordinary changed dependencies retain the 72-hour hold and the complete first-party Lens exemption; push/manual/release validation adds no age hold. See [ADR 0093](decisions/0093-exact-candidate-cargo-tools.md) and [ADR 0095](decisions/0095-bounded-older-base-dependency-recovery.md).
 
-[Snapshot acquisition](../automation/src/boxferry_ci/dependency_snapshots.py) receives exact
-revisions, read callbacks, an owned inert directory and the shared blob cache. Eligibility
-retains policy/state/effects, registry budgets and compatibility wrappers. Recovery authenticates
-immutable acquisition and transitive reader bytes, including lazy dependency/Cargo-tool imports.
-Historical readers and closed zero-age source exceptions remain unchanged.
+[Snapshot acquisition](../automation/src/boxferry_ci/dependency_snapshots.py) uses exact revisions,
+inert storage and a shared blob cache. Eligibility owns policy/state/effects and registry budgets.
+Recovery authenticates acquisition and transitive readers, including lazy dependency/Cargo-tool
+imports; historical contracts remain unchanged.
 
 ## Validation and repository boundaries
 
@@ -36,11 +33,17 @@ and live recovery evidence remain separate.
 
 Use locked Python, [local verification](development-environment.md#local-verification) and the [agent contract](../AGENTS.md); complete gates and independent review remain mandatory.
 
+## Manifest-selected formatters
+
+Use the [shared formatter guide](development/shared-formatters.md) for local/hosted commands,
+caller rules, protected offline image execution and coordinated adoption. Producer npm owns
+versions; consumers select the same admitted automation revision.
+
 ## Pinning and publication
 
 Align workflow and checkout pins; coordinate upgrades and Renovate ownership. Rollback restores both reviewed full SHAs. ADR 0092 permits a labelled, reviewed, complete-gate-tested full SHA bootstrap until the first automation release tag; floating refs remain prohibited. External Actions retain integrity and release-tag requirements. `automation-v1` advances non-forced only for shared-source changes admitted by complete main CI; consumer-only pins cannot trigger a loop.
 
-Release evidence binds the exact candidate. Publication requires the caller’s protected environment and explicit approval. The shared crate component defaults to validation-only without authentication or publication mutations; unpublished products remain validation-only until separately authorized. Callers retain product-specific safeguards. See [release policy](releasing.md) and [shared release validation](../.github/workflows/shared-release-validation.yml).
+Release evidence binds the exact candidate. Publication requires the caller’s protected environment and explicit approval. The shared crate component and unpublished products remain validation-only without publication authority; callers retain product safeguards. See [release policy](releasing.md) and [shared release validation](../.github/workflows/shared-release-validation.yml).
 
 ## API comparison purpose
 

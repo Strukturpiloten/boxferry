@@ -848,10 +848,27 @@ class SingleCloneLifecycleTests(unittest.TestCase):
                 "rust-toolchain.toml",
                 "automation/tool-artifacts.json",
                 "scripts/git-worktree.py",
+                "package.json",
+                "package-lock.json",
             ):
                 target = checkout / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
+            node_tools = fixture / "image-file-tools"
+            node_tools.mkdir()
+            for filename in ("package.json", "package-lock.json"):
+                (node_tools / filename).write_bytes((checkout / filename).read_bytes())
+            declared_node = json.loads((checkout / "package.json").read_text())["devDependencies"]
+            for name in ("prettier", "markdownlint-cli2"):
+                installed = node_tools / "node_modules" / name / "package.json"
+                installed.parent.mkdir(parents=True)
+                version = "0.0.0" if case == "wrong-" + name else declared_node[name]
+                installed.write_text(json.dumps({"name": name, "version": version}))
+            if case == "wrong-node-lock":
+                with (node_tools / "package-lock.json").open("a") as stream:
+                    stream.write("\n")
+            if case == "missing-node-manifest":
+                (node_tools / "package.json").unlink()
             shutil.copytree(
                 ROOT / "automation/src/boxferry_ci",
                 checkout / "automation/src/boxferry_ci",
@@ -1013,9 +1030,13 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             # predate the locked project while this test already runs under it.
             (binary / "python3").symlink_to(sys.executable)
             script = checkout / ".devcontainer/verify-tools.sh"
+            verification = (ROOT / ".devcontainer/verify-tools.sh").read_text()
+            self.assertEqual(verification.count('node_tools = Path("/opt/boxferry-file-tools")'), 1)
             script.write_text(
-                (ROOT / ".devcontainer/verify-tools.sh")
-                .read_text()
+                verification.replace(
+                    'node_tools = Path("/opt/boxferry-file-tools")',
+                    f"node_tools = Path({str(node_tools)!r})",
+                )
                 .replace('tooling_root="/opt/boxferry-tooling"', f'tooling_root="{tooling}"')
                 .replace(
                     'prefix = Path("/opt/boxferry-git")',
@@ -1071,9 +1092,16 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             marker = outside / "protected"
             marker.write_bytes(b"unrelated")
             configuration = outside / "global-git-config"
-            configuration.write_text(
-                "[core]\n hooksPath = /unavailable-user-hooks\n[commit]\n gpgSign = true\n"
+            hooks = outside / "hooks"
+            hooks.mkdir()
+            hook = hooks / "pre-commit"
+            hook.write_text(
+                f"#!{sys.executable}\nfrom pathlib import Path\n"
+                f"Path({str(outside / 'hook-ran')!r}).write_text('unexpected hook')\n"
+                "raise SystemExit(97)\n"
             )
+            hook.chmod(0o755)
+            configuration.write_text(f"[core]\n hooksPath = {hooks}\n[commit]\n gpgSign = true\n")
             from unittest.mock import patch
 
             with patch.dict(
@@ -1088,8 +1116,23 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(marker.read_bytes(), b"unrelated")
             self.assertEqual(
-                sorted(path.name for path in outside.iterdir()), ["global-git-config", "protected"]
+                sorted(path.name for path in outside.iterdir()),
+                ["global-git-config", "hooks", "protected"],
             )
+
+    def test_ambient_index_is_not_used_by_fixture_setup_and_runtime_refuses_it(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temporary:
+            outside = Path(temporary)
+            marker = outside / "protected"
+            marker.write_bytes(b"unrelated")
+            with patch.dict(os.environ, {"GIT_INDEX_FILE": str(outside / "ambient-index")}):
+                completed, _calls = self.exercise("valid")
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("unset GIT_INDEX_FILE", completed.stderr)
+            self.assertEqual(marker.read_bytes(), b"unrelated")
+            self.assertEqual(sorted(path.name for path in outside.iterdir()), ["protected"])
 
     def test_missing_or_misbound_own_checkout_fails(self) -> None:
         for case in ("missing-checkout", "wrong-root"):
@@ -1118,6 +1161,10 @@ class SingleCloneLifecycleTests(unittest.TestCase):
             "wrong-git-source",
             "wrong-git-license",
             "missing-git-helper",
+            "wrong-prettier",
+            "wrong-markdownlint-cli2",
+            "wrong-node-lock",
+            "missing-node-manifest",
         ):
             with self.subTest(case=case):
                 completed, _calls = self.exercise(case)

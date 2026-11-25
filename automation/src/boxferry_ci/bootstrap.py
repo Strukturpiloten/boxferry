@@ -10,6 +10,7 @@ fresh archive is extracted; candidate Git configuration and hooks are never load
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -771,10 +773,301 @@ def forwarded_arguments(arguments: list[str], repository_root: Path, policy: str
     return result
 
 
+NODE_FILES = ("package.json", "package-lock.json", "scripts/run-node-tool.sh")
+NODE_BYTES = 2 * 1024 * 1024
+NODE_IMAGE_ENTRY = "boxferry-node-tools.py"
+
+
+def node_sources(objects: Path, revision: str) -> dict[str, bytes]:
+    """Read exactly three bounded regular blobs from the verified selected commit."""
+    data = run_git(objects, "archive", "--format=tar", revision, *NODE_FILES, binary=True)
+    if not isinstance(data, bytes) or len(data) > 3 * NODE_BYTES:
+        raise BootstrapError("Node source archive exceeds its byte budget")
+    result: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        members = archive.getmembers()
+        if len(members) > 4:
+            raise BootstrapError("Node source archive exceeds its member budget")
+        directories: set[str] = set()
+        for member in members:
+            if member.name in {"scripts", "scripts/"} and member.isdir():
+                if directories:
+                    raise BootstrapError("duplicate Node source directory")
+                directories.add(member.name)
+                continue
+            if (
+                member.name not in NODE_FILES
+                or member.name in result
+                or not member.isfile()
+                or member.size > NODE_BYTES
+            ):
+                raise BootstrapError("Node source archive has unsafe or duplicate members")
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise BootstrapError("Node source archive has missing data")
+            with stream:
+                result[member.name] = stream.read(NODE_BYTES + 1)
+    if set(result) != set(NODE_FILES):
+        raise BootstrapError("selected automation revision lacks the three Node source files")
+    return result
+
+
+def node_inventory(root: Path) -> str:
+    """Detect changed or partial installed graphs before executing installed code."""
+    digest = hashlib.sha256()
+    total = 0
+    paths = []
+    for path in root.rglob("*"):
+        paths.append(path)
+        if len(paths) > 20000:
+            raise BootstrapError("Node installation exceeds its file budget")
+    for path in sorted(paths):
+        relative = path.relative_to(root).as_posix()
+        if relative == ".boxferry-node.json":
+            continue
+        digest.update(relative.encode() + b"\0")
+        if path.is_symlink():
+            # npm's .bin links are allowed only inside this complete installation.
+            if not path.resolve(strict=True).is_relative_to(root.resolve()):
+                raise BootstrapError("Node installation link escapes its root")
+            digest.update(b"link\0" + os.readlink(path).encode())
+        elif path.is_dir():
+            digest.update(b"directory\0")
+        elif path.is_file():
+            total += path.stat().st_size
+            if total > MAX_CACHE_BYTES:
+                raise BootstrapError("Node installation exceeds its byte budget")
+            digest.update(str(path.stat().st_mode & 0o777).encode() + b"\0")
+            with path.open("rb") as source:
+                for block in iter(lambda: source.read(65536), b""):
+                    digest.update(block)
+        else:
+            raise BootstrapError("Node installation contains a nonregular member")
+    return digest.hexdigest()
+
+
+def require_node_integrity(sources: dict[str, bytes]) -> None:
+    """Require registry integrity for every asset; npm verifies the actual content."""
+    try:
+        lock = json.loads(sources["package-lock.json"])
+        packages = lock.get("packages") if isinstance(lock, dict) else None
+        if not isinstance(packages, dict) or "" not in packages or lock["lockfileVersion"] != 3:
+            raise BootstrapError("Node tools require a complete npm v3 integrity lock")
+        for name, record in packages.items():
+            if name == "":
+                continue
+            if (
+                not isinstance(record, dict)
+                or not isinstance(record.get("integrity"), str)
+                or not record["integrity"].startswith("sha512-")
+                or not isinstance(record.get("resolved"), str)
+                or not record["resolved"].startswith("https://registry.npmjs.org/")
+                or record.get("link")
+            ):
+                raise BootstrapError("Node tool assets require locked registry SHA512 integrity")
+    except (KeyError, ValueError, RecursionError) as error:
+        raise BootstrapError(f"invalid Node tool integrity lock: {error}") from error
+
+
+def run_node_tool(repository_root: Path, arguments: list[str]) -> int:
+    """Acquire the manifest-selected npm graph; preserve explicit caller cwd and argv."""
+    parser = argparse.ArgumentParser(description=run_node_tool.__doc__)
+    parser.add_argument("--cwd", required=True, type=Path)
+    parser.add_argument("--installation-root", type=Path)
+    parser.add_argument("--read-only", action="store_true")
+    parser.add_argument("--install-only", action="store_true")
+    parser.add_argument("tool", choices=("prettier", "markdownlint-cli2"), nargs="?")
+    parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    options = parser.parse_args(arguments)
+    if options.install_only and (options.read_only or options.tool is not None):
+        parser.error("--install-only accepts no tool or --read-only")
+    if not options.install_only and options.tool is None:
+        parser.error("a tool is required unless --install-only is selected")
+    revision = load_config(repository_root)["revision"]
+    objects = prepare_object_cache(repository_root, revision)
+    sources = node_sources(objects, revision)
+    require_node_integrity(sources)
+    parent = repository_root / "target/boxferry-node-tools"
+    if parent.is_symlink():
+        raise BootstrapError("Node cache must not follow symlinks")
+    parent.mkdir(exist_ok=True)
+    installation = options.installation_root or parent / revision
+    installation = installation.absolute()
+    for path in (installation, *installation.parents):
+        if path.is_symlink():
+            raise BootstrapError("Node installation path must not follow symlinks")
+    if options.read_only or (options.installation_root is not None and not options.install_only):
+        verify_node_custody(installation)
+        verify_node_installation(installation, revision, sources)
+        return subprocess.call(
+            [
+                "bash",
+                str(installation / NODE_FILES[2]),
+                str(installation),
+                options.tool,
+                *options.arguments,
+            ],
+            cwd=options.cwd,
+        )
+    installation.parent.mkdir(parents=True, exist_ok=True)
+    lock = installation.with_name(installation.name + ".lock")
+    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        marker = installation / ".boxferry-node.json"
+        if (
+            installation.exists()
+            and any(installation.iterdir())
+            and (marker.is_symlink() or not marker.is_file())
+        ):
+            raise BootstrapError("refusing to replace a nonempty unowned Node installation root")
+        # A writable receipt cannot authenticate the executable bytes beside it.
+        # Reify from npm's integrity-checked artifact cache on every managed call.
+        # prefer-offline avoids revalidation requests when the locked assets exist.
+        with tempfile.TemporaryDirectory(prefix="node-", dir=installation.parent) as temporary:
+            stage = Path(temporary) / "project"
+            stage.mkdir()
+            for name, data in sources.items():
+                target = stage / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            # run_project authenticated this standard-library implementation before
+            # dispatch. Retain it for offline images without a consumer cache.
+            (stage / NODE_IMAGE_ENTRY).write_bytes(Path(__file__).read_bytes())
+            subprocess.run(
+                [
+                    "npm",
+                    "ci",
+                    "--ignore-scripts",
+                    "--include=dev",
+                    "--no-audit",
+                    "--no-fund",
+                    "--prefer-offline",
+                    "--prefix",
+                    str(stage),
+                ],
+                cwd=stage,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+                check=True,
+            )
+            for tool in ("prettier", "markdownlint-cli2"):
+                subprocess.run(
+                    ["bash", str(stage / NODE_FILES[2]), str(stage), tool, "--version"],
+                    cwd=stage,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    check=True,
+                )
+            (stage / ".boxferry-node.json").write_text(
+                json.dumps(
+                    {"revision": revision, "inventory": node_inventory(stage)}, sort_keys=True
+                )
+                + "\n"
+            )
+            if installation.exists():
+                shutil.rmtree(installation)
+            stage.rename(installation)
+        if options.install_only:
+            return 0
+        return subprocess.call(
+            [
+                "bash",
+                str(installation / NODE_FILES[2]),
+                str(installation),
+                options.tool,
+                *options.arguments,
+            ],
+            cwd=options.cwd,
+        )
+
+
+def verify_node_custody(root: Path) -> None:
+    """Require root-issued image bytes the executing user cannot rewrite or replace."""
+    message = (
+        "read-only Node tools require a root-owned installation and protected ancestors; "
+        "use managed node-tool execution for writable tools or rebuild the image"
+    )
+    paths = [root]
+    if any(path.is_symlink() for path in (root, *root.parents)):
+        raise BootstrapError(message)
+    for path in root.rglob("*"):
+        paths.append(path)
+        if len(paths) > 20001:
+            raise BootstrapError("Node installation exceeds its file budget")
+    for path in paths:
+        if not path.is_symlink() and (
+            path.stat().st_uid != 0 or os.access(path, os.W_OK, effective_ids=True)
+        ):
+            raise BootstrapError(message)
+    child = root
+    for parent in root.parents:
+        metadata = parent.stat()
+        # A root-owned child in a sticky temporary directory cannot be replaced
+        # by the non-root caller, despite that parent's shared write permission.
+        sticky = metadata.st_mode & stat.S_ISVTX and child.stat().st_uid == 0 and os.geteuid() != 0
+        if metadata.st_uid != 0 or (os.access(parent, os.W_OK, effective_ids=True) and not sticky):
+            raise BootstrapError(message)
+        child = parent
+
+
+def verify_node_installation(root: Path, revision: str, sources: dict[str, bytes]) -> None:
+    """Check selected source and inventory after independent image custody admission."""
+    marker = root / ".boxferry-node.json"
+    if marker.is_symlink() or marker.stat().st_size > 8192:
+        raise BootstrapError("invalid Node installation marker")
+    receipt = json.loads(marker.read_text())
+    if receipt != {"revision": revision, "inventory": node_inventory(root)} or any(
+        (root / name).is_symlink() or (root / name).read_bytes() != data
+        for name, data in sources.items()
+    ):
+        raise BootstrapError("Node installation differs from selected revision; reinstall it")
+
+
+def image_node_tool(arguments: list[str]) -> int:
+    """Execute protected preinstalled tools with no checkout writes or network access."""
+    parser = argparse.ArgumentParser(description=image_node_tool.__doc__)
+    parser.add_argument("--repository-root", required=True, type=Path)
+    parser.add_argument("--cwd", required=True, type=Path)
+    parser.add_argument("tool", choices=("prettier", "markdownlint-cli2"))
+    parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    options = parser.parse_args(arguments)
+    try:
+        installation = Path(__file__).absolute().parent
+        verify_node_custody(installation)
+        revision = load_config(options.repository_root)["revision"]
+        # These source files and the receipt were issued together by install-only.
+        # Their authority here is protected image custody, never a writable digest.
+        sources = {}
+        for name in NODE_FILES:
+            path = installation / name
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > NODE_BYTES:
+                raise BootstrapError("image Node source must be bounded regular files")
+            sources[name] = path.read_bytes()
+        require_node_integrity(sources)
+        verify_node_installation(installation, revision, sources)
+        return subprocess.call(
+            [
+                "bash",
+                str(installation / NODE_FILES[2]),
+                str(installation),
+                options.tool,
+                *options.arguments,
+            ],
+            cwd=options.cwd,
+        )
+    except (BootstrapError, OSError, ValueError) as error:
+        print(f"Shared image Node tools failed: {error}", file=sys.stderr)
+        return 2
+
+
 def run_project(repository_root: Path, project: Path, arguments: list[str]) -> int:
     """Run the selected project with its own verified uv and locked CLI."""
     try:
         config = load_config(repository_root)
+        if arguments and arguments[0] == "node-tool":
+            automation_identity(repository_root, config["revision"])
+            return run_node_tool(repository_root, arguments[1:])
         arguments = forwarded_arguments(arguments, repository_root, config["policy"])
         executable = ensure_uv(project, repository_root / "target/boxferry-automation/tools")
         command = [
@@ -794,6 +1087,9 @@ def run_project(repository_root: Path, project: Path, arguments: list[str]) -> i
         environment.pop("PYTHONPATH", None)
         environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
         return subprocess.call(command, env=environment)
+    except subprocess.CalledProcessError as error:
+        print(f"Shared Node setup failed: {error}", file=sys.stderr)
+        return error.returncode
     except (BootstrapError, OSError) as error:
         print(f"Shared CI bootstrap failed: {error}", file=sys.stderr)
         return 2
@@ -851,6 +1147,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if arguments and arguments[0] == "run-candidate":
         return run_candidate(arguments[1:])
+    if arguments and arguments[0] == "image-node-tool":
+        return image_node_tool(arguments[1:])
     if arguments and arguments[0] == "install-uv":
         return install_uv_cli(arguments[1:])
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
