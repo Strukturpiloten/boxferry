@@ -85,6 +85,12 @@ frontloader export replacement through formatter dispatch, and a separate instal
 each installation. Retain the refreshed `scripts/shared-ci.py` template when adopting this
 interface: older frontloaders do not serialize concurrent export reconstruction.
 Other shared tasks release the dispatch lock at handoff so nested formatter calls can run.
+Their managed Python environment lives at `target/shared-python/<revision>`, outside the
+replaceable verified export. The consumer-local revision key keeps distinct projects and
+producer revisions separate. Task commands retain the selected Python on PATH, while the
+shared `UV_PROJECT_ENVIRONMENT` override is removed before executing consumer commands so
+an independent `uv sync --locked` uses that consumer's project. Explicit development
+implementation checkouts retain their existing uv environment selection.
 This is a one-time consumer template refresh alongside initial adoption: a revision change
 alone cannot serialize an old frontloader before it loads shared code. Old thin entries
 retain sequential compatibility. Subsequent producer upgrades use only the existing grouped
@@ -149,3 +155,9 @@ marker carry no Renovate version declarations. Existing approvals and image qual
 holds remain. Consumers must remove only their migrated formatter declarations and keep
 unrelated application graphs. Actual cold/warm local, hosted, native amd64/arm64 and subsequent
 grouped revision-upgrade evidence is required under #723 before claiming consumer adoption.
+
+The opt-in `BOXFERRY_NODE_INTEGRATION=1` tests in `automation/tests/test_node_acquisition.py`
+exercise real locked formatters through the canonical thin launcher, including nested tasks,
+parent imports, independent consumer sync, cold/warm reuse and failure status. They require
+cached npm/uv artifacts and run offline after acquiring the canonical uv executable; they
+are focused regression evidence, separate from consumer rollout and complete gates.

@@ -169,6 +169,13 @@ bytes cannot authorize execution. Setup messages use stderr, leaving stdout and 
 selected tool. The caller explicitly selects cwd, configuration and file arguments. A
 root-owned image root protected from the runtime user supports verification without installation
 writes; user-owned or otherwise writable explicit roots refuse this custody contract.
+Managed interface-1 Python environments live outside the replaceable source export at
+the consumer-local `target/shared-python/<revision>`. Nested formatter calls can therefore
+reconstruct verified source without removing the running parent interpreter. Consumer task
+commands drop the shared uv project-environment override before execution, preserving
+independent consumer project sync and ordinary Python tool discovery. Explicit development
+implementation checkouts retain their local uv selection. Existing source verification,
+dispatch locks, dependency pins and updater ownership remain authoritative.
 The installer retains its verified standard-library bootstrap as the public image entry point;
 that entry binds the caller manifest and installed receipt without network, Git, cache, lock
 creation or checkout writes, preserving read-only native image mounts and rootfs.

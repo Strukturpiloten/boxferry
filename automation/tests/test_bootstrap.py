@@ -804,6 +804,36 @@ class BootstrapTests(unittest.TestCase):
             ],
         )
 
+    def test_managed_python_survives_exports_and_rejects_symlink_roots(self) -> None:
+        project = (
+            self.root / "target/boxferry-automation" / str(self.config["revision"]) / "automation"
+        )
+        with (
+            patch.dict(os.environ, {"UV_PROJECT_ENVIRONMENT": "/foreign/environment"}),
+            patch.object(bootstrap, "ensure_uv", return_value=Path("/selected/uv")),
+            patch.object(bootstrap.subprocess, "call", return_value=0) as call,
+        ):
+            self.assertEqual(bootstrap.run_project(self.root, project, ["plan"]), 0)
+            expected = self.root / "target/shared-python" / str(self.config["revision"])
+            self.assertEqual(call.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"], str(expected))
+            self.assertEqual(os.environ["UV_PROJECT_ENVIRONMENT"], "/foreign/environment")
+            expected.rmdir()
+            expected.symlink_to(self.root, target_is_directory=True)
+            call.reset_mock()
+            self.assertEqual(bootstrap.run_project(self.root, project, ["plan"]), 2)
+            call.assert_not_called()
+
+    def test_development_project_preserves_explicit_uv_environment(self) -> None:
+        with (
+            patch.dict(os.environ, {"UV_PROJECT_ENVIRONMENT": "/local/environment"}),
+            patch.object(bootstrap, "ensure_uv", return_value=Path("/selected/uv")),
+            patch.object(bootstrap.subprocess, "call", return_value=0) as call,
+        ):
+            self.assertEqual(bootstrap.run_project(self.root, self.root / "project", ["plan"]), 0)
+        self.assertEqual(
+            call.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"], "/local/environment"
+        )
+
     def test_non_policy_commands_preserve_explicit_arguments(self) -> None:
         for arguments in (
             [],

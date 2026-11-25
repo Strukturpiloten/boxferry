@@ -469,6 +469,120 @@ class NodeAcquisitionTests(unittest.TestCase):
         self.assertIn(b"ENOTCACHED", unavailable.stderr)
         self.assertEqual(marker.read_bytes(), retained)
 
+    @unittest.skipUnless(
+        os.environ.get("BOXFERRY_NODE_INTEGRATION") == "1",
+        "opt-in nested public regression requires cached producer assets",
+    )
+    def test_real_nested_tasks_keep_parent_and_independent_consumer_project(self) -> None:
+        source = Path(__file__).resolve().parents[2]
+        producer = self.root / "fixture"
+        shutil.rmtree(producer / "automation")
+        shutil.copytree(source / "automation/src", producer / "automation/src")
+        for name in ("pyproject.toml", "uv.lock", "uv-artifacts.json"):
+            shutil.copyfile(source / "automation" / name, producer / "automation" / name)
+        for relative in bootstrap.NODE_FILES:
+            shutil.copyfile(source / relative, producer / relative)
+        self.admit()
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        shutil.copyfile(source / "templates/shared-ci.py", scripts / "shared-ci.py")
+        # A separate dependency-free consumer project must never sync the parent
+        # shared environment, even though it inherits that environment's Python.
+        (self.root / "pyproject.toml").write_text(
+            '[project]\nname="nested-consumer"\nversion="0.1.0"\nrequires-python=">=3.13"\n'
+        )
+        uv = bootstrap.ensure_uv(producer / "automation", self.root / "uv-tools")
+        environment = os.environ.copy()
+        for name in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV", "PYTHONPATH"):
+            environment.pop(name, None)
+        environment.update(npm_config_offline="true", UV_OFFLINE="1")
+        subprocess.run([str(uv), "lock", "--offline"], cwd=self.root, env=environment, check=True)
+        (self.root / ".prettierrc.json").write_text('{"tabWidth":4}')
+        (self.root / ".markdownlint.json").write_text('{"default":true,"MD013":false}')
+        (self.root / ".gitignore").write_text("target/\n.venv/\nfixture/\nuv-tools/\n")
+        (self.root / "README.md").write_text("# Nested task\n")
+        (self.root / "probe.sh").write_text(
+            "set -euo pipefail\n"
+            "parent_python=$(command -v python3)\n"
+            "python3 -c 'import boxferry_ci.runner'\n"
+            'test -z "${UV_PROJECT_ENVIRONMENT:-}"\n'
+            'python3 scripts/shared-ci.py node-tool --cwd "$PWD" prettier '
+            "--config .prettierrc.json --check README.md\n"
+            'test -x "$parent_python"\n'
+            'python3 scripts/shared-ci.py node-tool --cwd "$PWD" markdownlint-cli2 '
+            "--config .markdownlint.json README.md\n"
+            # Both nested public entries contend for export custody while their
+            # enclosing task still uses the shared Python environment.
+            'python3 scripts/shared-ci.py node-tool --cwd "$PWD" prettier '
+            "--config .prettierrc.json --check README.md &\n"
+            "formatter_pid=$!\n"
+            'python3 scripts/shared-ci.py node-tool --cwd "$PWD" markdownlint-cli2 '
+            "--config .markdownlint.json README.md\n"
+            'wait "$formatter_pid"\n'
+            "python3 -c 'import boxferry_ci.policy, boxferry_ci.runner'\n"
+            "uv sync --locked --offline\n"
+            'test -x "$PWD/.venv/bin/python3"\n'
+            "uv run --frozen --offline python -c 'import importlib.util; "
+            'assert importlib.util.find_spec("boxferry_ci") is None\'\n'
+            '"$parent_python" -c \'import boxferry_ci.runner; print("parent-import-ok")\'\n'
+            "exit ${PROBE_EXIT:-0}\n"
+        )
+        policy = {
+            "schema": 2,
+            "repository": "Strukturpiloten/example",
+            "jobs": ["quality"],
+            "profile_jobs": {"maintenance": ["quality"]},
+            "public_documentation_root": "docs/",
+            "full_documentation_roots": [],
+            "executable_documentation_roots": [],
+            "executable_documentation_paths": [],
+            "documentation_examples_manifest": None,
+            "path_profiles": {"maintenance": ["README.md"]},
+            "local_commands": {"maintenance": [["bash", "probe.sh"]], "full": [["true"]]},
+            "tasks": {"quality": {"commands": [["bash", "probe.sh"]], "timeout_seconds": 120}},
+        }
+        (scripts / "validation-policy.json").write_text(json.dumps(policy))
+        command = [
+            "python3",
+            "scripts/shared-ci.py",
+            "run",
+            "--task",
+            "quality",
+            "--report-json",
+            "report.json",
+        ]
+        for expected in (0, 0, 1):
+            result = subprocess.run(
+                command,
+                cwd=self.root,
+                env=environment | {"PROBE_EXIT": "37" if expected else "0"},
+                capture_output=True,
+                text=True,
+                timeout=150,
+            )
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+            self.assertIn("parent-import-ok", result.stdout)
+            self.assertIn("Linting: 1 file", result.stdout)
+            report = json.loads((self.root / "report.json").read_text())
+            self.assertEqual(report["results"][0]["returncode"], 37 if expected else 0)
+        # Actual formatter failure propagates through the public task report.
+        (self.root / "README.md").write_text("# Unformatted\n\ntext   \n")
+        result = subprocess.run(
+            command, cwd=self.root, env=environment, capture_output=True, text=True, timeout=150
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["returncode"], 1)
+        self.assertNotIn("parent-import-ok", result.stdout)
+        # A Prettier-clean document still fails the independent Markdown rules.
+        (self.root / "README.md").write_text("# First\n\n# Second\n")
+        result = subprocess.run(
+            command, cwd=self.root, env=environment, capture_output=True, text=True, timeout=150
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("MD025", result.stdout + result.stderr)
+        self.assertNotIn("parent-import-ok", result.stdout)
+
     def test_image_source_is_explicit_and_bound_without_duplicate_ownership(self) -> None:
         producer = self.root / "fixture"
         write_markdownlint_metadata(producer)

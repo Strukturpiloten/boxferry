@@ -288,10 +288,17 @@ def _execute(args: argparse.Namespace, calls: tuple[tuple[str, ...], ...], timeo
         if resolved == root or not resolved.is_relative_to(root):
             raise ContractError("CARGO_TARGET_DIR must stay inside the current candidate worktree")
     results: list[RunResult] = []
+    # This override belongs to the shared uv invocation. Consumer commands may
+    # sync an independent project; retain PATH/VIRTUAL_ENV for ordinary Python.
+    environment = os.environ.copy()
+    shared_environment = environment.get("UV_PROJECT_ENVIRONMENT")
+    if shared_environment and Path(shared_environment).parent == root / "target/shared-python":
+        environment.pop("UV_PROJECT_ENVIRONMENT")
     for index, call in enumerate(calls):
         result = run(
             call,
             cwd=args.repository_root.resolve(),
+            environment=environment,
             stage=f"{getattr(args, 'task', 'local')}:{index + 1}",
             timeout_seconds=timeout,
             affected_input=args.tested_sha or "local checkout",

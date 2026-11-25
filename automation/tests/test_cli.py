@@ -87,6 +87,44 @@ class Cli(unittest.TestCase):
         self.assertEqual(diagnostic["evidence_link"], str(report))
         self.assertIn("stage:", summary.read_text())
 
+    def test_task_environment_clears_only_managed_shared_override(self) -> None:
+        for selected, expected in (
+            (str(self.root / "target/shared-python" / ("a" * 40)), None),
+            (str(self.root / "developer-environment"), str(self.root / "developer-environment")),
+        ):
+            with self.subTest(selected=selected):
+                output = self.root / "environment.json"
+                policy = json.loads(self.config.read_text())
+                policy["tasks"]["quality"]["commands"] = [
+                    [
+                        sys.executable,
+                        "-c",
+                        "import json, os, pathlib; pathlib.Path('environment.json').write_text("
+                        "json.dumps({k: os.environ.get(k) for k in "
+                        "('UV_PROJECT_ENVIRONMENT', 'VIRTUAL_ENV', 'PATH')}))",
+                    ]
+                ]
+                self.config.write_text(json.dumps(policy))
+                original_path = os.environ.get("PATH", "")
+                with patch.dict(
+                    os.environ,
+                    {
+                        "UV_PROJECT_ENVIRONMENT": selected,
+                        "VIRTUAL_ENV": "/live/parent",
+                        "PATH": original_path,
+                    },
+                ):
+                    self.assertEqual(main(self.arguments("run", "--task", "quality")), 0)
+                    self.assertEqual(os.environ["UV_PROJECT_ENVIRONMENT"], selected)
+                self.assertEqual(
+                    json.loads(output.read_text()),
+                    {
+                        "UV_PROJECT_ENVIRONMENT": expected,
+                        "VIRTUAL_ENV": "/live/parent",
+                        "PATH": original_path,
+                    },
+                )
+
     def test_unknown_task_fails_with_report_and_never_runs_shell(self) -> None:
         report = self.root / "report.json"
         with contextlib.redirect_stderr(io.StringIO()):
