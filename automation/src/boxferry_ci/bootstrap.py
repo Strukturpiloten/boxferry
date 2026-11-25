@@ -1085,6 +1085,14 @@ def run_project(repository_root: Path, project: Path, arguments: list[str]) -> i
         ]
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
+        # Verified exports are reconstructed on every public entry, including
+        # nested node-tool calls. Keep their live interpreter outside that tree.
+        # Explicit development checkouts retain uv's existing local overrides.
+        selected = repository_root / "target/boxferry-automation" / config["revision"]
+        if project.absolute() == selected.absolute() / "automation":
+            environment["UV_PROJECT_ENVIRONMENT"] = str(
+                safe_cache_directory(repository_root / "target/shared-python" / config["revision"])
+            )
         environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
         return subprocess.call(command, env=environment)
     except subprocess.CalledProcessError as error:
