@@ -544,7 +544,8 @@ class ValidationPlanTests(unittest.TestCase):
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn(
-            "run: uv run --locked --project automation bash scripts/test-application-probes.sh",
+            "run: python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- "
+            "bash scripts/test-application-probes.sh",
             workflow,
         )
         self.assertIn(

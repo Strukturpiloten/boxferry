@@ -131,6 +131,29 @@ own authority. BoxFerry [#704](https://github.com/Strukturpiloten/boxferry/issue
 tracks producer admission. PodmanLens [#185](https://github.com/Strukturpiloten/podman-lens/issues/185)
 owns caller adoption and actual native execution.
 
+### Candidate application test prerequisites (2026-11-25)
+
+BoxFerry application probe contracts and Rust Paperless assertion subprocesses
+enter the candidate's own locked `automation` project through the canonical
+bootstrap's explicit `run-candidate -- <command>` boundary. Linux selects the
+candidate's exact uv requirement and verifies its official archive against the
+candidate's matching architecture integrity record, including warm-cache reuse;
+an ambient shared uv cannot authorize this selection. The command retains its
+caller's working directory, fixture arguments and exit status. Child Python
+imports and the project environment are isolated from the shared runner, and
+child tool discovery receives the selected uv directory.
+
+The inventory currently supports Linux x86_64 and aarch64. macOS retains exact
+preinstalled uv execution for developer application assertions; its executable
+has version verification only, with no reviewed macOS archive integrity record.
+Other bootstrap hosts remain unsupported. This does not change client platform
+support or add a download authority. Trusted orchestration continues to enter its
+approved immutable shared project through the existing interface-1 launcher.
+
+No version, integrity record, extraction path, Renovate owner, grouping or approval
+changes in this fix. Existing project and per-architecture artifact managers own
+the separate Renovate upgrade; Dev Container shared-source selection remains intact.
+
 ## Consequences
 
 Common fixes and version upgrades have one reviewed source. Consumers still need

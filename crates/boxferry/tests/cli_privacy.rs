@@ -45,11 +45,10 @@ impl Drop for Scratch {
 // Shared CI has its own tooling environment; application assertions need this
 // candidate's locked test prerequisites without host Python import paths.
 fn application_assertion_bash(repository: &Path) -> Command {
-    let mut command = Command::new("uv");
+    let mut command = Command::new("python3");
     command
-        .args(["run", "--locked", "--project"])
-        .arg(repository.join("automation"))
-        .arg("bash")
+        .arg(repository.join("automation/src/boxferry_ci/bootstrap.py"))
+        .args(["run-candidate", "--", "bash"])
         .env_remove("VIRTUAL_ENV")
         .env_remove("UV_PROJECT_ENVIRONMENT")
         .env_remove("PYTHONHOME")

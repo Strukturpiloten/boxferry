@@ -340,7 +340,7 @@ jobs:
       - name: Test release emulator extraction
         run: bash scripts/test-release-emulator.sh
       - name: Test application probe contracts
-        run: uv run --locked --project automation bash scripts/test-application-probes.sh
+        run: python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- bash scripts/test-application-probes.sh
       - name: Test executable documentation without duplicating the full Rust suite
         if: contains(fromJSON(needs.validation-plan.outputs.plan).profiles, 'executable-docs')
         run: cargo test --locked --package boxferry --all-features --test documentation_examples

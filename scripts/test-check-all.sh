@@ -170,11 +170,14 @@ done
 for mode in default check; do
   for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
     command="uv run --locked --project automation bash scripts/${script}"
+    if [[ "${script}" == test-application-probes.sh ]]; then
+      command="python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- bash scripts/${script}"
+    fi
     assert_contains "${mode}" "${command}"
     [[ "$(grep --fixed-strings --line-regexp --count -- "${command}" "${test_root}/${mode}.commands")" == 1 ]]
   done
 done
-# Fail the targeted UV invocation after earlier UV steps have succeeded.
+# Fail each targeted candidate invocation after earlier tooling steps succeed.
 for mode in default check; do
   for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
     case "${script}" in
@@ -184,12 +187,15 @@ for mode in default check; do
     esac
     label="application-env-${mode}-${expected_step}"
     command="uv run --locked --project automation bash scripts/${script}"
+    if [[ "${script}" == test-application-probes.sh ]]; then
+      command="python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- bash scripts/${script}"
+    fi
     status=0
     if [[ "${mode}" == default ]]; then
-      CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation bash scripts/${script}" \
+      CHECK_ALL_TEST_FAIL_COMMAND="${command}" \
         run_gate "${label}" || status=$?
     else
-      CHECK_ALL_TEST_FAIL_ARGUMENT="run --locked --project automation bash scripts/${script}" \
+      CHECK_ALL_TEST_FAIL_COMMAND="${command}" \
         run_gate "${label}" --check || status=$?
     fi
     [[ "${status}" == 17 ]]
