@@ -32,6 +32,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.message import Message
+from http.client import HTTPException
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 from urllib.error import HTTPError, URLError
@@ -403,7 +404,7 @@ class GitHub:
             raise EligibilityError(
                 f"GitHub metadata request failed with HTTP {error.code}"
             ) from None
-        except OSError as error:
+        except (OSError, HTTPException) as error:
             raise EligibilityError(
                 f"GitHub metadata transport failed: {type(error).__name__}"
             ) from None
@@ -413,8 +414,8 @@ class GitHub:
             return None
         try:
             return json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise EligibilityError("GitHub metadata response is not valid JSON") from error
+        except (ValueError, RecursionError):
+            raise EligibilityError("GitHub metadata response is not valid JSON") from None
 
     def get(self, suffix: str) -> dict[str, Any]:
         value = self.request("GET", f"/repos/{self.repository}" + (f"/{suffix}" if suffix else ""))
@@ -449,7 +450,12 @@ class GitHub:
                     f"trusted artifact download failed with HTTP {error.code}"
                 ) from None
             location = error.headers.get("Location", "")
-            parsed = urlparse(location)
+            try:
+                parsed = urlparse(location)
+            except ValueError:
+                raise EligibilityError(
+                    "trusted artifact redirect is not a safe HTTPS URL"
+                ) from None
             if (
                 parsed.scheme != "https"
                 or not parsed.hostname
@@ -463,10 +469,10 @@ class GitHub:
                 # Deliberately a fresh request: no Authorization header crosses origins.
                 with urlopen(Request(location), timeout=20) as response:
                     raw = response.read(MAX_STATE_BYTES + 65537)
-            except OSError as nested:
-                raise EligibilityError("trusted artifact download transport failed") from nested
-        except OSError as error:
-            raise EligibilityError("trusted artifact download transport failed") from error
+            except (OSError, HTTPException):
+                raise EligibilityError("trusted artifact download transport failed") from None
+        except (OSError, HTTPException):
+            raise EligibilityError("trusted artifact download transport failed") from None
         if len(raw) > MAX_STATE_BYTES + 65536:
             raise EligibilityError("trusted artifact archive exceeds its size budget")
         return raw
@@ -1719,6 +1725,22 @@ def rerun_ready(
                     return
         if not failed_age:
             return
+        if candidate.scope == "pull_request":
+            from .recovery import RecoveryRefused, candidate_hint, hint_artifact
+
+            # The run's PR association names the source head, not the synthetic
+            # commit tested by its waiter. A hint can veto, but cannot authorize.
+            try:
+                artifact = hint_artifact(api, run)
+                if artifact is not None:
+                    hint = candidate_hint(api, run, candidate, artifact=artifact)
+                    if (
+                        hint["candidate_sha"] != candidate.head
+                        or hint["base_sha"] != candidate.base
+                    ):
+                        return
+            except (EligibilityError, RecoveryRefused):
+                return
         if not still_current(api, candidate, default_branch):
             return
         # Reserve the normal path's original run before a possibly ambiguous POST.

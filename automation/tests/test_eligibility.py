@@ -12,10 +12,12 @@ import zipfile
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
+from email.message import Message
+from http.client import IncompleteRead
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
-from urllib.error import URLError
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 from test_source_slot_parity import FIXTURES as SOURCE_SLOT_FIXTURES
 from test_source_slot_parity import legacy_transform, replace_slots
@@ -177,6 +179,7 @@ jobs:
 def ci_run(run_id: int = 50) -> dict[str, Any]:
     return {
         "id": run_id,
+        "run_attempt": 1,
         "event": "pull_request",
         "name": "CI",
         "path": ".github/workflows/ci.yml",
@@ -248,6 +251,10 @@ class EligibilityTests(unittest.TestCase):
                 {"name": "Required CI", "status": "completed", "conclusion": "failure"},
                 {"name": "Rust quality", "status": "completed", "conclusion": "success"},
             ],
+        }
+        self.api.responses["actions/runs/50/artifacts?per_page=100"] = {
+            "total_count": 0,
+            "artifacts": [],
         }
 
     def bind_merge(
@@ -1298,6 +1305,280 @@ class EligibilityTests(unittest.TestCase):
         self.contents(".github/workflows/ci.yml", HEAD, b"permissions: write-all\n")
         subject.rerun_ready(self.api, self.candidate, {}, "main")
         self.assertEqual(self.api.posted, [])
+
+    def install_rerun_hint(self, **overrides: object) -> dict[str, Any]:
+        self.api.responses[f"actions/workflows/ci.yml/runs?head_sha={SOURCE}&per_page=20"] = {
+            "workflow_runs": [ci_run()],
+        }
+        for ref in ("main", HEAD):
+            self.contents(".github/workflows/ci.yml", ref, b"permissions: read-all\n")
+        hint = {
+            "schema": 1,
+            "repository": REPOSITORY,
+            "run_id": 50,
+            "run_attempt": 1,
+            "pull_request": 17,
+            "source_head_sha": SOURCE,
+            "candidate_sha": HEAD,
+            "base_sha": BASE,
+            **overrides,
+        }
+        raw = zip_state(hint, recovery.HINT_FILE)
+        self.api.archives[100] = raw
+        listing = {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "id": 100,
+                    "name": "dependency-candidate-hint-50-1",
+                    "expired": False,
+                    "size_in_bytes": len(raw),
+                },
+            ],
+        }
+        self.api.responses["actions/runs/50/artifacts?per_page=100"] = listing
+        return listing
+
+    def test_ordinary_retry_rejects_conflicting_sha_even_for_same_parents_and_tree(self) -> None:
+        other_merge = "7" * 40
+        for sha in (HEAD, other_merge):
+            self.api.responses[f"git/commits/{sha}"] = {
+                "sha": sha,
+                "tree": {"sha": TREE},
+                "parents": [{"sha": BASE}, {"sha": SOURCE}],
+            }
+        ledger: dict[str, int] = {}
+        for bindings in ({"candidate_sha": other_merge}, {"base_sha": "8" * 40}):
+            with self.subTest(bindings=bindings):
+                self.install_rerun_hint(**bindings)
+                subject.rerun_ready(self.api, self.candidate, ledger, "main")
+                self.assertEqual(ledger, {})
+                self.assertEqual(self.api.posted, [])
+
+    def test_matching_hint_still_requires_a_current_candidate_and_keeps_retry_budget(self) -> None:
+        self.install_rerun_hint()
+        ledger: dict[str, int] = {}
+        with patch.object(self.api, "artifact", wraps=self.api.artifact) as download:
+            self.api.responses["pulls/17"] = pr_metadata(merge="7" * 40)
+            subject.rerun_ready(self.api, self.candidate, ledger, "main")
+            download.assert_called_once_with(100)
+        self.assertEqual(ledger, {})
+        self.assertEqual(self.api.posted, [])
+
+        self.api.responses["pulls/17"] = pr_metadata()
+        subject.rerun_ready(self.api, self.candidate, ledger, "main")
+        subject.rerun_ready(self.api, self.candidate, ledger, "main")
+        self.assertEqual(ledger, {HEAD: 50})
+        self.assertEqual(self.api.posted, [("actions/runs/50/rerun-failed-jobs", {})])
+
+    def test_ordinary_retry_does_not_spend_budget_on_unusable_hint_evidence(self) -> None:
+        path = "actions/runs/50/artifacts?per_page=100"
+        for problem in (
+            "unavailable",
+            "incomplete",
+            "ambiguous",
+            "wrong-name",
+            "wrong-attempt",
+            "expired",
+            "oversize",
+            "corrupt-zip",
+            "decoder-recursion",
+            "invalid-sha",
+        ):
+            with self.subTest(problem=problem):
+                listing = self.install_rerun_hint()
+                artifact = listing["artifacts"][0]
+                if problem == "unavailable":
+                    del self.api.responses[path]
+                elif problem == "incomplete":
+                    listing["total_count"] = 2
+                elif problem == "ambiguous":
+                    listing["total_count"] = 2
+                    listing["artifacts"].append(deepcopy(artifact))
+                elif problem == "wrong-name":
+                    artifact["name"] = "dependency-candidate-hint-50-2"
+                elif problem == "wrong-attempt":
+                    self.install_rerun_hint(run_attempt=2)
+                elif problem == "expired":
+                    artifact["expired"] = True
+                elif problem == "oversize":
+                    artifact["size_in_bytes"] = recovery.HINT_LIMIT + 1
+                elif problem == "corrupt-zip":
+                    self.api.archives[100] = b"invalid zip"
+                elif problem == "invalid-sha":
+                    self.install_rerun_hint(candidate_sha="main")
+                ledger: dict[str, int] = {}
+                if problem == "decoder-recursion":
+                    with patch.object(recovery.json, "loads", side_effect=RecursionError):
+                        subject.rerun_ready(self.api, self.candidate, ledger, "main")
+                else:
+                    subject.rerun_ready(self.api, self.candidate, ledger, "main")
+                self.assertEqual(ledger, {})
+                self.assertEqual(self.api.posted, [])
+
+    def test_merge_group_retry_does_not_consult_pr_hint_evidence(self) -> None:
+        self.install_rerun_hint()
+        self.api.responses[f"actions/workflows/ci.yml/runs?head_sha={HEAD}&per_page=20"] = {
+            "workflow_runs": [{**ci_run(), "event": "merge_group", "head_sha": HEAD}],
+        }
+        candidate = subject.Candidate(BASE, HEAD, 17, SOURCE, "renovate[bot]", "Bot", "merge_group")
+        ledger: dict[str, int] = {}
+        with patch.object(subject, "still_current", return_value=True):
+            subject.rerun_ready(self.api, candidate, ledger, "main")
+        self.assertNotIn("actions/runs/50/artifacts?per_page=100", self.api.read_paths)
+        self.assertEqual(ledger, {HEAD: 50})
+        self.assertEqual(self.api.posted, [("actions/runs/50/rerun-failed-jobs", {})])
+
+    def test_one_unreadable_signed_hint_does_not_block_other_pr_retries(self) -> None:
+        self.install_rerun_hint()
+        self.api.responses["actions/runs/11"] = {
+            **run_metadata(11),
+            "status": "in_progress",
+            "conclusion": None,
+        }
+        other_head, other_source = "7" * 40, "8" * 40
+        self.bind_merge(other_head, source=other_source)
+        self.api.responses["pulls/18"] = pr_metadata(18, other_source, other_head)
+        self.api.responses["pulls?state=open&per_page=100&sort=updated&direction=desc"] = [
+            {"number": 17},
+            {"number": 18},
+        ]
+        self.api.responses["actions/workflows/ci.yml/runs?event=merge_group&per_page=20"] = {
+            "workflow_runs": [],
+        }
+        self.api.responses["actions/runs/50"] = ci_run()
+        original_jobs = deepcopy(self.api.responses["actions/runs/50/jobs?per_page=100"])
+        aggregate = original_jobs["jobs"][1]
+        aggregate.update(
+            run_id=50,
+            run_attempt=1,
+            check_run_url=f"https://api.github.com/repos/{REPOSITORY}/check-runs/800",
+        )
+        self.api.responses["actions/runs/50/attempts/1/jobs?per_page=100"] = original_jobs
+        self.api.responses["check-runs/800"] = {
+            "id": 800,
+            "name": "Required CI",
+            "head_sha": SOURCE,
+            "app": {"id": 15368, "slug": "github-actions"},
+            "status": "completed",
+            "conclusion": "failure",
+        }
+        self.api.responses[f"actions/workflows/ci.yml/runs?head_sha={other_source}&per_page=20"] = {
+            "workflow_runs": [
+                {
+                    **ci_run(51),
+                    "head_sha": other_source,
+                    "pull_requests": [
+                        {"number": 18, "head": {"sha": other_source}, "base": {"sha": BASE}}
+                    ],
+                }
+            ],
+        }
+        self.api.responses["actions/runs/51/jobs?per_page=100"] = self.api.responses[
+            "actions/runs/50/jobs?per_page=100"
+        ]
+        self.api.responses["actions/runs/51/artifacts?per_page=100"] = {
+            "total_count": 0,
+            "artifacts": [],
+        }
+        self.contents(".github/workflows/ci.yml", other_head, b"permissions: read-all\n")
+        reports = {
+            sha: {
+                "status": "pass",
+                "candidate_sha": sha,
+                "base_sha": BASE,
+                "source_head_sha": source,
+                "scope": "pull_request",
+                "pull_request": number,
+            }
+            for sha, source, number in ((HEAD, SOURCE, 17), (other_head, other_source, 18))
+        }
+
+        def evaluate(
+            _api: API, candidate: subject.Candidate, state: dict[str, Any], _now: datetime
+        ) -> dict[str, Any]:
+            return {**reports[candidate.head], "state": state}
+
+        headers = Message()
+        headers["Location"] = "https://artifact.invalid/path?signature=offline-fixture"
+        opener = MagicMock()
+        opener.open.side_effect = HTTPError(
+            f"https://api.github.com/repos/{REPOSITORY}/actions/artifacts/100/zip",
+            302,
+            "Redirect",
+            headers,
+            io.BytesIO(),
+        )
+        # Mark the stored member as Zstandard (ZIP method 93) in both headers
+        # without compressing it. Python 3.13 reports an unsupported method and
+        # Python 3.14 attempts to decode the malformed Zstandard stream.
+        bad_zip = bytearray(self.api.archives[100])
+        central = bad_zip.index(b"PK\x01\x02")
+        bad_zip[8:10] = bad_zip[central + 10 : central + 12] = (93).to_bytes(2, "little")
+        for read_error, diagnostic in (
+            (IncompleteRead(b"truncated", 40), "trusted artifact download transport failed"),
+            (None, "candidate hint archive is malformed"),
+        ):
+            with self.subTest(diagnostic=diagnostic):
+                self.api.posted.clear()
+                signed_response = MagicMock()
+                read = signed_response.__enter__.return_value.read
+                read.side_effect = read_error
+                read.return_value = bytes(bad_zip)
+                with (
+                    tempfile.TemporaryDirectory() as temporary,
+                    patch.object(
+                        subject,
+                        "previous_state",
+                        return_value={**state_payload(), "reports": reports},
+                    ),
+                    patch.object(subject, "evaluate", side_effect=evaluate),
+                    patch.object(subject, "build_opener", return_value=opener),
+                    patch.object(subject, "urlopen", return_value=signed_response) as signed,
+                    patch.object(API, "artifact", subject.GitHub.artifact),
+                ):
+                    result = subject.service(
+                        self.api,
+                        event_name="schedule",
+                        event={},
+                        implementation=IMPLEMENTATION,
+                        run_id=11,
+                        output=Path(temporary) / subject.STATE_FILE,
+                        now=NOW,
+                    )
+                self.assertEqual(signed.call_count, 2)
+                for call in signed.call_args_list:
+                    self.assertIsNone(call.args[0].get_header("Authorization"))
+                self.assertEqual(
+                    result["infrastructure_errors"],
+                    [f"PR 17: older-base recovery refused: {diagnostic}"],
+                )
+                self.assertEqual(result["reruns"], {other_head: 51})
+                self.assertEqual(
+                    [
+                        effect
+                        for effect in self.api.posted
+                        if effect[0].endswith("/rerun-failed-jobs")
+                    ],
+                    [("actions/runs/51/rerun-failed-jobs", {})],
+                )
+
+    def test_hint_listing_real_client_refuses_incomplete_and_over_nested_responses(self) -> None:
+        api = subject.GitHub(REPOSITORY, "not-a-real-token")
+        opener = MagicMock()
+        read = opener.open.return_value.__enter__.return_value.read
+        with patch.object(subject, "build_opener", return_value=opener):
+            read.side_effect = IncompleteRead(b"partial-json", 9)
+            with self.assertRaisesRegex(subject.EligibilityError, "transport failed"):
+                recovery.hint_artifact(api, ci_run())
+            read.side_effect = None
+            # Nested objects also hit the decoder depth limit on interpreters
+            # whose JSON decoder handles simple array nesting iteratively.
+            depth = 100_000
+            read.return_value = b'{"entry":' * depth + b"null" + b"}" * depth
+            self.assertLess(len(read.return_value), subject.MAX_JSON_BYTES)
+            with self.assertRaisesRegex(subject.EligibilityError, "not valid JSON"):
+                recovery.hint_artifact(api, ci_run())
 
     def test_exact_shared_reader_label_can_be_retried_after_completed_receipt(self) -> None:
         query = f"actions/workflows/ci.yml/runs?head_sha={SOURCE}&per_page=20"
@@ -2509,9 +2790,7 @@ jobs_extra:
 
     def test_rerun_never_repairs_rust_failure_or_user_cancellation(self) -> None:
         query = f"actions/workflows/ci.yml/runs?head_sha={SOURCE}&per_page=20"
-        self.api.responses[query] = {"workflow_runs": [ci_run()]}
-        self.contents(".github/workflows/ci.yml", "main", b"permissions: read-all\n")
-        self.contents(".github/workflows/ci.yml", HEAD, b"permissions: read-all\n")
+        self.install_rerun_hint()
         self.api.responses["actions/runs/50/jobs?per_page=100"]["jobs"][-1]["conclusion"] = (
             "failure"
         )
@@ -2520,6 +2799,7 @@ jobs_extra:
         self.api.responses[query]["workflow_runs"][0]["conclusion"] = "cancelled"
         subject.rerun_ready(self.api, self.candidate, {}, "main")
         self.assertEqual(self.api.posted, [])
+        self.assertNotIn("actions/runs/50/artifacts?per_page=100", self.api.read_paths)
 
     def test_first_pass_defers_rerun_until_completed_prior_receipt(self) -> None:
         self.api.responses["actions/runs/11"] = {
