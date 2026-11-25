@@ -77,7 +77,7 @@ esac
 MOCK
 chmod +x "${test_root}/bin/mock"
 for tool in actionlint bash cargo cargo-deny cargo-llvm-cov cargo-semver-checks cspell curl git \
-  hadolint jq lychee markdownlint-cli2 npm podman prettier python3 rustup shellcheck shfmt tombi uv zizmor; do
+  hadolint jq lychee node npm podman python3 rustup shellcheck shfmt tombi uv zizmor; do
   ln -s mock "${test_root}/bin/${tool}"
 done
 
@@ -123,16 +123,16 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
 expected_ordinary_sequence=""
-for ((ordinary_step = 1; ordinary_step <= 50; ordinary_step++)); do
-  printf -v ordinary_prefix '[%02d/50]' "${ordinary_step}"
+for ((ordinary_step = 1; ordinary_step <= 51; ordinary_step++)); do
+  printf -v ordinary_prefix '[%02d/51]' "${ordinary_step}"
   expected_ordinary_sequence+="${ordinary_prefix}"$'\n'
 done
 for mode in default fix check; do
-  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/50\]' "${test_root}/${mode}.output")" == 50 ]]
-  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/50\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
-  grep --fixed-strings --quiet -- '[50/50] Check development API compatibility' "${test_root}/${mode}.output"
+  [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/51\]' "${test_root}/${mode}.output")" == 51 ]]
+  [[ "$(grep --extended-regexp --only-matching '^\[[0-9]{2}/51\]' "${test_root}/${mode}.output")" == "${expected_ordinary_sequence%$'\n'}" ]]
+  grep --fixed-strings --quiet -- '[51/51] Check development API compatibility' "${test_root}/${mode}.output"
   [[ "$(tail -n 1 "${test_root}/${mode}.commands")" == *"python -m boxferry_ci.api_baselines run "* ]]
-  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 50 steps.' ]]
+  [[ "$(tail -n 1 "${test_root}/${mode}.output")" == 'BoxFerry local validation passed all 51 steps.' ]]
 done
 # Keep the explicit source/index bridge in every complete mode exactly once.
 for mode in default fix check; do
@@ -181,9 +181,9 @@ done
 for mode in default check; do
   for script in test-application-probes.sh test-observability-application.sh test-supabase-application.sh; do
     case "${script}" in
-      test-application-probes.sh) expected_step=22 ;;
-      test-observability-application.sh) expected_step=24 ;;
-      test-supabase-application.sh) expected_step=25 ;;
+      test-application-probes.sh) expected_step=23 ;;
+      test-observability-application.sh) expected_step=25 ;;
+      test-supabase-application.sh) expected_step=26 ;;
     esac
     label="application-env-${mode}-${expected_step}"
     command="uv run --locked --project automation bash scripts/${script}"
@@ -200,7 +200,7 @@ for mode in default check; do
     fi
     [[ "${status}" == 17 ]]
     [[ "$(tail -n 1 "${test_root}/${label}.commands")" == "${command}" ]]
-    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/50\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
+    [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/51\]' "${test_root}/${label}.output")" == "${expected_step}" ]]
   done
 done
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"

@@ -22,6 +22,12 @@ trap report_failure ERR
 mkdir -p "${test_root}/repository/scripts" "${test_root}/bin"
 cp -- "${script_directory}/format-lint.sh" "${test_root}/repository/scripts/format-lint.sh"
 cp -- "${script_directory}/check-files.sh" "${test_root}/repository/scripts/check-files.sh"
+cp -- "${script_directory}/run-node-tool.sh" "${test_root}/repository/scripts/run-node-tool.sh"
+mkdir -p "${test_root}/repository/node_modules/prettier/bin" \
+  "${test_root}/repository/node_modules/markdownlint-cli2"
+touch "${test_root}/repository/package.json" "${test_root}/repository/package-lock.json" \
+  "${test_root}/repository/node_modules/prettier/bin/prettier.cjs" \
+  "${test_root}/repository/node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs"
 printf '# Fixture\n' > "${test_root}/repository/README.md"
 
 cat > "${test_root}/bin/mock" << 'MOCK'
@@ -62,7 +68,7 @@ fi
 MOCK
 chmod +x "${test_root}/bin/mock"
 
-for tool in actionlint cargo git hadolint markdownlint-cli2 prettier python3 shellcheck shfmt tombi uv zizmor; do
+for tool in actionlint cargo git hadolint node python3 shellcheck shfmt tombi uv zizmor; do
   ln -s "${test_root}/bin/mock" "${test_root}/bin/${tool}"
 done
 

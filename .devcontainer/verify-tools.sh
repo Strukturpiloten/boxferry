@@ -93,6 +93,15 @@ import tomllib
 
 try:
     repository, tooling = map(Path, sys.argv[1:])
+    node_tools = Path("/opt/boxferry-file-tools")
+    for filename in ("package.json", "package-lock.json"):
+        if (repository / filename).read_bytes() != (node_tools / filename).read_bytes():
+            raise ValueError("retained Node tool authority differs from checkout; rebuild the image")
+    declared = json.loads((node_tools / "package.json").read_text())["devDependencies"]
+    for name in ("prettier", "markdownlint-cli2"):
+        installed = json.loads((node_tools / "node_modules" / name / "package.json").read_text())
+        if installed["version"] != declared[name]:
+            raise ValueError(f"installed {name} differs from the retained lock; rebuild the image")
     manifest = json.loads((repository / ".github/automation.json").read_text())
     if json.loads((tooling / ".github/automation.json").read_text()) != manifest:
         raise ValueError("retained shared-tool authority differs from the checkout; rebuild the image")

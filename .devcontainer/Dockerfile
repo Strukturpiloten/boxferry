@@ -37,7 +37,8 @@ COPY scripts/shared-ci.py scripts/install-git.sh /opt/boxferry-tooling/scripts/
 COPY .github/automation.json /opt/boxferry-tooling/.github/
 COPY package.json package-lock.json /opt/boxferry-file-tools/
 ENV UV_CACHE_DIR=/opt/boxferry-tooling/uv-cache \
-    UV_PYTHON_INSTALL_DIR=/opt/boxferry-tooling/python
+    UV_PYTHON_INSTALL_DIR=/opt/boxferry-tooling/python \
+    BOXFERRY_NODE_TOOLS_ROOT=/opt/boxferry-file-tools
 
 RUN set -eux; \
     npm ci --ignore-scripts --prefix /opt/boxferry-file-tools; \

@@ -10,6 +10,7 @@ fresh archive is extracted; candidate Git configuration and hooks are never load
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import os
@@ -244,6 +245,24 @@ def prepare_implementation(repository_root: Path, revision: str) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Serialize export replacement and dispatch, including concurrent cold callers."""
+    root = Path(__file__).resolve().parent.parent
+    cache = root / "target/boxferry-automation"
+    try:
+        for path in (root / "target", cache):
+            if path.is_symlink():
+                raise BootstrapError("shared automation cache must not follow symlinks")
+            path.mkdir(exist_ok=True)
+        descriptor = os.open(cache / "dispatch.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            return dispatch(argv, descriptor)
+    except (BootstrapError, OSError) as error:
+        print(f"Shared CI bootstrap failed: {error}", file=sys.stderr)
+        return 2
+
+
+def dispatch(argv: list[str] | None = None, lock_fd: int | None = None) -> int:
     """Load interface 1 from the verified immutable project and delegate."""
     arguments = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
@@ -278,6 +297,10 @@ def main(argv: list[str] | None = None) -> int:
         run_project = getattr(module, "run_project", None)
         if not callable(run_project):
             raise BootstrapError("pinned implementation lacks interface-1 run_project")
+        # Legacy tasks can invoke this frontloader again (for example check-files).
+        # Only formatter execution must hold export custody for its full lifetime.
+        if lock_fd is not None and (not arguments or arguments[0] != "node-tool"):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         return run_project(repository_root, project, arguments)
     except (BootstrapError, OSError, ImportError) as error:
         print(f"Shared CI bootstrap failed: {error}", file=sys.stderr)

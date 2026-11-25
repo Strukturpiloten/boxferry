@@ -331,6 +331,8 @@ jobs:
         run: uv run --locked --project _automation/automation python scripts/test-workflow-lint.py
       - name: Check non-Rust file formatting and lint
         run: bash scripts/check-files.sh --check
+      - name: Test locked formatter execution against consumer files
+        run: bash scripts/test-node-tools.sh
       - name: Test validation-plan regressions
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
       - name: Test shared automation adoption

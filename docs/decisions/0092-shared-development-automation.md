@@ -156,6 +156,31 @@ the separate Renovate upgrade; Dev Container shared-source selection remains int
 
 ## Consequences
 
+### Manifest-selected Node acquisition (issue 725)
+
+The stable `run_project` handoff may dispatch `node-tool` using its already verified
+standard-library implementation before uv setup. The same admitted revision and verified
+bare cache supply only the producer npm pair and formatter runner into a separate bounded
+installation; the existing Python export inventory stays closed. Linux frontloaders serialize
+export replacement through dispatch, and complete npm installations are published under a
+separate lock. Every writable managed invocation reifies a fresh graph using standard npm-ci
+lock integrity and prefer-offline cache reuse; a mutable inventory beside mutable executable
+bytes cannot authorize execution. Setup messages use stderr, leaving stdout and stdin to the
+selected tool. The caller explicitly selects cwd, configuration and file arguments. A
+root-owned image root protected from the runtime user supports verification without installation
+writes; user-owned or otherwise writable explicit roots refuse this custody contract.
+The installer retains its verified standard-library bootstrap as the public image entry point;
+that entry binds the caller manifest and installed receipt without network, Git, cache, lock
+creation or checkout writes, preserving read-only native image mounts and rootfs.
+
+Native image expectations retain unmarked local ownership. Explicit `local` or `automation`
+selection in `.github/node-tools.json` refuses ambiguous ownership and malformed graphs;
+automation selection binds the consumer manifest to the independently trusted clean producer
+revision. Unrelated npm applications may coexist. Existing platform and exact help-probe
+contracts remain unchanged. Native npm and shared-source Renovate owners retain their pins,
+grouping and approval policies; acquisition adds no version declaration. See the
+[interface and adoption requirements](../automation.md#manifest-selected-formatters).
+
 Common fixes and version upgrades have one reviewed source. Consumers still need
 their own complete gates and evidence; one successful repository is not rollout
 completion. Old trusted policies require an explicit complete-behavior fallback

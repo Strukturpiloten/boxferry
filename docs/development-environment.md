@@ -40,6 +40,11 @@ The C build preserves HTTPS trust, COPYING and source provenance. It omits optio
 Rust compatibility hashing, GUI, translations and generated documentation. Native image and VS Code acceptance remain
 separate from complete local gates.
 
+### Locked Markdown and formatting tools
+
+The [shared formatter guide](development/shared-formatters.md) covers BoxFerry's installed
+runner, fresh Lens acquisition, caller rules, image execution, tests and update ownership.
+
 The [Kubernetes installer](../scripts/install-kubernetes-tools.sh) supplies pinned kind,
 kubectl, Helm and Kustomize. Its trusted checksum refresher verifies official metadata
 and both architectures, then updates only eligible Renovate candidates. Required
