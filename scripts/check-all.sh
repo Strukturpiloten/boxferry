@@ -243,7 +243,7 @@ run_step "Test release emulator extraction" bash scripts/test-release-emulator.s
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test Podman live outer storage ownership" bash scripts/test-podman-live-outer-storage.sh
-run_step "Test application probe contracts" uv run --locked --project automation bash scripts/test-application-probes.sh
+run_step "Test application probe contracts" python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- bash scripts/test-application-probes.sh
 run_step "Test observability Grafana network topology" bash scripts/test-observability-grafana-network.sh
 run_step "Test observability application contracts" uv run --locked --project automation bash scripts/test-observability-application.sh
 run_step "Test Supabase application timeout boundary" uv run --locked --project automation bash scripts/test-supabase-application.sh

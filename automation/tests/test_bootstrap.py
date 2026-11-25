@@ -25,6 +25,151 @@ from urllib.error import HTTPError, URLError
 from boxferry_ci import bootstrap
 
 
+class CandidateTests(unittest.TestCase):
+    def test_real_uv_keeps_relative_fixture_with_conflicting_working_directory(self) -> None:
+        project = Path(bootstrap.__file__).resolve().parents[2]
+        version, _ = bootstrap.uv_manifest(project)
+        ambient = shutil.which("uv")
+        if ambient is None or not bootstrap.uv_version_matches(Path(ambient), version):
+            self.skipTest("run through run-candidate to exercise the project's exact real uv")
+        with tempfile.TemporaryDirectory() as temporary:
+            caller = Path(temporary) / "caller"
+            override = Path(temporary) / "override"
+            caller.mkdir()
+            override.mkdir()
+            caller = caller.resolve()
+            override = override.resolve()
+            (caller / "fixture.txt").write_text("caller fixture")
+            original = Path.cwd()
+            try:
+                os.chdir(caller)
+                with (
+                    patch.dict(os.environ, {"UV_WORKING_DIR": str(override)}),
+                    patch.object(bootstrap, "ensure_uv", return_value=Path(ambient).absolute()),
+                ):
+                    result = bootstrap.run_candidate(
+                        [
+                            "--",
+                            "python",
+                            "-c",
+                            "from pathlib import Path; "
+                            "assert Path('fixture.txt').read_text() == 'caller fixture'; "
+                            "Path('observed.txt').write_text(str(Path.cwd())); "
+                            "raise SystemExit(37)",
+                        ]
+                    )
+                self.assertEqual(result, 37)
+                self.assertEqual((caller / "observed.txt").read_text(), str(caller))
+                self.assertFalse((override / "observed.txt").exists())
+            finally:
+                os.chdir(original)
+
+    def test_candidate_requires_explicit_command_and_lockfile(self) -> None:
+        with patch.object(bootstrap, "ensure_uv") as ensure:
+            for arguments in ([], ["bash"], ["--"]):
+                self.assertEqual(bootstrap.run_candidate(arguments), 2)
+            with patch.object(Path, "is_file", return_value=False):
+                self.assertEqual(bootstrap.run_candidate(["--", "bash"]), 2)
+            ensure.assert_not_called()
+
+    def test_candidate_uses_own_verified_tool_preserves_directory_and_exit(self) -> None:
+        project = Path(bootstrap.__file__).resolve().parents[2]
+        with (
+            patch.object(bootstrap.platform, "system", return_value="Linux"),
+            patch.object(bootstrap, "load_config") as config,
+            patch.object(bootstrap, "prepare_implementation") as prepare,
+            patch.object(bootstrap, "ensure_uv", return_value=Path("/candidate/uv")) as ensure,
+            patch.dict(
+                os.environ,
+                {
+                    "PATH": "/approved/bin",
+                    "VIRTUAL_ENV": "/approved/venv",
+                    "UV_PROJECT_ENVIRONMENT": "/approved/venv",
+                    "PYTHONHOME": "/approved",
+                    "PYTHONPATH": "/approved/modules",
+                    "UV_WORKING_DIR": "/approved/other-directory",
+                    "FIXTURE": "relative/fixture",
+                },
+            ),
+            patch.object(bootstrap.subprocess, "call", return_value=37) as call,
+        ):
+            self.assertEqual(bootstrap.main(["run-candidate", "--", "bash", "-c", "exit 37"]), 37)
+        ensure.assert_called_once_with(
+            project, project.parent / "target/boxferry-automation/tools", prefer_path=False
+        )
+        config.assert_not_called()
+        prepare.assert_not_called()
+        self.assertEqual(
+            call.call_args.args[0],
+            [
+                "/candidate/uv",
+                "run",
+                "--locked",
+                "--project",
+                str(project),
+                "bash",
+                "-c",
+                "exit 37",
+            ],
+        )
+        self.assertNotIn("cwd", call.call_args.kwargs)
+        environment = call.call_args.kwargs["env"]
+        for name in (
+            "VIRTUAL_ENV",
+            "UV_PROJECT_ENVIRONMENT",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "UV_WORKING_DIR",
+        ):
+            self.assertTrue(name not in environment, name)
+        self.assertEqual(environment["PATH"], "/candidate:/approved/bin")
+        self.assertEqual(environment["FIXTURE"], "relative/fixture")
+        self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
+        self.assertEqual(environment["PYTHONSAFEPATH"], "1")
+
+    def test_invalid_candidate_authority_never_executes_command(self) -> None:
+        for message in (
+            "artifact version disagrees",
+            "archive SHA256 disagrees",
+            "unsupported host",
+        ):
+            with (
+                self.subTest(message=message),
+                patch.object(bootstrap.platform, "system", return_value="Linux"),
+                patch.object(bootstrap, "ensure_uv", side_effect=bootstrap.BootstrapError(message)),
+                patch.object(bootstrap.subprocess, "call") as call,
+            ):
+                self.assertEqual(bootstrap.run_candidate(["--", "bash"]), 2)
+                call.assert_not_called()
+
+    def test_macos_retains_exact_preinstalled_tool_without_unreviewed_download(self) -> None:
+        for matches in (True, False):
+            with (
+                self.subTest(matches=matches),
+                patch.object(bootstrap.platform, "system", return_value="Darwin"),
+                patch.object(bootstrap.shutil, "which", return_value="/macos/uv"),
+                patch.object(bootstrap, "uv_version_matches", return_value=matches),
+                patch.object(bootstrap, "ensure_uv") as ensure,
+                patch.object(bootstrap.subprocess, "call", return_value=23) as call,
+            ):
+                self.assertEqual(bootstrap.run_candidate(["--", "bash"]), 23 if matches else 2)
+                self.assertEqual(call.call_count, int(matches))
+                ensure.assert_not_called()
+
+    def test_all_candidate_entry_points_use_launcher(self) -> None:
+        root = Path(bootstrap.__file__).resolve().parents[3]
+        invocation = (
+            "python3 automation/src/boxferry_ci/bootstrap.py run-candidate -- "
+            "bash scripts/test-application-probes.sh"
+        )
+        for relative in ("scripts/check-all.sh", ".github/workflows/ci.yml"):
+            self.assertIn(invocation, (root / relative).read_text())
+        rust = (root / "crates/boxferry/tests/cli_privacy.rs").read_text()
+        self.assertIn('.args(["run-candidate", "--", "bash"])', rust)
+        self.assertIn('Command::new("python3")', rust)
+        self.assertNotIn('Command::new("uv")', rust)
+
+
 class BootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

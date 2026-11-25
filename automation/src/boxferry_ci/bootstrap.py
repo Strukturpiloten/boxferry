@@ -799,9 +799,58 @@ def run_project(repository_root: Path, project: Path, arguments: list[str]) -> i
         return 2
 
 
+def run_candidate(arguments: list[str]) -> int:
+    """Run application test commands with this checkout's locked Python project.
+
+    This is an explicit candidate execution boundary, never a trusted shared-CI
+    override. Keep the caller's directory and arguments (including fixture paths).
+    """
+    project = Path(__file__).resolve().parents[2]
+    root = project.parent
+    try:
+        if not arguments or arguments[0] != "--" or len(arguments) == 1:
+            raise BootstrapError("run-candidate requires -- followed by a command")
+        if not (project / "uv.lock").is_file():
+            raise BootstrapError("candidate automation project has no lockfile")
+        if platform.system() == "Darwin":
+            # The inventory has Linux archives only. Preserve macOS developer
+            # execution with an exact-version preinstalled uv, without downloading
+            # an unreviewed asset or claiming archive integrity for that tool.
+            version, _ = uv_manifest(project)
+            ambient = shutil.which("uv")
+            if ambient is None or not uv_version_matches(Path(ambient), version):
+                raise BootstrapError(f"macOS application tests require preinstalled uv {version}")
+            executable = Path(ambient).absolute()
+        else:
+            executable = ensure_uv(
+                project, root / "target/boxferry-automation/tools", prefer_path=False
+            )
+        environment = os.environ.copy()
+        for name in (
+            "VIRTUAL_ENV",
+            "UV_PROJECT_ENVIRONMENT",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "UV_WORKING_DIR",
+        ):
+            environment.pop(name, None)
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONSAFEPATH"] = "1"
+        environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
+        return subprocess.call(
+            [str(executable), "run", "--locked", "--project", str(project), *arguments[1:]],
+            env=environment,
+        )
+    except (BootstrapError, OSError) as error:
+        print(f"Candidate test bootstrap failed: {error}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """Resolve the pinned shared implementation and invoke its locked CLI."""
     arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] == "run-candidate":
+        return run_candidate(arguments[1:])
     if arguments and arguments[0] == "install-uv":
         return install_uv_cli(arguments[1:])
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
