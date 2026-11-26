@@ -36,7 +36,7 @@ case "$(uname -m)" in
     readonly kind_release="${kind_amd64_release}"
     readonly kind_checksum="${kind_amd64_checksum}"
     readonly kubectl_checksum="c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4"
-    readonly helm_checksum="0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b"
+    readonly helm_checksum="d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983"
     readonly kustomize_checksum="cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61"
     ;;
   aarch64 | arm64)
@@ -44,7 +44,7 @@ case "$(uname -m)" in
     readonly kind_release="${kind_arm64_release}"
     readonly kind_checksum="${kind_arm64_checksum}"
     readonly kubectl_checksum="fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509"
-    readonly helm_checksum="8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88"
+    readonly helm_checksum="df31cb61680ef728f82c770e5280dd565617bee6b039d37e85c677288be4bbb0"
     readonly kustomize_checksum="9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f"
     ;;
   *)
