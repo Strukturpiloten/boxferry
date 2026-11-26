@@ -17,7 +17,7 @@ readonly kind_arm64_release="v0.33.0" kind_arm64_checksum="20022bee6cfcd5086cb72
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
 readonly kubectl_version="1.37.2"
 # renovate: datasource=github-releases depName=helm/helm
-readonly helm_version="4.3.1"
+readonly helm_version="4.3.2"
 # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize
 readonly kustomize_version="5.8.3"
 
