@@ -46,7 +46,7 @@ permissions:
 jobs:
   prepare:
     name: Validate complete ordered crate inventory
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       candidate_sha: ${{ steps.inventory.outputs.candidate_sha }}
