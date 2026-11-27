@@ -10668,15 +10668,15 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
         "model = \"gpt-6-sol\"",
         "model_reasoning_effort = \"xhigh\"",
         "max_concurrent_threads_per_session = 8",
-        "default_subagent_model = \"gpt-6.1-sol\"",
+        "default_subagent_model = \"gpt-6.2-sol\"",
         "default_subagent_reasoning_effort = \"medium\"",
     ] {
         assert!(config.contains(required), "missing agent default: {required}");
     }
     for (role, model, effort, sandbox) in [
-        ("implementation-worker", "gpt-6.1-sol", "high", "workspace-write"),
-        ("specification-researcher", "gpt-6.1-sol", "high", "read-only"),
-        ("reviewer", "gpt-6.1-sol", "high", "read-only"),
+        ("implementation-worker", "gpt-6.2-sol", "high", "workspace-write"),
+        ("specification-researcher", "gpt-6.2-sol", "high", "read-only"),
+        ("reviewer", "gpt-6.2-sol", "high", "read-only"),
         ("presentation-worker", "gpt-6.1-terra", "medium", "workspace-write"),
         ("verifier", "gpt-6-luna", "high", "workspace-write"),
     ] {
@@ -10744,8 +10744,10 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
     let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
         "The primary manager always uses `gpt-6-sol` with `xhigh` reasoning",
-        "Task-specific subagents may use `gpt-6.1-sol`, `gpt-6.1-terra`, or `gpt-6-luna` with `medium`, `high`, or `xhigh` reasoning",
-        "Use `gpt-6-astra` only with `xhigh` reasoning for particularly difficult architectural questions",
+        "Task-specific subagents may use `gpt-6.2-sol`, `gpt-6.1-terra`, `gpt-6-luna`, or `gpt-6.2-astra` with `medium`, `high`, or `xhigh` reasoning",
+        "Reserve `gpt-6.2-astra` for particularly difficult tasks",
+        "Use the generic worker for task-specific model and effort selections",
+        "Named roles set their model and reasoning effort in their role files",
         "up to eight concurrent subagents plus the primary manager (nine agents in total)",
         "subject to the session's actual runtime limit",
         "Eight is a ceiling, not a target or eight distinct roles",
